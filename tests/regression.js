@@ -13,6 +13,9 @@
    - profile creation and data isolation
    - Overseer chat: long-press opens it, sends reach the model with the
      Overseer's own dedicated system prompt (not the main chat one)
+   - Overseer chat can also drive repo tool_calls (e.g. write_file) directly,
+     through the same TOOL_MODELS gate and approval dialogs as the main
+     chat, with its own tool-execution notices in the Overseer's chat log
    - write_file tool never defaults to main/master; the approved branch is
      what actually reaches the GitHub ops worker
    - merge_branch tool requires its own dedicated approval dialog before
@@ -827,6 +830,96 @@ function assert(cond, label) {
   // interacting, same as the settle wait already used after the Overseer
   // chat's failed (no-egress) request above.
   await page.waitForTimeout(500);
+
+  console.log('\n-- Overseer chat can also call repo tools directly, same TOOL_MODELS/approval gates as the main chat --');
+  // The Overseer's own side-channel chat used to have zero tool access at
+  // all - pure advice text. This checks it can now actually drive a
+  // write_file tool_call end to end: the same approval dialog still shows
+  // (no bypass just because the request came from the Overseer instead of
+  // the main chat), the write still reaches the GitHub ops worker once
+  // approved, and the tool-execution notice lands in the Overseer's own
+  // chat log (overseerChatLog), not the main chat log.
+  await page.dispatchEvent('#overseerBtn', 'mousedown');
+  await page.waitForTimeout(700);
+  await page.dispatchEvent('#overseerBtn', 'mouseup');
+  await page.waitForTimeout(200);
+
+  let capturedOverseerWriteBody = null;
+  let overseerToolRoundCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    const url = req.url();
+    if (url.indexOf('github-ops-worker') >= 0 && req.method() === 'POST') {
+      try { capturedOverseerWriteBody = JSON.parse(req.postData()); } catch (e) {}
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, commit: 'regtestoverseersha', branch: capturedOverseerWriteBody && capturedOverseerWriteBody.branch }),
+      });
+      return;
+    }
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.stream === false) {
+        overseerToolRoundCount++;
+        if (overseerToolRoundCount === 1) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              choices: [{
+                finish_reason: 'tool_calls',
+                message: {
+                  role: 'assistant',
+                  tool_calls: [{
+                    id: 'regtest_overseer_call_1',
+                    type: 'function',
+                    function: { name: 'write_file', arguments: JSON.stringify({ path: 'regtest-overseer-file.txt', content: 'hello from overseer', message: 'regtest overseer commit' }) },
+                  }],
+                },
+              }],
+            }),
+          });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest overseer done' } }] }),
+        });
+        return;
+      }
+      if (parsed && parsed.stream === true) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: 'data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n',
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await page.fill('#overseerChatInput', 'please write a small file to the repo for me');
+  await page.click('#overseerChatSendBtn');
+  let overseerWriteConfirmShowed = false;
+  for (let i = 0; i < 100; i++) {
+    overseerWriteConfirmShowed = await page.evaluate(() => !document.getElementById('githubWriteConfirmModal').classList.contains('hidden'));
+    if (overseerWriteConfirmShowed) break;
+    await page.waitForTimeout(200);
+  }
+  assert(overseerWriteConfirmShowed, 'a write_file tool_call from the Overseer chat surfaces the same approval dialog as the main chat');
+  await page.click('#ghwApproveBtn');
+  for (let i = 0; i < 100 && capturedOverseerWriteBody === null; i++) await page.waitForTimeout(200);
+  await page.unroute('**/*');
+  assert(!!capturedOverseerWriteBody, 'approving it actually reaches the GitHub ops worker, same as a main-chat-issued write_file');
+  assert(capturedOverseerWriteBody && capturedOverseerWriteBody.path === 'regtest-overseer-file.txt', `the file path requested by the Overseer is what's actually sent to the worker (got "${capturedOverseerWriteBody && capturedOverseerWriteBody.path}")`);
+  await page.waitForTimeout(300);
+  const overseerLogHasToolNotice = await page.evaluate(() => document.getElementById('overseerChatLog').textContent.indexOf('regtest-overseer-file.txt') >= 0);
+  assert(overseerLogHasToolNotice, 'the tool-execution notice renders in the Overseer\'s own chat log, not just the main chat log');
+  await page.waitForTimeout(500);
+  await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
 
   console.log('\n-- tool round loop actually advances multiple rounds, not just one --');
   // Before this fix, a message got exactly ONE non-streaming round to call

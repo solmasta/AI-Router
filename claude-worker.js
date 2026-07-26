@@ -45,16 +45,18 @@ export default {
       });
     }
 
-    // Live model list endpoint - return hardcoded Claude models
+    // Live model list endpoint - proxies Anthropic's actual Models API so a
+    // model pulled from the picker (e.g. deprecated/renamed) drops out here
+    // too, the same way DeepInfra/OpenRouter's /models already do.
     if (request.method === "GET" && url.pathname === "/models") {
-      const models = {
-        data: [
-          { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-          { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
-          { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
-        ]
-      };
-      return new Response(JSON.stringify(models), {
+      const res = await fetch("https://api.anthropic.com/v1/models?limit=100", {
+        headers: {
+          "x-api-key": env.ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+        }
+      });
+      const data = await res.json();
+      return new Response(JSON.stringify(data), {
         headers: { "Content-Type": "application/json", ...CORS }
       });
     }
