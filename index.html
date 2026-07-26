@@ -253,7 +253,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.51</span></span>
+      <span class="wm">ai-router <span>v5.53</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -535,7 +535,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.51</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.53</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -582,6 +582,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 var DI_URL="https://openai-router-chat.lukedorsett.workers.dev";
 var OR_URL="https://openaiworker.lukedorsett.workers.dev";
 var CLAUDE_URL="https://claude-worker.lukedorsett.workers.dev";
+var DRIVE_AUTH_URL="https://ai-router-drive.lukedorsett.workers.dev";
 /* APP_SECRET is fetched from worker's /secret endpoint on page load */
 var APP_SECRET=null;
 /* ---- Profiles: separate namespaces for chats/memories/prompts/projects
@@ -594,7 +595,7 @@ var PROFILES_LIST_KEY="ai_profiles_list";
 var activeProfile="default";
 try{activeProfile=localStorage.getItem(PROFILE_KEY)||"default";}catch(e){}
 function pk(key){return activeProfile==="default"?key:("prof_"+activeProfile+"__"+key);}
-var PROFILE_DATA_KEYS=["ai_autosave","ai_recent","ai_tabs","ai_memories","ai_doclibrary","ai_prompts","ai_projects","ai_workprojects","ai_draft","drive_connected","drive_file_id","drive_file_ids","drive_folder_id","drive_token","gh_repo_owner","gh_repo_name"];
+var PROFILE_DATA_KEYS=["ai_autosave","ai_recent","ai_tabs","ai_memories","ai_doclibrary","ai_prompts","ai_projects","ai_workprojects","ai_draft","drive_connected","drive_file_id","drive_file_ids","drive_folder_id","drive_token","drive_refresh_token","gh_repo_owner","gh_repo_name"];
 function listProfiles(){
   var names=["default"];
   try{
@@ -3193,10 +3194,17 @@ var DRIVE_FILES={
   doclibrary:"documents.json"
 };
 
+/* driveRefreshToken is the long-lived credential now - Google only ever
+   issues an access_token good for ~1hr, but a refresh_token (obtained once
+   via the code-flow consent below) lets drive-auth-worker silently mint a
+   new access_token from it indefinitely, no popup, no re-consent, until
+   the user actually revokes access in their Google account. */
+var driveRefreshToken=null;
 function driveLoadCache(){
   try{
     driveFolderId=localStorage.getItem(pk("drive_folder_id"))||null;
     driveFileIds=JSON.parse(localStorage.getItem(pk("drive_file_ids"))||"{}");
+    driveRefreshToken=localStorage.getItem(pk("drive_refresh_token"))||null;
     var t=JSON.parse(localStorage.getItem(pk("drive_token"))||"null");
     if(t&&t.expiry>Date.now()){driveToken=t.token;driveTokenExpiry=t.expiry;}
   }catch(e){}
@@ -3206,18 +3214,63 @@ function driveSaveToken(token,expiresInSec){
   driveTokenExpiry=Date.now()+((expiresInSec||3500)*1000)-60000;
   try{localStorage.setItem(pk("drive_token"),JSON.stringify({token:token,expiry:driveTokenExpiry}));}catch(e){}
 }
+function driveSaveRefreshToken(token){
+  driveRefreshToken=token;
+  try{localStorage.setItem(pk("drive_refresh_token"),token);}catch(e){}
+}
+/* Silently mints a fresh access_token from the stored refresh_token via
+   drive-auth-worker - a plain fetch, not a Google popup, so it's safe to
+   call from a cold page load or any background check without a user
+   gesture. Returns true on success; false means the refresh_token itself
+   is gone/revoked and a real reconnect (driveConnect) is actually needed. */
+async function driveSilentRefresh(){
+  if(!driveRefreshToken)return false;
+  try{
+    await ensureAppSecret();
+    var res=await fetch(DRIVE_AUTH_URL+"/refresh",{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({refresh_token:driveRefreshToken})});
+    var data=await res.json();
+    if(res.ok&&data.access_token){driveSaveToken(data.access_token,data.expires_in);return true;}
+    if(data.revoked){driveSaveRefreshToken(null);try{localStorage.removeItem(pk("drive_refresh_token"));}catch(e){}}
+    return false;
+  }catch(e){return false;}
+}
+/* Every Drive operation should call this instead of checking
+   driveToken/driveTokenExpiry directly - it transparently renews an
+   expired access_token in the background when a refresh_token is on file,
+   so the only time the user ever sees "reconnect needed" is a genuinely
+   revoked/missing refresh_token, not the routine ~1hr access_token expiry. */
+async function driveEnsureToken(){
+  if(driveToken&&driveTokenExpiry>Date.now())return true;
+  return await driveSilentRefresh();
+}
 function driveInitClient(){
   if(!window.google||!google.accounts||driveTokenClient)return;
-  driveTokenClient=google.accounts.oauth2.initTokenClient({
+  /* initCodeClient (authorization-code flow), not initTokenClient - the
+     token flow only ever hands back a short-lived access_token with no way
+     to renew it silently. access_type:"offline" + prompt:"consent" makes
+     Google actually issue a refresh_token with the code, which
+     drive-auth-worker exchanges (it holds the OAuth client secret, which
+     can't live in frontend JS) for the first access_token and stores the
+     refresh_token client-side for all future silent renewals. */
+  driveTokenClient=google.accounts.oauth2.initCodeClient({
     client_id:GOOGLE_CLIENT_ID,
     scope:DRIVE_SCOPE,
-    callback:function(resp){
-      if(resp&&resp.access_token){
-        driveSaveToken(resp.access_token,resp.expires_in);
+    ux_mode:"popup",
+    access_type:"offline",
+    prompt:"consent",
+    callback:async function(resp){
+      if(!resp||!resp.code)return;
+      try{
+        await ensureAppSecret();
+        var res=await fetch(DRIVE_AUTH_URL+"/exchange",{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({code:resp.code})});
+        var data=await res.json();
+        if(!res.ok||!data.access_token){alert("Google Drive connect failed: "+(data.error||"unknown error"));return;}
+        driveSaveToken(data.access_token,data.expires_in);
+        if(data.refresh_token)driveSaveRefreshToken(data.refresh_token);
         localStorage.setItem(pk("drive_connected"),"1");
         updateDriveUI(true);
         driveHandleFreshConnect();
-      }
+      }catch(e){alert("Google Drive connect failed: "+e.message);}
     }
   });
 }
@@ -3258,11 +3311,12 @@ async function driveHandleFreshConnect(){
 function driveConnect(){
   driveInitClient();
   if(!driveTokenClient){alert("Google sign-in is still loading - try again in a second.");return;}
-  driveTokenClient.requestAccessToken({prompt:"consent"});
+  driveTokenClient.requestCode();
 }
 function driveDisconnect(){
-  driveToken=null;driveTokenExpiry=0;driveFolderId=null;driveFileIds={};
+  driveToken=null;driveTokenExpiry=0;driveFolderId=null;driveFileIds={};driveRefreshToken=null;
   localStorage.removeItem(pk("drive_token"));
+  localStorage.removeItem(pk("drive_refresh_token"));
   localStorage.removeItem(pk("drive_folder_id"));
   localStorage.removeItem(pk("drive_file_id"));
   localStorage.removeItem(pk("drive_file_ids"));
@@ -3270,7 +3324,7 @@ function driveDisconnect(){
   updateDriveUI(false);
 }
 async function driveEnsureFolder(){
-  if(!driveToken||driveTokenExpiry<=Date.now())return null;
+  if(!(await driveEnsureToken()))return null;
   if(driveFolderId)return driveFolderId;
   try{
     /* Drive allows multiple folders with the identical name - it's not
@@ -3350,17 +3404,10 @@ async function driveFindLegacyFile(){
 async function driveAutoPush(force){
   if(driveBusy)return;
   if(!force&&Date.now()-driveLastPush<20000)return;
-  if(!driveToken||driveTokenExpiry<=Date.now()){
-    /* The OAuth token is only ever checked for expiry at page load (the
-       reconnect block below) - if it expires mid-session (Google access
-       tokens last ~1hr, easy to outlast in a long session), every push
-       from then on silently no-op'd here with the UI still showing
-       "Connected - backs up automatically" from whenever it was last
-       set. Every edit made after that point looked backed up but never
-       actually reached Drive - restoring on another device then pulls a
-       stale snapshot missing everything since the token expired, with
-       no error anywhere to explain why. Surface it the same way the
-       page-load reconnect check already does. */
+  if(!(await driveEnsureToken())){
+    /* driveEnsureToken() already tried a silent refresh above - this only
+       fires when the refresh_token itself is gone/revoked, a genuinely
+       rare case now rather than the routine ~1hr access_token expiry. */
     if(localStorage.getItem(pk("drive_connected"))==="1"){
       updateDriveUI(false);
       updateDriveStatus("Reconnect needed - backup paused");
@@ -3392,7 +3439,7 @@ async function driveApplyRestoredData(data){
   if(data.doclibrary)localStorage.setItem(pk("ai_doclibrary"),JSON.stringify(data.doclibrary));
 }
 async function driveRestore(){
-  if(!driveToken||driveTokenExpiry<=Date.now()){driveConnect();return;}
+  if(!(await driveEnsureToken())){driveConnect();return;}
   if(!driveFolderId)await driveEnsureFolder();
   try{
     var results=await Promise.all([
@@ -3443,7 +3490,7 @@ function driveHasLocalData(){
    Covers the case where the browser/OS wiped localStorage but a Drive
    backup still exists from before. */
 async function driveAutoRestoreIfEmpty(){
-  if(!driveToken||driveTokenExpiry<=Date.now())return;
+  if(!(await driveEnsureToken()))return;
   if(driveHasLocalData())return;
   try{
     if(!driveFolderId)await driveEnsureFolder();
@@ -3511,7 +3558,7 @@ document.getElementById("driveFetchFromDriveBtn").addEventListener("click",async
      find the file, and copy its content out by hand. Only the fetch step
      is automated; Import still requires its own tap so there's always a
      review before anything is applied. */
-  if(!driveToken||driveTokenExpiry<=Date.now()){
+  if(!(await driveEnsureToken())){
     alert("Not connected to Google Drive (or the connection expired) - connect in Settings first, or paste the file's content in below instead.");
     return;
   }
@@ -4739,36 +4786,38 @@ loadBackend();loadPrompts();loadProjects();loadWProjects();loadAutoSave();loadDr
 loadGithubConnection();updateGithubStatus();
 document.getElementById("activeProfileLabel").textContent=activeProfile==="default"?"default":activeProfile;
 
-/* If previously connected but the token's expired, don't try to silently
-   reopen a Google sign-in popup on page load - that fires outside any
-   click, so browsers correctly treat the popup as unsolicited: silently
-   blocked by default (the old, invisible failure mode), or - once a user
-   allows popups for this site - a flash of a window opening and
-   immediately closing since there's no session to renew invisibly.
-   driveAutoPush()/driveEnsureFolder() already no-op safely without a
-   valid token, so just show that a reconnect is needed and let the next
-   real tap on Connect (a genuine user gesture, never blocked) handle it. */
-if(localStorage.getItem(pk("drive_connected"))==="1"){
-  if(!driveToken||driveTokenExpiry<=Date.now()){
-    updateDriveUI(false);
-    updateDriveStatus("Reconnect needed - backup paused");
-    /* The status text alone only gets seen if the user happens to open
-       Settings - the whole point of this fix is that backup can go quiet
-       with nothing to prompt a check. An alert() here is a genuine
-       response to a real page load (this isn't the auto-popup case above
-       that browsers block), so it's safe to show without a click. */
-    alert("Google Drive backup is paused - your connection expired. Reconnect in Settings to resume backing up and restore your latest data.");
+/* If previously connected, silently renew the access_token from the
+   stored refresh_token via drive-auth-worker (driveEnsureToken) - a plain
+   fetch, not a Google popup, so it's safe to do on a cold page load with
+   no user gesture at all. This used to require re-opening the Google
+   sign-in popup to renew, which browsers correctly block outside a click
+   - so every ~1hr access_token expiry surfaced as a "reconnect needed"
+   alert. Now that only happens if the refresh_token itself is actually
+   gone or revoked (e.g. the user removed access in their Google account),
+   which is genuinely rare rather than routine. */
+(async function(){
+  if(localStorage.getItem(pk("drive_connected"))==="1"){
+    if(await driveEnsureToken()){
+      updateDriveUI(true);
+      /* Backup is manual now (the "Back up" button in Settings) - no
+         automatic push here or anywhere else. driveAutoRestoreIfEmpty()
+         still runs since it's a pull, not a push, and only ever acts when
+         there's genuinely nothing local to lose. */
+      driveAutoRestoreIfEmpty();
+    }else{
+      updateDriveUI(false);
+      updateDriveStatus("Reconnect needed - backup paused");
+      /* The status text alone only gets seen if the user happens to open
+         Settings - the whole point of this fix is that backup can go quiet
+         with nothing to prompt a check. An alert() here is a genuine
+         response to a real page load (this isn't the auto-popup case above
+         that browsers block), so it's safe to show without a click. */
+      alert("Google Drive backup is paused - your connection expired and couldn't be silently renewed. Reconnect in Settings to resume backing up and restore your latest data.");
+    }
   }else{
-    updateDriveUI(true);
-    /* Backup is manual now (the "Back up" button in Settings) - no
-       automatic push here or anywhere else. driveAutoRestoreIfEmpty()
-       still runs since it's a pull, not a push, and only ever acts when
-       there's genuinely nothing local to lose. */
-    driveAutoRestoreIfEmpty();
+    updateDriveUI(false);
   }
-}else{
-  updateDriveUI(false);
-}
+})();
 
 })();
 

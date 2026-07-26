@@ -19,8 +19,13 @@ Everything the browser needs — markup, CSS, and JS — lives inline in `index.
 | `openai-router.js` | Cloudflare Worker — proxies DeepInfra + a free web-search endpoint |
 | `openrouter-worker.js` | Cloudflare Worker — proxies OpenRouter |
 | `claude-worker.js` | Cloudflare Worker — proxies Claude API, converts OpenAI format to Claude format |
+| `drive-auth-worker.js` | Cloudflare Worker — holds the Google OAuth client secret; exchanges/refreshes Drive access tokens so the app never needs to re-prompt sign-in |
+| `github-ops-worker.js` | Cloudflare Worker — proxies GitHub API operations (read/write/list files, merge branches) used by the app's repo tools |
 | `wrangler.jsonc` | Wrangler config for the DeepInfra worker |
 | `wrangler-openaiworker.toml` | Wrangler config for the OpenRouter worker |
+| `wrangler-claude.jsonc` | Wrangler config for the Claude worker |
+| `wrangler-drive-auth.jsonc` | Wrangler config for the Drive auth worker |
+| `wrangler-github-ops.jsonc` | Wrangler config for the GitHub ops worker |
 | `import-prompts.html` | Standalone page to bulk-import the default system prompts into `localStorage`. Optional — `index.html` already has an "Import Defaults" button that does the same thing from within the app. |
 
 ## Setup
@@ -53,7 +58,17 @@ Generate a random string (e.g. `openssl rand -hex 32`) — this is `APP_SECRET`.
 4. Add a secret named `APP_SECRET` with the **same** string from step 1.
 5. Deploy and copy the Worker URL.
 
-### 5. Point the frontend at your Workers
+### 5. Deploy the Drive Auth Worker (optional — only needed for Google Drive backup)
+
+Google Drive backup uses an OAuth flow that needs a client secret, which can't live in frontend JS - this Worker holds it and mints/renews Drive access tokens on the app's behalf so you don't have to reconnect Drive every time a token expires (~1hr). This deploys onto the existing **`ai-router-drive`** Worker (its `wrangler-drive-auth.jsonc` config already targets that name) - no new Worker project needed.
+
+1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials), open the OAuth 2.0 Client ID already used by `GOOGLE_CLIENT_ID` in `index.html` (a "Web application" type client). Copy its **Client Secret**. If it doesn't have one yet (older client types don't), you may need to create a new Web application OAuth client and update `GOOGLE_CLIENT_ID` in both `index.html` and `drive-auth-worker.js` to match.
+2. Open the `ai-router-drive` Worker in the Cloudflare dashboard and replace its code with the contents of `drive-auth-worker.js` (Edit Code / Quick Edit, then Deploy) - or run `npx wrangler deploy --config wrangler-drive-auth.jsonc` from this repo, which targets that same Worker name.
+3. Add a secret named `GOOGLE_CLIENT_SECRET` with the value from step 1.
+4. Add a secret named `APP_SECRET` with the **same** string from step 1 of Setup (check it's actually present - it's easy to add `GOOGLE_CLIENT_SECRET` first and forget this one).
+5. Confirm its URL under Settings → Domains (the default is `https://ai-router-drive.<your-subdomain>.workers.dev`) and use that for `DRIVE_AUTH_URL` in the next step.
+
+### 6. Point the frontend at your Workers
 
 In `index.html`, find these lines near the top of the `<script>` block:
 
@@ -61,12 +76,13 @@ In `index.html`, find these lines near the top of the `<script>` block:
 var DI_URL="https://openai-router-chat.lukedorsett.workers.dev";
 var OR_URL="https://openaiworker.lukedorsett.workers.dev";
 var CLAUDE_URL="https://claude-worker.lukedorsett.workers.dev";
+var DRIVE_AUTH_URL="https://drive-auth-worker.lukedorsett.workers.dev";
 var APP_SECRET="CHANGE_ME_APP_SECRET";
 ```
 
-Replace `DI_URL`, `OR_URL`, and `CLAUDE_URL` with your own Worker URLs from steps 2–4, and `APP_SECRET` with the exact string you set as the `APP_SECRET` secret on all three Workers.
+Replace `DI_URL`, `OR_URL`, `CLAUDE_URL`, and `DRIVE_AUTH_URL` with your own Worker URLs from steps 2–5, and `APP_SECRET` with the exact string you set as the `APP_SECRET` secret on all Workers.
 
-### 6. Deploy to GitHub Pages
+### 7. Deploy to GitHub Pages
 
 1. Push `index.html`, `manifest.json`, `sw.js`, and the icon files to the root of a repo.
 2. Enable GitHub Pages: **Settings → Pages → Deploy from branch → main → / (root)**.
