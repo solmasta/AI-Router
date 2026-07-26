@@ -1142,6 +1142,71 @@ function assert(cond, label) {
   const modelLabelAfterToolSwitch = await page.textContent('#modelBtnLabel');
   assert(modelLabelAfterToolSwitch === 'Llama 3.3 70B Turbo', `switch_model tool call actually switches the active model (got "${modelLabelAfterToolSwitch}")`);
 
+  console.log('\n-- web_search tool is actually offered and callable, not dead code --');
+  // web_search used to be fully handled in the tool-execution switch but
+  // never defined in any tools list sent to the model - so a model could
+  // never actually call it; that branch was unreachable. Now it lives in
+  // getAppControlTools() alongside create_project/switch_model/remember.
+  // Verify the request offering tools actually names it, that a
+  // model-issued tool_call for it runs (renders a displayToolExecution
+  // entry), and that its result is fed back to the model as a role:"tool"
+  // message tagged with the matching tool_call_id.
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  await page.locator('.mc:has-text("Mistral Small")').first().click();
+  await page.waitForTimeout(150);
+  let sawWebSearchToolOffered = false;
+  let sawWebSearchToolResultMessage = false;
+  let webSearchRoundCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.stream === false) {
+        webSearchRoundCount++;
+        if (parsed.tools && parsed.tools.some((t) => t.function && t.function.name === 'web_search')) sawWebSearchToolOffered = true;
+        if (webSearchRoundCount === 1) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              choices: [{
+                finish_reason: 'tool_calls',
+                message: {
+                  role: 'assistant',
+                  tool_calls: [{ id: 'regtest_call_search', type: 'function', function: { name: 'web_search', arguments: JSON.stringify({ query: 'regtest search query' }) } }],
+                },
+              }],
+            }),
+          });
+          return;
+        }
+        if ((parsed.messages || []).some((m) => m.role === 'tool' && m.tool_call_id === 'regtest_call_search')) sawWebSearchToolResultMessage = true;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest done' } }] }),
+        });
+        return;
+      }
+      if (parsed && parsed.stream === true) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: 'data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n',
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('what is today\'s weather in some made-up regtest city');
+  await page.unroute('**/*');
+  assert(sawWebSearchToolOffered, 'web_search is actually included in the tools list sent to a tool-capable model');
+  const webSearchExecutionShown = await page.evaluate(() => document.getElementById('chat').textContent.indexOf('Searching: regtest search query') >= 0);
+  assert(webSearchExecutionShown, 'a model-issued web_search tool call actually runs and renders its execution in chat');
+  assert(sawWebSearchToolResultMessage, 'the web_search result is fed back to the model as a role:"tool" message tagged with the matching tool_call_id');
+
   console.log('\n-- hardcoded app-structure knowledge only appears when the connected repo actually IS this app --');
   // Without this, a model asked to do "a checkup" or "add a feature" on
   // the app has to guess its own architecture from scratch every time.

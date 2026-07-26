@@ -260,7 +260,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.50</span></span>
+      <span class="wm">ai-router <span>v5.51</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -557,7 +557,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.50</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.51</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -865,13 +865,24 @@ var REPO_TOOLS=[
    they're additive/reversible (create, don't destroy), so they run
    without a confirmation gate the way write_file has one. The model_id
    enum is built fresh each call so it always matches the real catalog,
-   never a separately-maintained copy that can drift out of sync. */
+   never a separately-maintained copy that can drift out of sync.
+
+   web_search lives here too, not in REPO_TOOLS - it has nothing to do
+   with GitHub, and it's just as safe/reversible as the other three
+   (read-only, no side effects). The app already runs an automatic
+   heuristic-triggered search for messages that merely LOOK time-sensitive
+   (see seemsTimeSensitive below) - that's a crude keyword match and can
+   miss real cases, or fire when it isn't actually needed. Exposing this as
+   a real callable tool lets a tool-capable model decide for itself,
+   independent of that heuristic, instead of only ever getting search
+   results the app guessed it might want. */
 function getAppControlTools(){
   var modelIds=getAllAvailableModels().map(function(x){return x.model.id;});
   return[
     {type:"function","function":{name:"create_project",description:"Turn the current conversation into a saved, reusable Work Project - a persistent ruleset the user can return to later. Use this when the user asks to save/turn this into a project (e.g. \"make this a project\"). Write a clear name and complete instructions yourself, based on what this conversation has actually been about - don't ask the user to write them.",parameters:{type:"object",properties:{name:{type:"string",description:"Short project name"},instructions:{type:"string",description:"Complete instructions/ruleset for this project"}},required:["name","instructions"]}}},
     {type:"function","function":{name:"switch_model",description:"Switch the active chat model. Use this when the user asks to switch models, or when a different available model would clearly serve their actual request better right now.",parameters:{type:"object",properties:{model_id:{type:"string",description:"Exact model id to switch to",enum:modelIds}},required:["model_id"]}}},
-    {type:"function","function":{name:"remember",description:"Save a durable fact about the user for future conversations. Use this when the user explicitly asks you to remember something.",parameters:{type:"object",properties:{fact:{type:"string",description:"The fact to remember, written as a standalone statement"}},required:["fact"]}}}
+    {type:"function","function":{name:"remember",description:"Save a durable fact about the user for future conversations. Use this when the user explicitly asks you to remember something.",parameters:{type:"object",properties:{fact:{type:"string",description:"The fact to remember, written as a standalone statement"}},required:["fact"]}}},
+    {type:"function","function":{name:"web_search",description:"Search the web for current information - news, prices, weather, recent events, or anything that could have changed since training. If search results already appear above in this conversation (tagged \"REAL-TIME DATA\"), the app already searched automatically for this message - don't call this again for the same question.",parameters:{type:"object",properties:{query:{type:"string",description:"The search query"}},required:["query"]}}}
   ];
 }
 var DI_COST={"meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo":0.025,"mistralai/Mistral-Small-3.2-24B-Instruct-2506":0.14,"Qwen/Qwen3.5-9B":0.13,"Qwen/Qwen3.5-27B":1.43,"meta-llama/Llama-3.3-70B-Instruct-Turbo":0.21,"meta-llama/Llama-4-Scout-17B-16E-Instruct":0.20,"Qwen/Qwen2.5-72B-Instruct":0.38,"deepseek-ai/DeepSeek-V3.2":0.32,"Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo":0.65,"Qwen/Qwen3-32B":0.18,"deepseek-ai/DeepSeek-R1-0528":1.33,"Qwen/Qwen3-VL-30B-A3B-Instruct":0.38,"google/gemma-3-27b-it":0.12,"meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8":0.50};
@@ -2091,7 +2102,8 @@ function generateOptimalInstructions(userMessage,selectedModel){
     instructions+="- create_project(name, instructions): Turns this conversation into a saved, reusable Work Project when the user asks (e.g. \"make this a project\") - write the name and full instructions yourself based on the actual conversation, don't ask the user to write them.\n";
     instructions+="- switch_model(model_id): Switch the active model when the user asks, or when a clearly better-fitting model exists for what they need right now.\n";
     instructions+="- remember(fact): Save a durable fact the user asks you to remember.\n";
-    instructions+="Use these directly the moment the user's request calls for them - don't just describe what you'd do, actually call the tool. No permission needed for these three; they're additive and reversible.\n\n";
+    instructions+="- web_search(query): Search the web for current info (news, prices, weather, recent events). Skip this if search results already appear above tagged \"REAL-TIME DATA\" - the app already searched automatically for this message.\n";
+    instructions+="Use these directly the moment the user's request calls for them - don't just describe what you'd do, actually call the tool. No permission needed for these four; they're additive and reversible.\n\n";
 
     if(modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName){
       instructions+="TOOLS AVAILABLE:\n";
@@ -2161,6 +2173,7 @@ function displayToolExecution(toolName,input,result){
   else if(toolName==="create_project"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Creating project: "+esc(input.name)+"</div>";}
   else if(toolName==="switch_model"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Switching model to: "+esc(input.model_id)+"</div>";}
   else if(toolName==="remember"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Remembering: "+esc(input.fact)+"</div>";}
+  else if(toolName==="web_search"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Searching: "+esc(input.query)+"</div>";}
   if(result.error){toolEl.innerHTML+="<div style='color:var(--er);margin-top:4px'>Error: "+esc(result.error)+"</div>";}
   document.getElementById("chat").appendChild(toolEl);
 }
