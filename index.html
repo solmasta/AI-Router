@@ -253,7 +253,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.50</span></span>
+      <span class="wm">ai-router <span>v5.51</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -535,7 +535,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.50</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.51</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -2168,7 +2168,7 @@ function displayThinkingProcess(thinkText){
   if(thinkText.length>500)thinkEl.innerHTML+="<div style='margin-top:4px;color:var(--mu);font-size:10px'>...</div>";
   document.getElementById("chat").appendChild(thinkEl);
 }
-function displayToolExecution(toolName,input,result){
+function displayToolExecution(toolName,input,result,containerId){
   var toolEl=document.createElement("div");
   toolEl.style.cssText="padding:8px 12px;margin:8px 0;background:rgba(59,130,246,0.08);border-left:3px solid #3b82f6;border-radius:4px;font-size:11px;color:var(--tx)";
   var status=result.error?"⚠️ Error":"✓ Success";
@@ -2181,7 +2181,7 @@ function displayToolExecution(toolName,input,result){
   else if(toolName==="switch_model"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Switching model to: "+esc(input.model_id)+"</div>";}
   else if(toolName==="remember"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Remembering: "+esc(input.fact)+"</div>";}
   if(result.error){toolEl.innerHTML+="<div style='color:var(--er);margin-top:4px'>Error: "+esc(result.error)+"</div>";}
-  document.getElementById("chat").appendChild(toolEl);
+  document.getElementById(containerId||"chat").appendChild(toolEl);
 }
 /* Direct, additive/reversible app-control actions - no confirm gate,
    unlike write_file. create_project/remember reuse the exact same
@@ -3990,6 +3990,14 @@ async function sendOverseerChatMsg(){
     var t=typeof m.content==="string"?m.content:((m.content&&m.content.find&&m.content.find(function(c){return c.type==="text";})||{}).text||"");
     return (m.role==="user"?"User: ":"Assistant: ")+t.slice(0,400);
   }).join("\n");
+  /* Full operational privileges over the app, on the same TOOL_MODELS gate
+     as the main chat (the underlying model has to actually support
+     function-calling) - the user asked for the Overseer to be able to
+     directly do repo work and manage which model is active, not just talk
+     about it. Same confirm-before-write/merge safety gates as the main
+     chat still apply below; this only changes who's allowed to ask. */
+  var overseerHasTools=TOOL_MODELS.indexOf(currentModel.id)>=0;
+  var overseerHasRepoTools=overseerHasTools&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName;
   var sys="You are the Overseer, a strategic advisor built into this app. The user has stepped out of their main conversation with the AI model to talk strategy with you directly - about approach, what to try next, or whether they're stuck. Be direct and concise. Base advice on the actual context below, not generic platitudes.\n\n"+
     (overseerPersonality?("Personality: "+overseerPersonality+" - let this come through naturally in your tone and word choice, without announcing or explaining it.\n\n"):"")+
     "Goal: "+(overseerState.goalType||"not yet detected")+"\n"+
@@ -3998,6 +4006,12 @@ async function sendOverseerChatMsg(){
     (overseerState.activeProject?("Active project: "+overseerState.activeProject+"\nProject instructions: "+(overseerState.activeProjectInstructions||"").slice(0,600)+"\n"):"")+
     (overseerState.steps.length?("Task steps: "+overseerState.steps.join(" > ")+" (currently on step "+(overseerState.currentStep+1)+")\n"):"")+
     "\nRecent conversation with the model (most recent last):\n"+(recentCtx||"(no messages yet)");
+  if(overseerHasTools){
+    sys+="\n\nYou have full operational privileges on the user's behalf: create_project, switch_model (change which model is active in the main chat), and remember - use them directly the moment the user's request calls for it, no permission needed.";
+    if(overseerHasRepoTools){
+      sys+=" You also have direct repository access to "+ghRepoOwner+"/"+ghRepoName+": read_file, write_file, list_files, merge_branch. Use them directly instead of just describing what to do - the user still approves every write_file and merge_branch before it actually happens.";
+    }
+  }
   var msgs=[{role:"system",content:sys}].concat(overseerState.strategyChat.slice(0,-1)).concat([{role:"user",content:text}]);
   var wrap=document.createElement("div");wrap.className="msg ma3";
   var body=document.createElement("div");body.className="body";body.innerHTML='<span class="cur">▇</span>';
@@ -4006,7 +4020,83 @@ async function sendOverseerChatMsg(){
   log.appendChild(wrap);log.scrollTop=log.scrollHeight;
   var full="";
   try{
-    var res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:currentModel.id,messages:msgs,temperature:temperature,stream:true})});
+    var overseerTools=[];
+    if(overseerHasTools){
+      overseerTools=overseerTools.concat(getAppControlTools());
+      if(overseerHasRepoTools)overseerTools=overseerTools.concat(REPO_TOOLS);
+    }
+    if(overseerTools.length){
+      /* Same non-streaming tool_choice:"auto" round-trip loop the main
+         chat uses, capped at MAX_TOOL_ROUNDS - lets the Overseer chain
+         list_files -> read_file -> write_file etc. within one message
+         instead of getting one shot at a single tool call. */
+      for(var toolRound=0;toolRound<MAX_TOOL_ROUNDS;toolRound++){
+        var p1res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:currentModel.id,messages:msgs,tools:overseerTools,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:1000})});
+        if(!p1res.ok)break;
+        var p1data=await p1res.json();
+        var p1choice=(p1data.choices||[])[0]||{};
+        if(!(p1choice.finish_reason==="tool_calls"&&p1choice.message&&p1choice.message.tool_calls&&p1choice.message.tool_calls.length))break;
+        msgs.push(p1choice.message);
+        for(var ti=0;ti<p1choice.message.tool_calls.length;ti++){
+          var tc=p1choice.message.tool_calls[ti];
+          var toolName=tc["function"].name;
+          var toolArgs=JSON.parse(tc["function"].arguments||"{}");
+          var toolResult=null;
+          if(toolName==="read_file"){
+            body.innerHTML='<span style="color:var(--mu);font-size:13px">📖 Reading: '+esc(toolArgs.path||"")+'&#8230;</span>';
+            var readRes=await executeRepoTool("read_file",toolArgs);
+            displayToolExecution("read_file",toolArgs,readRes,"overseerChatLog");
+            toolResult=readRes.success?readRes.content:(readRes.error||"Failed to read file");
+          }else if(toolName==="write_file"){
+            body.innerHTML='<span style="color:var(--mu);font-size:13px">✏️ Waiting for approval to write: '+esc(toolArgs.path||"")+'&#8230;</span>';
+            var approvedBranch=await confirmGithubWrite(toolArgs);
+            if(!approvedBranch){
+              displayToolExecution("write_file",toolArgs,{error:"Declined by user - not pushed"},"overseerChatLog");
+              toolResult="The user declined this write. Do not retry the same change without asking first.";
+            }else{
+              toolArgs.branch=approvedBranch;
+              body.innerHTML='<span style="color:var(--mu);font-size:13px">✏️ Writing to branch '+esc(approvedBranch)+': '+esc(toolArgs.path||"")+'&#8230;</span>';
+              var writeRes=await executeRepoTool("write_file",toolArgs);
+              displayToolExecution("write_file",toolArgs,writeRes,"overseerChatLog");
+              toolResult=writeRes.success?("File written to branch '"+approvedBranch+"'. Commit: "+writeRes.commit):(writeRes.error||"Failed to write file");
+            }
+          }else if(toolName==="list_files"){
+            var listRes=await executeRepoTool("list_files",toolArgs);
+            displayToolExecution("list_files",toolArgs,listRes,"overseerChatLog");
+            toolResult=listRes.success?JSON.stringify(listRes.files):(listRes.error||"Failed to list files");
+          }else if(toolName==="merge_branch"){
+            body.innerHTML='<span style="color:var(--mu);font-size:13px">⚡ Waiting for approval to merge: '+esc(toolArgs.branch||"")+'&#8230;</span>';
+            var approvedMerge=await confirmGithubMerge(toolArgs);
+            if(!approvedMerge){
+              displayToolExecution("merge_branch",toolArgs,{error:"Declined by user - not merged"},"overseerChatLog");
+              toolResult="The user declined this merge. Do not retry without asking first.";
+            }else{
+              body.innerHTML='<span style="color:var(--mu);font-size:13px">⚡ Merging '+esc(toolArgs.branch||"")+' into the default branch&#8230;</span>';
+              var mergeRes=await executeRepoTool("merge_branch",toolArgs);
+              displayToolExecution("merge_branch",toolArgs,mergeRes,"overseerChatLog");
+              toolResult=mergeRes.success?("Merged branch '"+toolArgs.branch+"' into the default branch via PR #"+mergeRes.prNumber+" ("+mergeRes.prUrl+")."):(mergeRes.error||"Failed to merge");
+            }
+          }else if(toolName==="create_project"){
+            var cpRes=createProjectFromTool(toolArgs.name,toolArgs.instructions);
+            displayToolExecution("create_project",toolArgs,cpRes,"overseerChatLog");
+            toolResult=cpRes.success?("Created project \""+toolArgs.name+"\" and set it as the active project."):(cpRes.error||"Failed to create project");
+          }else if(toolName==="switch_model"){
+            var smRes=await switchModelFromTool(toolArgs.model_id);
+            displayToolExecution("switch_model",toolArgs,smRes,"overseerChatLog");
+            toolResult=smRes.success?("Switched to "+smRes.label+"."):(smRes.error||"Failed to switch model");
+          }else if(toolName==="remember"){
+            addMemory(toolArgs.fact);
+            displayToolExecution("remember",toolArgs,{success:true},"overseerChatLog");
+            toolResult="Remembered: "+toolArgs.fact;
+          }
+          msgs.push({role:"tool",tool_call_id:tc.id,content:toolResult||"No result"});
+        }
+        body.innerHTML='<span class="cur">▇</span>';
+      }
+    }
+    var reqBody={model:currentModel.id,messages:msgs,temperature:temperature,stream:true};
+    if(overseerTools.length){reqBody.tools=overseerTools;reqBody.tool_choice="none";}
+    var res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify(reqBody)});
     if(!res.ok){var err=await res.json().catch(function(){return{};});throw new Error((err.error&&err.error.message)||"HTTP "+res.status);}
     var reader=res.body.getReader(),dec=new TextDecoder(),buf="",done=false;
     while(!done){
