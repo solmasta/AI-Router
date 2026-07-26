@@ -253,7 +253,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.47</span></span>
+      <span class="wm">ai-router <span>v5.48</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -535,7 +535,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.47</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.48</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1254,11 +1254,21 @@ function analyzeTask(text){
   var codeKeywords=["code","fix","debug","bug","error","function","javascript","python","java","c++","react","node","implement","refactor","lint"];
   var writeKeywords=["write","essay","article","blog","poem","story","explain","describe","summarize","documentation","readme"];
   var reasonKeywords=["why","analyze","explain","think about","consider","philosophy","problem","solution"];
+  /* Was declared on the tasks object but never actually scored anywhere -
+     no keyword list ever incremented it, so every message scored analyze:0
+     and no model ever got a research/analysis-specific boost in
+     scoreModelForTask below. That silently removed a whole category of
+     models (Technical/Reasoning-tagged, "analysis"/"research"/"data" in
+     their description) from ever being favored, which was part of why the
+     auto-router kept landing on the same handful of models regardless of
+     what was actually asked. */
+  var analyzeKeywords=["research","investigate","compare","statistics","stats","data","dataset","trend","insight","survey","findings"];
   var searchKeywords=["search","find","lookup","what is","who is","latest","news","price","weather"];
   githubKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.github+=2;});
   codeKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.code+=1;});
   writeKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.write+=1;});
   reasonKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.reason+=1;});
+  analyzeKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.analyze+=1;});
   searchKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.search+=1;});
   if(lower.indexOf("```")>=0)tasks.code+=2;
   return tasks;
@@ -1289,19 +1299,38 @@ function scoreModelForTask(model,tasks){
   if(tasks.reason>0){
     if(capStr.indexOf("claude")>=0||capStr.indexOf("opus")>=0)score+=tasks.reason*6;
   }
+  if(tasks.analyze>0){
+    if(capStr.indexOf("analy")>=0||capStr.indexOf("research")>=0||capStr.indexOf("data")>=0||model.cat==="Technical"||model.cat==="Reasoning")score+=tasks.analyze*7;
+  }
   if(tasks.search>0){
     score+=tasks.search*2;
   }
   /* Token efficiency: how demanding does this message actually look?
      When nothing points to a hard task, prefer cheaper/faster models -
      reach for an expensive one only when the task genuinely calls for it,
-     rather than defaulting to the biggest model for a simple "hi". */
+     rather than defaulting to the biggest model for a simple "hi".
+
+     This used to be two wide bands: complexity<=1 got the FULL cheap-model
+     reward (up to +18), and nothing short of complexity>=5 got any
+     capability push at all (at most +6, rarely enough to clear
+     SWITCH_SCORE_MARGIN on its own). Since real keyword coverage is sparse,
+     the overwhelming majority of ordinary messages landed in that <=1
+     bucket - so in practice the router almost always converged on whichever
+     tier-0 (cheapest) model scored highest, and genuinely demanding
+     messages rarely pulled decisively toward a more capable one. Net
+     effect: it kept bouncing between the same 3-4 cheap models and barely
+     ever reached for the rest of the catalog. Three narrower bands
+     instead: only a truly signal-free message gets the full cheap-model
+     push, mid-range messages get a mild capability lean instead of
+     nothing, and messages with real signal pull harder toward capability. */
   var complexity=tasks.github+tasks.code+tasks.write+tasks.reason+tasks.analyze+tasks.search;
   var tier=getModelCostTier(model);
-  if(complexity<=1){
-    score+=(3-tier)*6; /* low-complexity: reward cheap models */
-  }else if(complexity>=5){
-    score+=tier*2; /* high-complexity: small nudge toward more capable/pricier models */
+  if(complexity===0){
+    score+=(3-tier)*4; /* no signal at all: mild reward for cheap models */
+  }else if(complexity>=4){
+    score+=tier*5; /* strong signal: pull hard toward capable/pricier models */
+  }else{
+    score+=tier*1; /* in between: small capability lean either way */
   }
   return score;
 }
@@ -1330,10 +1359,32 @@ var MAX_TOOL_ROUNDS=4;
    switch prompt on every single message. This gives real breathing room
    regardless of which model would've been suggested next. */
 var switchSuggestionCooldown=0;
+/* Last few models the router actually switched TO, most recent first -
+   used below to mildly penalize immediately re-suggesting whatever was
+   just picked. Without this, ties (or near-ties) between several
+   similarly-good-fit models always resolved to the same one every time
+   (stable sort + first-in-array-order wins), which is a big part of why
+   the router felt like it only ever bounced between a couple of models
+   instead of actually spreading across the catalog when several models
+   were a reasonable fit. Reset alongside declinedSwitchTargets wherever
+   that's reset - both are per-conversation routing state. */
+var recentAutoSelections=[];
 function selectBestModel(tasks){
+  /* Shuffle before scoring so an exact score tie between several
+     comparably-good models doesn't always resolve to the same one (Array
+     methods here are stable, so without this the first model in
+     BACKENDS' fixed declaration order would win every tie, every time). */
   var available=getAllAvailableModels();
+  for(var s=available.length-1;s>0;s--){
+    var j=Math.floor(Math.random()*(s+1));
+    var tmp=available[s];available[s]=available[j];available[j]=tmp;
+  }
   if(!available.length)return null;
-  var scored=available.map(function(item){return{model:item.model,backend:item.backend,score:scoreModelForTask(item.model,tasks)};});
+  var scored=available.map(function(item){
+    var sc=scoreModelForTask(item.model,tasks);
+    if(recentAutoSelections.indexOf(item.model.id)>=0)sc-=6;
+    return{model:item.model,backend:item.backend,score:sc};
+  });
   scored.sort(function(a,b){return b.score-a.score;});
   var currentScore=scoreModelForTask(currentModel,tasks);
   for(var i=0;i<scored.length;i++){
@@ -1351,6 +1402,7 @@ function switchReasonText(best){
   if(best.reason&&best.reason.code>0)reasons.push("code expertise");
   if(best.reason&&best.reason.write>0)reasons.push("writing skills");
   if(best.reason&&best.reason.reason>0)reasons.push("reasoning");
+  if(best.reason&&best.reason.analyze>0)reasons.push("research/analysis");
   if(best.reason&&best.reason.search>0)reasons.push("real-time info");
   return reasons.length?reasons.join(", "):"efficiency for this message";
 }
@@ -1397,6 +1449,8 @@ async function switchToBestModel(text){
      happened afterward (showAgentSelection) instead of blocking every
      send on a confirm dialog first. */
   lastAgentSelection={model:best.model,backend:best.backend,reason:tasks,score:best.score};
+  recentAutoSelections.unshift(best.model.id);
+  recentAutoSelections=recentAutoSelections.slice(0,3);
   if(best.backend!==activeBackend){
     activeBackend=best.backend;
     await loadBackend();
@@ -1571,16 +1625,25 @@ function makeBetterRecommendation(){
   var taskAnalysis=analyzeTask((chatHistory[chatHistory.length-1]||{}).content||"");
   var recs=[];
 
+  /* Model names here have to actually exist in BACKENDS.claude.models
+     (labels: "Claude Opus 4.8", "Claude Sonnet 5", "Claude Haiku 4.5") -
+     these previously named "Claude Opus 4.1" and "Claude Sonnet 4", which
+     don't exist anywhere in this app's model catalog. A user acting on the
+     suggestion would never find that option in the model picker. */
   if(taskAnalysis.code>0){
     recs.push({type:"model_switch",model:"DeepSeek R1",reason:"Stuck on code. R1's step-by-step reasoning can debug deeper.",confidence:90});
-    recs.push({type:"model_switch",model:"Claude Opus 4.1",reason:"Try higher reasoning power for complex logic issues.",confidence:75});
+    recs.push({type:"model_switch",model:"Claude Opus 4.8",reason:"Try higher reasoning power for complex logic issues.",confidence:75});
     recs.push({type:"approach",reason:"Try: Print debug statements, isolate the exact line causing the issue.",confidence:70});
   }else if(taskAnalysis.reason>0){
-    recs.push({type:"model_switch",model:"Claude Opus 4.1",reason:"Complex reasoning. Switching to strongest analyzer.",confidence:85});
+    recs.push({type:"model_switch",model:"Claude Opus 4.8",reason:"Complex reasoning. Switching to strongest analyzer.",confidence:85});
     recs.push({type:"model_switch",model:"DeepSeek R1",reason:"Full reasoning model can think through the problem systematically.",confidence:80});
     recs.push({type:"approach",reason:"Break down into smaller questions and solve each one separately.",confidence:75});
+  }else if(taskAnalysis.analyze>0){
+    recs.push({type:"model_switch",model:"Qwen3 32B Reasoning",reason:"Research/data-flavored question. A reasoning-tagged model can work through it more systematically.",confidence:80});
+    recs.push({type:"model_switch",model:"DeepSeek R1",reason:"Full reasoning model, good for digging into data and findings.",confidence:75});
+    recs.push({type:"approach",reason:"Share the actual data/source so the analysis has something concrete to work from.",confidence:70});
   }else if(taskAnalysis.write>0){
-    recs.push({type:"model_switch",model:"Claude Sonnet 4",reason:"Better at clear writing. Opus overkill here.",confidence:75});
+    recs.push({type:"model_switch",model:"Claude Sonnet 5",reason:"Better at clear writing. Opus overkill here.",confidence:75});
     recs.push({type:"approach",reason:"Try: 'Explain this more clearly' or 'Make it more concise'",confidence:70});
   }else{
     recs.push({type:"approach",reason:"Ask a more specific follow-up question to get better results.",confidence:75});
@@ -2834,7 +2897,7 @@ function applyTabAsLiveState(t){
   if(overseerEnabled&&chatHistory.length>1){startOverseerMonitoring();}
   updateOverseerBar();
   preVisionModel=null;
-  declinedSwitchTargets={};switchSuggestionCooldown=0;
+  declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];
 }
 function renderTabBar(){
   var bar=document.getElementById("tabBar");
@@ -2878,7 +2941,7 @@ function createNewTab(){
   overseerState=defaultOverseerState();
   updateOverseerBar();
   preVisionModel=null;
-  declinedSwitchTargets={};switchSuggestionCooldown=0;
+  declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];
   renderTabBar();
   saveTabsToStorage();
 }
@@ -4430,7 +4493,7 @@ document.getElementById("clearBtn").addEventListener("click",function(){
   chatHistory=[];clearAttach();localStorage.removeItem(pk(AUTOSAVE_KEY));localStorage.removeItem(pk("ai_draft"));
   sessionId=Date.now().toString();responseCount=0;lastUsedModelId="";summarizing=false;
   clearActiveWproj();stopOverseerMonitoring();overseerState=defaultOverseerState();
-  preVisionModel=null;declinedSwitchTargets={};switchSuggestionCooldown=0;
+  preVisionModel=null;declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];
   document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">🤖</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';
   document.getElementById("tokenBar").classList.add("hidden");
   updateOverseerBar();
