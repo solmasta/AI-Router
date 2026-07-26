@@ -57,6 +57,8 @@
    - a fresh deploy that only changes index.html (the common case) still
      surfaces a dismissible "Update available" toast, not just a service-
      worker-byte-change-only reload that could otherwise never fire
+   - the Overseer button visibly pulses while the auto-router is scoring
+     which model fits the message just sent, and clears once it decides
    - every model, tool-capable or not, is explicitly told not to invent
      or call a tool/function that was never actually defined for the
      conversation (e.g. a fictional weather lookup)
@@ -1751,6 +1753,26 @@ function assert(cond, label) {
   await page.unroute('**/index.html');
   const toastVisibleAfter = await page.evaluate(() => !document.getElementById('updateToast').classList.contains('hidden'));
   assert(toastVisibleAfter, 'the update toast appears once a fresh fetch of index.html reports a different version string');
+
+  console.log('\n-- Overseer button pulses while the router evaluates which model fits the message just sent --');
+  // The actual scoring is synchronous and near-instant, which made the
+  // routing decision invisible - a message that kept the same model looked
+  // identical to the router not running at all. A floor on how long the
+  // pulse shows (not on the scoring itself) makes every decision briefly
+  // visible on the Overseer button, and clears once the decision lands.
+  await page.fill('#prompt', 'regtest message to check the thinking pulse');
+  await page.click('#sendBtn');
+  let sawThinkingClass = false;
+  for (let i = 0; i < 40; i++) {
+    const hasThinking = await page.evaluate(() => document.getElementById('overseerBtn').classList.contains('thinking'));
+    if (hasThinking) { sawThinkingClass = true; break; }
+    await page.waitForTimeout(20);
+  }
+  assert(sawThinkingClass, 'the Overseer button gets a "thinking" pulse class while the router evaluates the message');
+  await dismissConfirmIfAny();
+  await waitForSendDone();
+  const thinkingClassClearedAfter = await page.evaluate(() => document.getElementById('overseerBtn').classList.contains('thinking'));
+  assert(!thinkingClassClearedAfter, 'the "thinking" pulse clears once the routing decision is made');
 
   console.log(`\n-- page errors: ${realErrors().length} real (excluding expected sandbox network noise) --`);
   if (realErrors().length) console.log(realErrors());
