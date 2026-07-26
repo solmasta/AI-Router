@@ -54,6 +54,9 @@
    - GitHub Settings: a one-tap Clear button disconnects the active repo
      without opening the Connect modal, and previously-connected repos are
      offered as quick "recent" picks when reconnecting
+   - a fresh deploy that only changes index.html (the common case) still
+     surfaces a dismissible "Update available" toast, not just a service-
+     worker-byte-change-only reload that could otherwise never fire
    - every model, tool-capable or not, is explicitly told not to invent
      or call a tool/function that was never actually defined for the
      conversation (e.g. a fictional weather lookup)
@@ -1726,6 +1729,28 @@ function assert(cond, label) {
   assert(sendBoxNarrow && (sendBoxNarrow.x + sendBoxNarrow.width) <= 375, `Send stays fully on-screen at a 375px phone width instead of overflowing (right edge at ${sendBoxNarrow ? (sendBoxNarrow.x + sendBoxNarrow.width).toFixed(0) : 'N/A'}px)`);
   if (defaultViewport) await page.setViewportSize(defaultViewport);
   await page.waitForTimeout(150);
+
+  console.log('\n-- app-update toast shows when a fresh deploy has a different version string --');
+  // The service worker's own update mechanism only fires when sw.js's
+  // bytes change, which a plain index.html content deploy never does -
+  // checkForFreshVersion is the actual safety net: it re-fetches
+  // index.html with no-store and diffs the version string in the header
+  // watermark against what's currently rendered, showing a dismissible
+  // "Update available" toast instead of a surprise silent reload.
+  const toastHiddenBefore = await page.evaluate(() => document.getElementById('updateToast').classList.contains('hidden'));
+  assert(toastHiddenBefore, 'test setup: update toast starts hidden');
+  await page.route('**/index.html', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<span class="wm">ai-router <span>v9.99</span></span>',
+    });
+  });
+  await page.evaluate(() => window.checkForFreshVersion());
+  await page.waitForTimeout(300);
+  await page.unroute('**/index.html');
+  const toastVisibleAfter = await page.evaluate(() => !document.getElementById('updateToast').classList.contains('hidden'));
+  assert(toastVisibleAfter, 'the update toast appears once a fresh fetch of index.html reports a different version string');
 
   console.log(`\n-- page errors: ${realErrors().length} real (excluding expected sandbox network noise) --`);
   if (realErrors().length) console.log(realErrors());

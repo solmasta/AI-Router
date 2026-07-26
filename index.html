@@ -253,7 +253,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.57</span></span>
+      <span class="wm">ai-router <span>v5.58</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -539,7 +539,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.57</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.58</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -571,6 +571,12 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <span>Chat cleared</span>
   <div class="td"><div class="tf" id="undoProgress"></div></div>
   <button id="undoBtn">Undo</button>
+</div>
+
+<!-- App update toast -->
+<div class="undo-toast hidden" id="updateToast" style="bottom:140px">
+  <span>&#128260; Update available</span>
+  <button id="updateRefreshBtn">Refresh</button>
 </div>
 
 <!-- Recent Chats modal -->
@@ -4984,13 +4990,44 @@ document.getElementById("activeProfileLabel").textContent=activeProfile==="defau
 </script>
 
 <script>
+/* Surfaces a dismissible "Update available" toast instead of forcing a
+   silent reload - a silent reload used to fire the instant a new service
+   worker took control, which could yank the page out from under someone
+   mid-message with zero warning. Two independent triggers feed the same
+   toast:
+   1. The service worker itself updating (updatefound/controllerchange) -
+      but the browser only treats this as "new" when sw.js's own bytes
+      change, so an index.html-only deploy (the common case) never fires
+      it at all.
+   2. A direct content check: re-fetch index.html with no-store and
+      compare the version string in the header watermark against what's
+      currently rendered. This is what actually catches "the page in
+      front of you is stale" regardless of whether sw.js changed. */
+var CURRENT_APP_VERSION = (function() {
+  var el = document.querySelector('.wm span');
+  return el ? el.textContent : null;
+})();
+var updateToastShown = false;
+function showUpdateToast() {
+  if (updateToastShown) return;
+  updateToastShown = true;
+  document.getElementById('updateToast').classList.remove('hidden');
+}
+document.getElementById('updateRefreshBtn').addEventListener('click', function() { window.location.reload(); });
+function checkForFreshVersion() {
+  if (!CURRENT_APP_VERSION) return;
+  fetch('./index.html', { cache: 'no-store' }).then(function(r) { return r.text(); }).then(function(html) {
+    var m = html.match(/<span class="wm">ai-router <span>(v[\d.]+)<\/span><\/span>/);
+    if (m && m[1] !== CURRENT_APP_VERSION) showUpdateToast();
+  }).catch(function() {});
+}
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/openai-router/sw.js').then(function(reg) {
     reg.addEventListener('updatefound', function() {
       var worker = reg.installing;
       worker.addEventListener('statechange', function() {
         if (worker.state === 'installed' && navigator.serviceWorker.controller) {
-          window.location.reload();
+          showUpdateToast();
         }
       });
     });
@@ -4998,14 +5035,22 @@ if ('serviceWorker' in navigator) {
        is opened/resumed - browsers only auto-check occasionally otherwise,
        which is why a fresh deploy can sit uninstalled for a while. */
     reg.update();
+    checkForFreshVersion();
     document.addEventListener('visibilitychange', function() {
-      if (document.visibilityState === 'visible') reg.update();
+      if (document.visibilityState === 'visible') { reg.update(); checkForFreshVersion(); }
     });
-    window.addEventListener('focus', function() { reg.update(); });
+    window.addEventListener('focus', function() { reg.update(); checkForFreshVersion(); });
+    setInterval(function() { reg.update(); checkForFreshVersion(); }, 5 * 60 * 1000);
   });
   navigator.serviceWorker.addEventListener('controllerchange', function() {
-    window.location.reload();
+    showUpdateToast();
   });
+} else {
+  document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') checkForFreshVersion();
+  });
+  window.addEventListener('focus', checkForFreshVersion);
+  setInterval(checkForFreshVersion, 5 * 60 * 1000);
 }
 </script>
 </body>
