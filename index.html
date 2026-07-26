@@ -253,7 +253,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.55</span></span>
+      <span class="wm">ai-router <span>v5.56</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -535,7 +535,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.55</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.56</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1370,6 +1370,31 @@ function getAllAvailableModels(){
   Object.keys(BACKENDS).forEach(function(key){
     var B=BACKENDS[key];if(B.models){B.models.forEach(function(m){all.push({model:m,backend:key});})}});
   return all;
+}
+/* Picks a different tool-capable model to retry on when the currently
+   active one comes back with a genuinely empty completion (not an error -
+   the request succeeded but the model produced nothing at all, e.g. it
+   burned its whole turn on tool_calls and had nothing left to say once
+   locked into tool_choice:"none"). Walks TOOL_MODELS in declared order
+   and returns the first one that isn't the model that just failed, so the
+   result is deterministic instead of another roll of the dice on the same
+   model that just came up empty. */
+function pickFallbackModel(failedId){
+  var all=getAllAvailableModels();
+  for(var i=0;i<TOOL_MODELS.length;i++){
+    if(TOOL_MODELS[i]===failedId)continue;
+    for(var j=0;j<all.length;j++){
+      if(all[j].model.id===TOOL_MODELS[i])return all[j];
+    }
+  }
+  return null;
+}
+function showModelSwitchNotice(html,targetId){
+  var notice=document.createElement("div");
+  notice.style.cssText="padding:8px 12px;margin:8px 0;background:rgba(139,140,247,0.1);border-left:3px solid var(--ac);border-radius:4px;font-size:13px;color:var(--tx)";
+  notice.innerHTML=html;
+  document.getElementById(targetId||"chat").appendChild(notice);
+  setTimeout(function(){notice.style.opacity="0.5";},4000);
 }
 /* Minimum score edge a candidate needs over the current model before it's
    even worth suggesting a switch - without this, two models scoring a
@@ -4172,21 +4197,41 @@ async function sendOverseerChatMsg(){
     }
     var reqBody={model:currentModel.id,messages:msgs,temperature:temperature,stream:true};
     if(overseerTools.length){reqBody.tools=overseerTools;reqBody.tool_choice="none";}
-    var res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify(reqBody)});
-    if(!res.ok){var err=await res.json().catch(function(){return{};});throw new Error((err.error&&err.error.message)||"HTTP "+res.status);}
-    var reader=res.body.getReader(),dec=new TextDecoder(),buf="",done=false;
-    while(!done){
-      var chunk=await reader.read();if(chunk.done)break;
-      buf+=dec.decode(chunk.value,{stream:true});
-      var lines=buf.split("\n");buf=lines.pop();
-      for(var i=0;i<lines.length;i++){
-        var ln=lines[i].trim();if(!ln.startsWith("data: "))continue;
-        var d=ln.slice(6);if(d==="[DONE]"){done=true;break;}
-        try{
-          var tok=((JSON.parse(d).choices||[])[0]||{});
-          tok=tok.delta&&tok.delta.content;
-          if(tok){full+=tok;body.innerHTML=renderMd(full)+'<span class="cur">▇</span>';log.scrollTop=log.scrollHeight;}
-        }catch(ex){}
+    var streamFrom=async function(body2){
+      var res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify(body2)});
+      if(!res.ok){var err=await res.json().catch(function(){return{};});throw new Error((err.error&&err.error.message)||"HTTP "+res.status);}
+      var reader=res.body.getReader(),dec=new TextDecoder(),buf="",done=false;
+      while(!done){
+        var chunk=await reader.read();if(chunk.done)break;
+        buf+=dec.decode(chunk.value,{stream:true});
+        var lines=buf.split("\n");buf=lines.pop();
+        for(var i=0;i<lines.length;i++){
+          var ln=lines[i].trim();if(!ln.startsWith("data: "))continue;
+          var d=ln.slice(6);if(d==="[DONE]"){done=true;break;}
+          try{
+            var tok=((JSON.parse(d).choices||[])[0]||{});
+            tok=tok.delta&&tok.delta.content;
+            if(tok){full+=tok;body.innerHTML=renderMd(full)+'<span class="cur">▇</span>';log.scrollTop=log.scrollHeight;}
+          }catch(ex){}
+        }
+      }
+    };
+    await streamFrom(reqBody);
+    /* Same auto-fallback as the main chat: an empty completion here most
+       often means the model spent its turn on tool_calls and had nothing
+       left once locked to tool_choice:"none" for the final render - retry
+       once on a different tool-capable model instead of just showing
+       "(empty response)". */
+    if(!full.trim()){
+      var fallback=pickFallbackModel(currentModel.id);
+      if(fallback){
+        var failedLabel=currentModel.label;
+        if(fallback.backend!==activeBackend){activeBackend=fallback.backend;await loadBackend();}
+        setModel(fallback.model);renderModelList();
+        showModelSwitchNotice("🤖 <strong>"+esc(failedLabel)+"</strong> returned no response – switched to <strong>"+esc(fallback.model.label)+"</strong> and retrying","overseerChatLog");
+        body.innerHTML='<span class="cur">▇</span>';
+        reqBody.model=fallback.model.id;
+        try{await streamFrom(reqBody);}catch(fe){console.error("Fallback retry error:",fe);}
       }
     }
     body.innerHTML=renderMd(full||"(empty response)");
@@ -4646,34 +4691,62 @@ async function doSendRequest(userContent,isRegen,ap){
        the model what tools exist (for its own reasoning about what it
        already did) while forcing it to respond in plain text. */
     if(toolsToSend.length>0){reqBody.tools=toolsToSend;reqBody.tool_choice="none";}
-    var res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify(reqBody),signal:abortController.signal});
-    if(!res.ok){var err=await res.json().catch(function(){return{};});throw new Error((err.error&&err.error.message)||"HTTP "+res.status);}
-    var reader=res.body.getReader(),dec=new TextDecoder(),buf="",done=false;
-    while(!done){
-      var chunk=await reader.read();if(chunk.done)break;
-      buf+=dec.decode(chunk.value,{stream:true});
-      var lines=buf.split("\n");buf=lines.pop();
-      for(var i=0;i<lines.length;i++){
-        var ln=lines[i].trim();if(!ln.startsWith("data: "))continue;
-        var d=ln.slice(6);if(d==="[DONE]"){done=true;break;}
-        try{
-          var tok=((JSON.parse(d).choices||[])[0]||{});
-          tok=tok.delta&&tok.delta.content;
-          if(tok){full+=tok;var dispFull=full.replace(/<think>[\s\S]*?<\/think>\s*/g,"");asstMsg.body.innerHTML=renderMd(dispFull)+'<span class="cur">\u2587</span>';scrollBot();}
-        }catch(ex){}
+    /* Shared streaming reader for both the primary attempt and the
+       fallback retry below - appends directly into the outer `full` so
+       either call's tokens render live the same way. */
+    var streamFrom=async function(body){
+      var res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify(body),signal:abortController.signal});
+      if(!res.ok){var err=await res.json().catch(function(){return{};});throw new Error((err.error&&err.error.message)||"HTTP "+res.status);}
+      var reader=res.body.getReader(),dec=new TextDecoder(),buf="",done=false;
+      while(!done){
+        var chunk=await reader.read();if(chunk.done)break;
+        buf+=dec.decode(chunk.value,{stream:true});
+        var lines=buf.split("\n");buf=lines.pop();
+        for(var i=0;i<lines.length;i++){
+          var ln=lines[i].trim();if(!ln.startsWith("data: "))continue;
+          var d=ln.slice(6);if(d==="[DONE]"){done=true;break;}
+          try{
+            var tok=((JSON.parse(d).choices||[])[0]||{});
+            tok=tok.delta&&tok.delta.content;
+            if(tok){full+=tok;var dispFull=full.replace(/<think>[\s\S]*?<\/think>\s*/g,"");asstMsg.body.innerHTML=renderMd(dispFull)+'<span class="cur">\u2587</span>';scrollBot();}
+          }catch(ex){}
+        }
       }
-    }
+    };
+    await streamFrom(reqBody);
 
     var thinkMatch=full.match(/<think>([\s\S]*?)<\/think>/);
     if(thinkMatch){displayThinkingProcess(thinkMatch[1]);}
     full=full.replace(/<think>[\s\S]*?<\/think>\s*/g,"");
+
+    var triedFallback=false;
+    if(!full.trim()){
+      /* The model produced literally nothing (most often: it burned its
+         turn on tool_calls and had nothing left to say once the final
+         call locked it to tool_choice:"none"). Rather than silently
+         showing "(empty response)", switch to a different tool-capable
+         model - same mechanism as the vision auto-switch above - and give
+         it one shot at the same conversation before giving up. */
+      var fallback=pickFallbackModel(currentModel.id);
+      if(fallback){
+        var failedLabel=currentModel.label;
+        triedFallback=true;
+        if(fallback.backend!==activeBackend){activeBackend=fallback.backend;await loadBackend();}
+        setModel(fallback.model);renderModelList();
+        showModelSwitchNotice("\ud83e\udd16 <strong>"+esc(failedLabel)+"</strong> returned no response \u2013 switched to <strong>"+esc(fallback.model.label)+"</strong> and retrying");
+        asstMsg.body.innerHTML='<span class="cur">\u2587</span>';
+        reqBody.model=fallback.model.id;
+        try{await streamFrom(reqBody);}catch(fe){console.error("Fallback retry error:",fe);}
+        full=full.replace(/<think>[\s\S]*?<\/think>\s*/g,"");
+      }
+    }
 
     var memSuggestions=extractMemorySuggestions(full);
     full=stripMemoryTags(full);
     speakText(full);
 
     asstMsg.wrap.classList.remove("ma2");
-    asstMsg.body.innerHTML=renderMd(full||(isRegen?"(no response)":"(empty response)"));
+    asstMsg.body.innerHTML=renderMd(full||(isRegen?"(no response)":triedFallback?"\u26a0\ufe0f No response from "+esc(currentModel.label)+" either - try rephrasing or pick a different model.":"(empty response)"));
     chatHistory.push({role:"assistant",content:full});
     memSuggestions.forEach(function(t){showMemorySuggestion(t);});
     if(searchUsed){var sb=document.createElement("span");sb.className="srch";sb.textContent="\uD83D\uDD0D searched "+searchTime;asstMsg.label.appendChild(sb);}

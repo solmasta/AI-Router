@@ -1044,6 +1044,59 @@ function assert(cond, label) {
   assert(unboundedRoundCount === 4, `the tool loop stops after MAX_TOOL_ROUNDS (4) rounds even if the model keeps returning tool_calls every time (got ${unboundedRoundCount} rounds)`);
   await page.waitForTimeout(500);
 
+  console.log('\n-- an empty completion auto-switches to a fallback model and retries instead of just showing "(empty response)" --');
+  // A model can burn its whole turn on tool_calls and have nothing left to
+  // say once the final render call locks it to tool_choice:"none" - that
+  // used to just render "(empty response)" and stop there. Mock the final
+  // streaming call as genuinely empty and confirm the app switches to a
+  // different tool-capable model and retries once, rendering that model's
+  // actual reply instead.
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  await page.locator('.mc:has-text("Mistral Small")').first().click();
+  await page.waitForTimeout(150);
+  let emptyRespToolRoundSeen = false;
+  let emptyRespStreamModels = [];
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.stream === false) {
+        emptyRespToolRoundSeen = true;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '' } }] }),
+        });
+        return;
+      }
+      if (parsed && parsed.stream === true) {
+        emptyRespStreamModels.push(parsed.model);
+        if (emptyRespStreamModels.length === 1) {
+          await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: [DONE]\n\n' });
+        } else {
+          await route.fulfill({
+            status: 200,
+            contentType: 'text/event-stream',
+            body: 'data: {"choices":[{"delta":{"content":"regtest fallback reply"}}]}\n\ndata: [DONE]\n\n',
+          });
+        }
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please help me get organized');
+  await page.unroute('**/*');
+  assert(emptyRespToolRoundSeen, 'test setup: the app-control tool round actually ran for this message');
+  assert(emptyRespStreamModels.length === 2, `an empty first completion triggers exactly one fallback retry (got ${emptyRespStreamModels.length} streaming calls: ${JSON.stringify(emptyRespStreamModels)})`);
+  assert(emptyRespStreamModels[0] !== emptyRespStreamModels[1], `the retry actually uses a different model than the one that just returned empty (got "${emptyRespStreamModels[0]}" then "${emptyRespStreamModels[1]}")`);
+  const modelLabelAfterFallback = await page.textContent('#modelBtnLabel');
+  assert(modelLabelAfterFallback === 'Llama 3.1 8B Turbo', `the app switches to the fallback model in the model picker (got "${modelLabelAfterFallback}")`);
+  const chatTextAfterFallback = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(chatTextAfterFallback.indexOf('regtest fallback reply') >= 0, `the fallback model's actual reply is what ends up rendered, not "(empty response)" (chat text: ${chatTextAfterFallback.slice(-300)})`);
+  assert(chatTextAfterFallback.indexOf('switched to') >= 0, 'a notice explaining the automatic model switch is shown in the chat');
+
   console.log('\n-- auto-router prefers a tool-capable model for a repo-flavored message --');
   // scoreModelForTask used to try to reward a DeepInfra model for a
   // github-flavored message by checking model.id/label/desc for the
