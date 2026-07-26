@@ -21,19 +21,25 @@ async function describeError(res) {
   return message ? `HTTP ${res.status} - ${message}` : `HTTP ${res.status}`;
 }
 
+async function getDefaultBranch(owner, repo, headers) {
+  const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
+  if (!repoRes.ok) throw new Error(`Failed to look up repo default branch: ${await describeError(repoRes)}`);
+  return (await repoRes.json()).default_branch;
+}
+
 // Every write lands on an explicit branch, never straight onto the repo's
 // default branch just because a caller omitted one - creates the branch
 // from the repo's default branch if it doesn't already exist yet, so a
 // fresh working-branch name just works with no separate "create branch"
-// step needed from the client.
-async function ensureBranchExists(owner, repo, branch, headers) {
+// step needed from the client. knownDefaultBranch lets a caller that
+// already looked it up (write_file's own guard below) skip a second,
+// identical lookup.
+async function ensureBranchExists(owner, repo, branch, headers, knownDefaultBranch) {
   const refUrl = `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`;
   const refRes = await fetch(refUrl, { headers });
   if (refRes.ok) return;
 
-  const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
-  if (!repoRes.ok) throw new Error(`Failed to look up repo default branch: ${await describeError(repoRes)}`);
-  const defaultBranch = (await repoRes.json()).default_branch;
+  const defaultBranch = knownDefaultBranch || await getDefaultBranch(owner, repo, headers);
 
   const baseRefRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(defaultBranch)}`, { headers });
   if (!baseRefRes.ok) throw new Error(`Failed to read base branch ${defaultBranch}: ${await describeError(baseRefRes)}`);
@@ -81,12 +87,24 @@ async function handleGitHubOp(body, env) {
 
         // Same non-default-branch fallback as the client's own confirm
         // dialog, kept here too as defense in depth - this worker must
-        // never land a write on "main"/"master" just because a caller
-        // (this client or any other) omitted a branch or forgot to guard
-        // for it.
-        const targetBranch = (branch && !/^(main|master)$/i.test(branch)) ? branch : "ai-changes";
+        // never land a write on the repo's real default branch just
+        // because a caller (this client or any other) omitted a branch or
+        // forgot to guard for it. A regex on the literal names
+        // "main"/"master" only protects repos that happen to use one of
+        // those - a connected repo whose default branch is named anything
+        // else (develop, trunk, ...) had no protection here at all. Look
+        // up the actual default branch and check the requested branch
+        // against that, not just the two common names.
+        let repoDefaultBranch;
         try {
-          await ensureBranchExists(owner, repo, targetBranch, headers);
+          repoDefaultBranch = await getDefaultBranch(owner, repo, headers);
+        } catch (e) {
+          return { error: e.message };
+        }
+        const requestedIsDefault = branch && (branch === repoDefaultBranch || /^(main|master)$/i.test(branch));
+        const targetBranch = (branch && !requestedIsDefault) ? branch : "ai-changes";
+        try {
+          await ensureBranchExists(owner, repo, targetBranch, headers, repoDefaultBranch);
         } catch (e) {
           return { error: e.message };
         }
