@@ -187,7 +187,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 .cat-uncensored{background:rgba(248,113,113,.13);color:#f87171}
 .cat-free{background:rgba(110,231,183,.13);color:#6ee7b7}
 .cat-favorites{background:rgba(245,158,11,.13);color:#f59e0b}
-.si{width:100%;background:var(--up);border:none;border-radius:14px;padding:10px 14px;color:var(--tx);font-size:14.5px;font-family:-apple-system,system-ui,sans-serif;margin-bottom:8px;flex-shrink:0}
+.si{width:100%;background:var(--up);border:none;border-radius:14px;padding:10px 14px;color:var(--tx);font-size:16px;font-family:-apple-system,system-ui,sans-serif;margin-bottom:8px;flex-shrink:0}
 .si:focus{outline:none;box-shadow:0 0 0 2px var(--ac)}
 .si::placeholder{color:var(--mu)}
 .pc,.pjc,.cvc{background:var(--up);border:none;border-radius:14px;padding:12px 14px;cursor:pointer;flex-shrink:0;transition:background .15s}
@@ -204,7 +204,14 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 .cdb:hover{color:var(--er);background:rgba(248,113,113,.1)}
 .fi{display:block;width:100%;font-size:16px;color:var(--tx);background:var(--up);border:none;border-radius:14px;padding:10px 14px;font-family:-apple-system,system-ui,sans-serif}
 .fi:focus{outline:none;box-shadow:0 0 0 2px var(--ac)}
-.ta{display:block;width:100%;font-size:14.5px;color:var(--tx);background:var(--up);border:none;border-radius:14px;padding:10px 14px;resize:none;line-height:1.6;font-family:-apple-system,system-ui,sans-serif}
+/* 16px, not 14.5px - matches .fi's own comment-worthy reasoning: iOS
+   Safari auto-zooms the whole page on focus for any text input/textarea
+   under 16px, and it stays zoomed until the user manually pinches back
+   out. .fi already avoided this; .si and .ta (this rule) didn't, which is
+   exactly what made every textarea (prompt editor, project instructions,
+   Drive-import paste box) and the search boxes balloon the page up on
+   iPhone the moment you tapped in. */
+.ta{display:block;width:100%;font-size:16px;color:var(--tx);background:var(--up);border:none;border-radius:14px;padding:10px 14px;resize:none;line-height:1.6;font-family:-apple-system,system-ui,sans-serif}
 .ta:focus{outline:none;box-shadow:0 0 0 2px var(--ac)}
 .ta::placeholder,.fi::placeholder{color:var(--mu)}
 .fl{display:block;font-size:11px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px}
@@ -253,7 +260,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.48</span></span>
+      <span class="wm">ai-router <span>v5.49</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -535,7 +542,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.48</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.49</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
