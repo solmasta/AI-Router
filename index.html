@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.59</span></span>
+      <span class="wm">ai-router <span>v5.60</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -550,7 +550,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.59</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.60</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1457,9 +1457,26 @@ function showModelSwitchNotice(html,targetId){
 /* Minimum score edge a candidate needs over the current model before it's
    even worth suggesting a switch - without this, two models scoring a
    couple points apart could ping-pong the suggestion back and forth on
-   every message as the conversation alternates between message types. */
-var SWITCH_SCORE_MARGIN=15;
+   every message as the conversation alternates between message types.
+   Lowered from 15: at 15, the router felt "stuck" - two comparably good
+   models rarely differ by that much, so once one won it tended to keep
+   winning every message after. Not lowered further than this - an
+   earlier attempt at 8 combined with the streak decay below could push
+   the EFFECTIVE threshold negative, which stopped meaning "needs a real
+   edge" and started meaning "almost anything can dethrone a
+   long-incumbent model," including clearly worse candidates. */
+var SWITCH_SCORE_MARGIN=11;
 var declinedSwitchTargets={};
+/* How many messages in a row the router has confirmed staying on the
+   SAME model (reset to 0 the moment it actually switches). Decayed off
+   currentScore below so the longer a model has held on, the smaller an
+   edge a genuine alternative needs to take over - stops a model from
+   camping indefinitely just because it keeps clearing the margin by a
+   hair on messages that are all similar in flavor. Capped well under
+   SWITCH_SCORE_MARGIN so the effective threshold always stays clearly
+   positive - this only makes staying incumbent slightly harder over
+   time, it never flips into "anything beats the current model." */
+var consecutiveSameModelStreak=0;
 /* Cap on how many non-streaming tool_choice:"auto" rounds a single message
    gets before being forced into the final tool_choice:"none" render call -
    without a cap, a model that keeps wanting to call tools could loop
@@ -1494,13 +1511,30 @@ function selectBestModel(tasks){
     var tmp=available[s];available[s]=available[j];available[j]=tmp;
   }
   if(!available.length)return null;
+  /* Graduated penalty over the last 4 switch targets (steepest for the
+     most recent) instead of one flat -6 for "in the last 3" - a flat
+     penalty barely dented a model that was scoring well clear of
+     everything else, so the router kept round-tripping between the same
+     one or two models whenever they were genuinely the best fit. This
+     makes an alternative that was JUST used noticeably less attractive
+     without permanently blacklisting it. */
+  var recencyPenalty=[10,6,3,1];
   var scored=available.map(function(item){
     var sc=scoreModelForTask(item.model,tasks);
-    if(recentAutoSelections.indexOf(item.model.id)>=0)sc-=6;
+    var recentIdx=recentAutoSelections.indexOf(item.model.id);
+    if(recentIdx>=0&&recentIdx<recencyPenalty.length)sc-=recencyPenalty[recentIdx];
     return{model:item.model,backend:item.backend,score:sc};
   });
   scored.sort(function(a,b){return b.score-a.score;});
-  var currentScore=scoreModelForTask(currentModel,tasks);
+  /* Decayed by how many messages in a row the current model has already
+     held on - the longer a streak runs, the smaller an edge a genuine
+     alternative needs to end it, so a model can't camp indefinitely just
+     by clearing the margin on a string of similar-flavored messages.
+     Capped at 5, well under SWITCH_SCORE_MARGIN (11) - the effective
+     threshold (margin minus this) always stays at least 6, so a long
+     streak makes staying incumbent easier to end, it never makes a
+     genuinely worse candidate able to win. */
+  var currentScore=scoreModelForTask(currentModel,tasks)-Math.min(consecutiveSameModelStreak*2,5);
   for(var i=0;i<scored.length;i++){
     var candidate=scored[i];
     if(candidate.backend===activeBackend&&candidate.model.id===currentModel.id)continue;
@@ -1564,14 +1598,15 @@ async function switchToBestModel(text){
   if(switchSuggestionCooldown>0){switchSuggestionCooldown--;return;}
   var tasks=analyzeTask(text);
   var best=selectBestModel(tasks);
-  if(!best){showModelConfirmedStay();return;}
+  if(!best){consecutiveSameModelStreak++;showModelConfirmedStay();return;}
   best.reason=tasks;
+  consecutiveSameModelStreak=0;
   /* Full autonomy: switch on the Overseer's own judgment and report what
      happened afterward (showAgentSelection) instead of blocking every
      send on a confirm dialog first. */
   lastAgentSelection={model:best.model,backend:best.backend,reason:tasks,score:best.score};
   recentAutoSelections.unshift(best.model.id);
-  recentAutoSelections=recentAutoSelections.slice(0,3);
+  recentAutoSelections=recentAutoSelections.slice(0,4);
   if(best.backend!==activeBackend){
     activeBackend=best.backend;
     await loadBackend();
@@ -3057,7 +3092,7 @@ function applyTabAsLiveState(t){
   if(overseerEnabled&&chatHistory.length>1){startOverseerMonitoring();}
   updateOverseerBar();
   preVisionModel=null;
-  declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];
+  declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
 }
 function renderTabBar(){
   var bar=document.getElementById("tabBar");
@@ -3101,7 +3136,7 @@ function createNewTab(){
   overseerState=defaultOverseerState();
   updateOverseerBar();
   preVisionModel=null;
-  declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];
+  declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   renderTabBar();
   saveTabsToStorage();
 }
@@ -4890,7 +4925,7 @@ document.getElementById("clearBtn").addEventListener("click",function(){
   chatHistory=[];clearAttach();localStorage.removeItem(pk(AUTOSAVE_KEY));localStorage.removeItem(pk("ai_draft"));
   sessionId=Date.now().toString();responseCount=0;lastUsedModelId="";summarizing=false;
   clearActiveWproj();stopOverseerMonitoring();overseerState=defaultOverseerState();
-  preVisionModel=null;declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];
+  preVisionModel=null;declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">🤖</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';
   document.getElementById("tokenBar").classList.add("hidden");
   updateOverseerBar();
