@@ -1,0 +1,5 @@
+{
+  "name": "drive-auth-worker",
+  "main": "drive-auth-worker.js",
+  "compatibility_date": "2024-09-23"
+}
