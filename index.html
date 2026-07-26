@@ -253,7 +253,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.53</span></span>
+      <span class="wm">ai-router <span>v5.54</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -535,7 +535,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.53</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.54</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3430,13 +3430,26 @@ async function driveAutoPush(force){
   }catch(e){updateDriveStatus("Sync error - will retry");}
   driveBusy=false;
 }
+/* Each key is set independently so one quota-exceeded key (large project
+   or doc-library data pushing the origin over the browser's localStorage
+   cap) doesn't abort the whole restore partway through - previously a
+   thrown QuotaExceededError on e.g. ai_projects skipped every key after
+   it (workprojects, autosave, memories, doclibrary) and the caller's
+   catch alerted a raw DOMException with no reload, leaving localStorage
+   in a half-restored state. Returns the list of keys that didn't fit so
+   the caller can tell the user which ones to retry after freeing space. */
+function safeSetLocal(key,value){
+  try{localStorage.setItem(key,value);return true;}catch(e){return false;}
+}
 async function driveApplyRestoredData(data){
-  if(data.prompts)localStorage.setItem(pk("ai_prompts"),JSON.stringify(data.prompts));
-  if(data.projects)localStorage.setItem(pk("ai_projects"),JSON.stringify(data.projects));
-  if(data.workprojects)localStorage.setItem(pk("ai_workprojects"),JSON.stringify(data.workprojects));
-  if(data.autosave)localStorage.setItem(pk("ai_autosave"),data.autosave);
-  if(data.memories)localStorage.setItem(pk("ai_memories"),JSON.stringify(data.memories));
-  if(data.doclibrary)localStorage.setItem(pk("ai_doclibrary"),JSON.stringify(data.doclibrary));
+  var failed=[];
+  if(data.prompts&&!safeSetLocal(pk("ai_prompts"),JSON.stringify(data.prompts)))failed.push("prompts");
+  if(data.projects&&!safeSetLocal(pk("ai_projects"),JSON.stringify(data.projects)))failed.push("projects");
+  if(data.workprojects&&!safeSetLocal(pk("ai_workprojects"),JSON.stringify(data.workprojects)))failed.push("work projects");
+  if(data.autosave&&!safeSetLocal(pk("ai_autosave"),data.autosave))failed.push("current chat");
+  if(data.memories&&!safeSetLocal(pk("ai_memories"),JSON.stringify(data.memories)))failed.push("memories");
+  if(data.doclibrary&&!safeSetLocal(pk("ai_doclibrary"),JSON.stringify(data.doclibrary)))failed.push("document library");
+  return failed;
 }
 async function driveRestore(){
   if(!(await driveEnsureToken())){driveConnect();return;}
@@ -3451,19 +3464,24 @@ async function driveRestore(){
       driveDownloadNamedFile(DRIVE_FILES.doclibrary)
     ]);
     var anyFound=results.some(function(r){return r!==null;});
+    var failed;
     if(!anyFound){
       var legacyId=await driveFindLegacyFile();
       if(!legacyId){alert("No backup found in Drive yet.");return;}
       var lres=await fetch("https://www.googleapis.com/drive/v3/files/"+legacyId+"?alt=media",{headers:{Authorization:"Bearer "+driveToken}});
       var ldata=await lres.json();
-      await driveApplyRestoredData(ldata);
+      failed=await driveApplyRestoredData(ldata);
     }else{
-      await driveApplyRestoredData({
+      failed=await driveApplyRestoredData({
         prompts:results[0],projects:results[1],workprojects:results[2],
         autosave:results[3]&&results[3].autosave,memories:results[4],doclibrary:results[5]
       });
     }
-    alert("Restored from Google Drive!");
+    if(failed.length){
+      alert("Restored, but your browser's storage is full - couldn't fit: "+failed.join(", ")+". Free up space (Settings > clear old chats/docs) and tap Restore again to pick those up.");
+    }else{
+      alert("Restored from Google Drive!");
+    }
     location.reload();
   }catch(e){alert("Restore failed: "+e.message);}
 }
@@ -3598,7 +3616,11 @@ document.getElementById("driveManualImportApplyBtn").addEventListener("click",fu
     }else{
       localStorage.setItem(pk(localKey),JSON.stringify(parsed));
     }
-  }catch(e){alert("Import failed: "+e.message);return;}
+  }catch(e){
+    if(e.name==="QuotaExceededError")alert("Import failed: your browser's storage is full and this data doesn't fit. Free up space (Settings > clear old chats/docs) and try again.");
+    else alert("Import failed: "+e.message);
+    return;
+  }
   closeModal("driveManualImportModal");
   alert("Imported. Reloading now.");
   location.reload();
