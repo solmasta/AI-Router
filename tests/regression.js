@@ -18,6 +18,8 @@
    - merge_branch tool requires its own dedicated approval dialog before
      anything happens, and the approved branch/op reach the GitHub ops
      worker correctly
+   - delete_file tool never defaults to main/master either, and its own
+     dedicated approval dialog's approved branch reaches the worker
    - the final streaming call forces tool_choice:"none" so a model that
      wants to call another tool after a successful tool round doesn't
      silently render as "(empty response)"
@@ -826,6 +828,97 @@ function assert(cond, label) {
   // still be settling - give it a beat before the next test starts
   // interacting, same as the settle wait already used after the Overseer
   // chat's failed (no-egress) request above.
+  await page.waitForTimeout(500);
+
+  console.log('\n-- delete_file tool never defaults to main/master, and the approved branch is what actually reaches the worker --');
+  // New coding tool alongside read_file/write_file/list_files/search_code.
+  // Same branch-safety contract as write_file: a model-issued delete_file
+  // call with no branch specified must surface its own dedicated approval
+  // dialog (githubDeleteConfirmModal, not githubWriteConfirmModal) that
+  // defaults to a non-main working branch, and that same branch - not
+  // "main" - has to be what actually reaches the GitHub ops worker.
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  await page.locator('.mc:has-text("Mistral Small")').first().click();
+  await page.waitForTimeout(150);
+
+  let capturedDeleteBody = null;
+  let deleteToolRoundCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    const url = req.url();
+    if (url.indexOf('github-ops-worker') >= 0 && req.method() === 'POST') {
+      try { capturedDeleteBody = JSON.parse(req.postData()); } catch (e) {}
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, commit: 'regtestdeletesha', branch: capturedDeleteBody && capturedDeleteBody.branch }),
+      });
+      return;
+    }
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.stream === false) {
+        deleteToolRoundCount++;
+        if (deleteToolRoundCount === 1) {
+          // The initial non-streaming tool-discovery call - fake a model
+          // response that calls delete_file with NO branch specified, the
+          // same case write_file used to get wrong.
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              choices: [{
+                finish_reason: 'tool_calls',
+                message: {
+                  role: 'assistant',
+                  tool_calls: [{
+                    id: 'regtest_call_delete',
+                    type: 'function',
+                    function: { name: 'delete_file', arguments: JSON.stringify({ path: 'regtest.txt', message: 'regtest delete' }) },
+                  }],
+                },
+              }],
+            }),
+          });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest done' } }] }),
+        });
+        return;
+      }
+      if (parsed && parsed.stream === true) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: 'data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n',
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await page.fill('#prompt', 'please delete regtest.txt from the github repo');
+  await page.click('#sendBtn');
+  let deleteConfirmShowed = false;
+  for (let i = 0; i < 100; i++) {
+    await dismissConfirmIfAny();
+    deleteConfirmShowed = await page.evaluate(() => !document.getElementById('githubDeleteConfirmModal').classList.contains('hidden'));
+    if (deleteConfirmShowed) break;
+    await page.waitForTimeout(200);
+  }
+  assert(deleteConfirmShowed, 'a model-issued delete_file tool call surfaces its own dedicated approval dialog');
+  const deleteBranchDefaultForNoBranch = await page.inputValue('#ghdBranch');
+  assert(deleteBranchDefaultForNoBranch === 'ai-changes', `a delete_file call with no branch specified defaults the approval dialog to a non-main working branch (got "${deleteBranchDefaultForNoBranch}")`);
+  await page.click('#ghdApproveBtn');
+  await waitForSendDone();
+  await page.unroute('**/*');
+  assert(!!capturedDeleteBody, 'approving the delete actually reaches the GitHub ops worker');
+  assert(capturedDeleteBody && capturedDeleteBody.op === 'delete_file', `the worker request is tagged with the delete_file op (got "${capturedDeleteBody && capturedDeleteBody.op}")`);
+  assert(capturedDeleteBody && capturedDeleteBody.branch === 'ai-changes', `the approved branch (not "main") is what's actually sent to the worker (got "${capturedDeleteBody && capturedDeleteBody.branch}")`);
   await page.waitForTimeout(500);
 
   console.log('\n-- tool round loop actually advances multiple rounds, not just one --');

@@ -54,7 +54,7 @@ async function ensureBranchExists(owner, repo, branch, headers, knownDefaultBran
 }
 
 async function handleGitHubOp(body, env) {
-  const { op, owner, repo, path, content, message, branch, title, merge_method } = body;
+  const { op, owner, repo, path, content, message, branch, title, merge_method, query } = body;
   const token = env.GITHUB_TOKEN;
 
   if (!token) return { error: "GitHub token not configured" };
@@ -135,6 +135,41 @@ async function handleGitHubOp(body, env) {
         const writeData = await writeRes.json();
         return { success: true, commit: writeData.commit.sha, branch: targetBranch };
 
+      case "delete_file": {
+        if (!path) return { error: "Missing path" };
+
+        // Same default-branch guard as write_file - a delete is just as
+        // capable of landing unreviewed on the real default branch as a
+        // write is, so it gets the identical protection.
+        let delDefaultBranch;
+        try {
+          delDefaultBranch = await getDefaultBranch(owner, repo, headers);
+        } catch (e) {
+          return { error: e.message };
+        }
+        const delRequestedIsDefault = branch && (branch === delDefaultBranch || /^(main|master)$/i.test(branch));
+        const delTargetBranch = (branch && !delRequestedIsDefault) ? branch : "ai-changes";
+        try {
+          await ensureBranchExists(owner, repo, delTargetBranch, headers, delDefaultBranch);
+        } catch (e) {
+          return { error: e.message };
+        }
+
+        const delFileUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${encodeURIComponent(delTargetBranch)}`;
+        const delFileRes = await fetch(delFileUrl, { headers });
+        if (!delFileRes.ok) return { error: `File not found on branch '${delTargetBranch}': ${await describeError(delFileRes)}`, status: delFileRes.status };
+        const delFileData = await delFileRes.json();
+
+        const delRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
+          method: "DELETE",
+          headers,
+          body: JSON.stringify({ message: message || `Delete ${path}`, sha: delFileData.sha, branch: delTargetBranch }),
+        });
+        if (!delRes.ok) return { error: `Failed to delete ${path}: ${await describeError(delRes)}`, status: delRes.status };
+        const delData = await delRes.json();
+        return { success: true, commit: delData.commit.sha, branch: delTargetBranch };
+      }
+
       case "list_files": {
         // No path (or "."/"") means the repo root - GitHub's Contents API
         // lists it at /repos/{owner}/{repo}/contents with no trailing
@@ -149,6 +184,22 @@ async function handleGitHubOp(body, env) {
           ? listData.map(f => ({ name: f.name, type: f.type, path: f.path }))
           : { error: "Not a directory" };
         return { success: true, files };
+      }
+
+      case "search_code": {
+        // Lets a model find where something is defined by keyword instead
+        // of blindly walking list_files -> read_file across an unfamiliar
+        // repo tree. GitHub's code search only indexes the repo's default
+        // branch (not every working branch), which is fine here - it's
+        // meant for locating existing code, not verifying an in-progress
+        // change on a feature branch.
+        if (!query) return { error: "Missing query" };
+        const searchQ = encodeURIComponent(`${query} repo:${owner}/${repo}`);
+        const codeSearchRes = await fetch(`https://api.github.com/search/code?q=${searchQ}&per_page=15`, { headers });
+        if (!codeSearchRes.ok) return { error: `Code search failed: ${await describeError(codeSearchRes)}`, status: codeSearchRes.status };
+        const codeSearchData = await codeSearchRes.json();
+        const results = (codeSearchData.items || []).map(it => ({ path: it.path, url: it.html_url }));
+        return { success: true, results, totalCount: codeSearchData.total_count || results.length };
       }
 
       case "merge_branch": {

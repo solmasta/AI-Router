@@ -260,7 +260,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.49</span></span>
+      <span class="wm">ai-router <span>v5.50</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -485,6 +485,21 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   </div>
 </div></div>
 
+<div class="modal hidden" id="githubDeleteConfirmModal"><div class="sheet">
+  <div class="sh"><span>&#9889; Delete from GitHub?</span><button class="sc" id="closeGithubDeleteConfirmModal">&#10005;</button></div>
+  <div class="sbody">
+    <div style="font-size:12px;font-weight:600;color:var(--er);background:rgba(248,113,113,0.1);border:1px solid var(--er);border-radius:8px;padding:8px 10px;margin-bottom:12px;line-height:1.4">&#9888;&#65039; This removes the file in a commit on the branch below. Make sure this is actually what you want before approving.</div>
+    <div style="font-size:13px;color:var(--mu);margin-bottom:6px">File: <span id="ghdPath" style="font-family:var(--mn);color:var(--tx)"></span></div>
+    <div style="font-size:13px;color:var(--mu);margin-bottom:10px">Commit message: <span id="ghdMessage" style="color:var(--tx)"></span></div>
+    <div style="font-size:13px;color:var(--mu);margin-bottom:4px">Branch <span style="color:var(--er)">(never leave this as "main" unless you mean it - this pushes with no PR/review step)</span></div>
+    <input type="text" id="ghdBranch" class="fi" autocomplete="off" style="width:100%;box-sizing:border-box">
+  </div>
+  <div class="sf2 ef">
+    <button class="bg" id="ghdDenyBtn">Don't delete</button>
+    <button class="bp" id="ghdApproveBtn" style="background:var(--er)">Delete this file</button>
+  </div>
+</div></div>
+
 <div class="modal hidden" id="driveManualImportModal"><div class="sheet">
   <div class="sh"><span>Manual import</span><button class="sc" id="closeDriveManualImportModal">&#10005;</button></div>
   <div class="sbody">
@@ -542,7 +557,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.49</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.50</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -821,10 +836,26 @@ function confirmGithubMerge(toolArgs){
     openModal("githubMergeConfirmModal");
   });
 }
+/* Per-delete confirmation gate - same shape as confirmGithubWrite (branch
+   is editable, defaults away from main/master) since a delete is just as
+   capable of landing unreviewed on the real default branch as a write. */
+var pendingGithubDeleteResolve=null;
+function confirmGithubDelete(toolArgs){
+  return new Promise(function(resolve){
+    document.getElementById("ghdPath").textContent=(ghRepoOwner||"")+"/"+(ghRepoName||"")+" - "+(toolArgs.path||"");
+    document.getElementById("ghdMessage").textContent=toolArgs.message||"(no message)";
+    var wantsDefault=/^(main|master)$/i.test((toolArgs.branch||"").trim());
+    document.getElementById("ghdBranch").value=(toolArgs.branch&&!wantsDefault)?toolArgs.branch:"ai-changes";
+    pendingGithubDeleteResolve=resolve;
+    openModal("githubDeleteConfirmModal");
+  });
+}
 var REPO_TOOLS=[
   {type:"function","function":{name:"read_file",description:"Read a file from the connected GitHub repository. Returns file content.",parameters:{type:"object",properties:{path:{type:"string",description:"File path relative to repo root"}},required:["path"]}}},
   {type:"function","function":{name:"write_file",description:"Write or update a file in the connected GitHub repository. Creates a commit on a branch (never commits straight to the repo's default branch unless the user explicitly asked for that).",parameters:{type:"object",properties:{path:{type:"string",description:"File path"},content:{type:"string",description:"Full file content"},message:{type:"string",description:"Commit message"},branch:{type:"string",description:"Branch to commit to. NEVER use \"main\"/\"master\" unless the user explicitly asked you to change the default branch directly - otherwise use a short descriptive working-branch name. The branch is created automatically from the repo's default branch if it doesn't already exist."}},required:["path","content","message"]}}},
   {type:"function","function":{name:"list_files",description:"List files in a directory of the connected repository. Omit path (or use \".\") to list the repo root.",parameters:{type:"object",properties:{path:{type:"string",description:"Directory path, relative to repo root. Optional - omit or use \".\" for the repo root."}},required:[]}}},
+  {type:"function","function":{name:"search_code",description:"Search the connected repository's code (default branch) for a keyword, function/variable name, or string literal. Returns matching file paths - use read_file on the interesting ones for actual content. Prefer this over blindly listing/reading files to locate where something is defined.",parameters:{type:"object",properties:{query:{type:"string",description:"Search terms - e.g. a function name, variable, or exact string to find in the repo's code"}},required:["query"]}}},
+  {type:"function","function":{name:"delete_file",description:"Delete a file from the connected GitHub repository. Creates a commit on a branch (never the repo's default branch unless the user explicitly asked for that) - requires the same user approval as write_file before anything happens.",parameters:{type:"object",properties:{path:{type:"string",description:"File path to delete, relative to repo root"},message:{type:"string",description:"Commit message explaining the deletion"},branch:{type:"string",description:"Branch to commit the deletion to. NEVER use \"main\"/\"master\" unless the user explicitly asked - use a short descriptive working-branch name instead, it's created automatically."}},required:["path","message"]}}},
   {type:"function","function":{name:"merge_branch",description:"Merge a branch into the connected repository's default branch via a pull request (creates one if it doesn't already exist, then merges it). This is a significant, hard-to-reverse action on the default branch - only call this when the user explicitly asked you to merge/ship/land the change, never automatically right after a write_file. Always requires explicit user approval before anything happens.",parameters:{type:"object",properties:{branch:{type:"string",description:"The branch to merge into the default branch"},title:{type:"string",description:"Pull request title / merge commit title"},message:{type:"string",description:"Pull request description / merge commit message"},merge_method:{type:"string",description:"How to merge",enum:["merge","squash","rebase"]}},required:["branch"]}}}
 ];
 /* App-control tools - let the model actually operate this app's own
@@ -2067,7 +2098,10 @@ function generateOptimalInstructions(userMessage,selectedModel){
       instructions+="- read_file(path): Read files from "+ghRepoOwner+"/"+ghRepoName+"\n";
       instructions+="- write_file(path, content, message, branch): Create files/commits. NEVER set branch to \"main\"/\"master\" unless explicitly asked - use a descriptive working-branch name instead, it's created automatically.\n";
       instructions+="- list_files(path): Explore directory structure\n";
-      instructions+="Use these tools directly - don't ask permission (the user still approves every write and its branch before it's pushed).\n\n";
+      instructions+="- search_code(query): Find where something is defined by keyword instead of blindly listing/reading files - use this first when you don't already know which file has what you need.\n";
+      instructions+="- delete_file(path, message, branch): Remove a file. Same branch rules and approval as write_file.\n";
+      instructions+="- merge_branch(branch, title, message): Land a working branch into the default branch via a pull request. Only when the user explicitly asked to merge/ship/land - never automatically after a write_file.\n";
+      instructions+="Use these tools directly - don't ask permission (the user still approves every write, delete, and merge before it happens).\n\n";
     }
   }
 
@@ -2121,6 +2155,8 @@ function displayToolExecution(toolName,input,result){
   if(toolName==="read_file"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Reading: "+esc(input.path)+"</div>";}
   else if(toolName==="write_file"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Writing: "+esc(input.path)+" (branch: "+esc(input.branch||"?")+")</div><div style='font-size:10px;color:var(--mu)'>"+esc(input.message)+"</div>";}
   else if(toolName==="list_files"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Listing: "+esc(input.path)+"</div>";}
+  else if(toolName==="search_code"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Searching code: "+esc(input.query)+"</div>";}
+  else if(toolName==="delete_file"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Deleting: "+esc(input.path)+" (branch: "+esc(input.branch||"?")+")</div><div style='font-size:10px;color:var(--mu)'>"+esc(input.message)+"</div>";}
   else if(toolName==="merge_branch"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Merging: "+esc(input.branch||"?")+" into default branch</div>";}
   else if(toolName==="create_project"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Creating project: "+esc(input.name)+"</div>";}
   else if(toolName==="switch_model"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Switching model to: "+esc(input.model_id)+"</div>";}
@@ -2167,6 +2203,14 @@ async function executeRepoTool(toolName,toolInput){
       var lres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"Authorization":"Bearer "+ghToken},body:JSON.stringify({op:"list_files",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path})});
       var ldata=await lres.json();
       return ldata.success?{success:true,files:ldata.files}:{error:ldata.error};
+    }else if(toolName==="search_code"){
+      var scres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"Authorization":"Bearer "+ghToken},body:JSON.stringify({op:"search_code",owner:ghRepoOwner,repo:ghRepoName,query:toolInput.query})});
+      var scdata=await scres.json();
+      return scdata.success?{success:true,results:scdata.results,totalCount:scdata.totalCount}:{error:scdata.error};
+    }else if(toolName==="delete_file"){
+      var dres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"Authorization":"Bearer "+ghToken},body:JSON.stringify({op:"delete_file",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path,message:toolInput.message,branch:toolInput.branch})});
+      var ddata=await dres.json();
+      return ddata.success?{success:true,commit:ddata.commit,branch:ddata.branch}:{error:ddata.error};
     }else if(toolName==="merge_branch"){
       var mres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"Authorization":"Bearer "+ghToken},body:JSON.stringify({op:"merge_branch",owner:ghRepoOwner,repo:ghRepoName,branch:toolInput.branch,title:toolInput.title,message:toolInput.message,merge_method:toolInput.merge_method})});
       var mdata=await mres.json();
@@ -2212,11 +2256,12 @@ function getModelSystemPrompt(ap){
     sys+="Repository: "+ghRepoOwner+"/"+ghRepoName+"\n\n";
     sys+="You have direct access to read, modify, and commit code. For ALL code tasks:\n\n";
     sys+="1. Use read_file(path) to examine existing code before making changes\n";
-    sys+="2. Use list_files(path) to explore repository structure\n";
+    sys+="2. Use list_files(path) to explore repository structure, and search_code(query) to find where something is defined by keyword instead of walking the tree blindly\n";
     sys+="3. Use write_file(path, content, message, branch) to make changes - includes automatic git commit\n";
     sys+="4. Always provide COMPLETE working code in write_file calls - not snippets\n";
     sys+="5. NEVER set branch to \"main\"/\"master\" unless the user explicitly asked you to change the default branch directly - use a short descriptive working-branch name instead, it's created automatically from the default branch if it doesn't exist\n";
-    sys+="6. Use merge_branch(branch, title, message) to land a working branch into the default branch via a pull request - only call this when the user explicitly asked you to merge/ship/land the change. Never chain it automatically right after a write_file just because the write succeeded.\n\n";
+    sys+="6. Use delete_file(path, message, branch) to remove a file - same branch rules and approval as write_file\n";
+    sys+="7. Use merge_branch(branch, title, message) to land a working branch into the default branch via a pull request - only call this when the user explicitly asked you to merge/ship/land the change. Never chain it automatically right after a write_file just because the write succeeded.\n\n";
     sys+="WORKFLOW:\n";
     sys+="- Understand the problem by reading relevant files\n";
     sys+="- Plan your approach in <think> tags\n";
@@ -2232,7 +2277,7 @@ function getModelSystemPrompt(ap){
     if(ghRepoOwner==="solmasta"&&ghRepoName==="openai-router"){
       sys+="THIS REPO IS THE APP YOU'RE RUNNING IN - its own real structure, not a guess:\n";
       sys+="- index.html is the ENTIRE frontend: markup, CSS, and all JS in two inline <script> blocks, each wrapped in its own IIFE. A plain top-level function is NOT reachable as window.foo unless explicitly assigned (window.foo=function(){...}) - inline onclick=\"...\" handlers run in global scope and need that, or they silently no-op.\n";
-      sys+="- 4 Cloudflare Workers back it, each with its own wrangler config: openai-router.js (DeepInfra models + free web search), claude-worker.js (Claude/Anthropic), openrouter-worker.js (OpenRouter), github-ops-worker.js (this repo's own read_file/write_file/list_files - the tools you're using right now).\n";
+      sys+="- 4 Cloudflare Workers back it, each with its own wrangler config: openai-router.js (DeepInfra models + free web search), claude-worker.js (Claude/Anthropic), openrouter-worker.js (OpenRouter), github-ops-worker.js (this repo's own read_file/write_file/delete_file/list_files/search_code/merge_branch - the tools you're using right now).\n";
       sys+="- tests/regression.js is a Playwright suite covering flows that have actually broken before. You have no shell/execute_command access, so you cannot run it yourself - tell the user to run it (NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js) before merging, and if your change touches a flow it covers, update the test in the same write_file call rather than letting it drift.\n";
       sys+="- Bump the version string in BOTH spots (header \".wm span\" and the Settings modal title, both currently \"v5.x\") with every user-visible change, in the same commit.\n";
       sys+="- Keep changes proportional to what's asked - this is a deliberately single-file app with no build step; don't introduce a framework, split it into multiple files, or add a build pipeline unless explicitly asked to.\n";
@@ -3756,6 +3801,19 @@ document.getElementById("ghmDenyBtn").addEventListener("click",function(){resolv
 document.getElementById("closeGithubMergeConfirmModal").addEventListener("click",function(){resolveGithubMergeConfirm(false);});
 document.getElementById("githubMergeConfirmModal").addEventListener("click",function(e){if(e.target===e.currentTarget)resolveGithubMergeConfirm(false);});
 
+function resolveGithubDeleteConfirm(approved){
+  closeModal("githubDeleteConfirmModal");
+  if(pendingGithubDeleteResolve){
+    var r=pendingGithubDeleteResolve;pendingGithubDeleteResolve=null;
+    var branchVal=(document.getElementById("ghdBranch").value||"").trim()||"ai-changes";
+    r(approved?branchVal:null);
+  }
+}
+document.getElementById("ghdApproveBtn").addEventListener("click",function(){resolveGithubDeleteConfirm(true);});
+document.getElementById("ghdDenyBtn").addEventListener("click",function(){resolveGithubDeleteConfirm(false);});
+document.getElementById("closeGithubDeleteConfirmModal").addEventListener("click",function(){resolveGithubDeleteConfirm(false);});
+document.getElementById("githubDeleteConfirmModal").addEventListener("click",function(e){if(e.target===e.currentTarget)resolveGithubDeleteConfirm(false);});
+
 /* ---- Event listeners ---- */
 document.getElementById("deepinfraBtn").addEventListener("click",function(){if(activeBackend!=="deepinfra"){activeBackend="deepinfra";loadBackend();}});
 document.getElementById("openrouterBtn").addEventListener("click",function(){if(activeBackend!=="openrouter"){activeBackend="openrouter";loadBackend();}});
@@ -4370,6 +4428,24 @@ async function doSendRequest(userContent,isRegen,ap){
                   var listRes=await executeRepoTool("list_files",toolArgs);
                   displayToolExecution("list_files",toolArgs,listRes);
                   toolResult=listRes.success?JSON.stringify(listRes.files):(listRes.error||"Failed to list files");
+                }else if(toolName==="search_code"){
+                  asstMsg.body.innerHTML='<span style="color:var(--mu);font-size:13px">🔎 Searching code: '+esc(toolArgs.query||"")+'&#8230;</span>';
+                  var searchCodeRes=await executeRepoTool("search_code",toolArgs);
+                  displayToolExecution("search_code",toolArgs,searchCodeRes);
+                  toolResult=searchCodeRes.success?JSON.stringify(searchCodeRes.results):(searchCodeRes.error||"Failed to search code");
+                }else if(toolName==="delete_file"){
+                  asstMsg.body.innerHTML='<span style="color:var(--mu);font-size:13px">🗑️ Waiting for approval to delete: '+esc(toolArgs.path||"")+'&#8230;</span>';
+                  var approvedDelBranch=await confirmGithubDelete(toolArgs);
+                  if(!approvedDelBranch){
+                    displayToolExecution("delete_file",toolArgs,{error:"Declined by user - not deleted"});
+                    toolResult="The user declined this delete. Do not retry the same change without asking first.";
+                  }else{
+                    toolArgs.branch=approvedDelBranch;
+                    asstMsg.body.innerHTML='<span style="color:var(--mu);font-size:13px">🗑️ Deleting on branch '+esc(approvedDelBranch)+': '+esc(toolArgs.path||"")+'&#8230;</span>';
+                    var deleteRes=await executeRepoTool("delete_file",toolArgs);
+                    displayToolExecution("delete_file",toolArgs,deleteRes);
+                    toolResult=deleteRes.success?("File deleted on branch '"+approvedDelBranch+"'. Commit: "+deleteRes.commit):(deleteRes.error||"Failed to delete file");
+                  }
                 }else if(toolName==="merge_branch"){
                   asstMsg.body.innerHTML='<span style="color:var(--mu);font-size:13px">⚡ Waiting for approval to merge: '+esc(toolArgs.branch||"")+'&#8230;</span>';
                   var approvedMerge=await confirmGithubMerge(toolArgs);
