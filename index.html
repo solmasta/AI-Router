@@ -253,7 +253,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.56</span></span>
+      <span class="wm">ai-router <span>v5.57</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -441,6 +441,10 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
     <p style="color:var(--mu);font-size:13px;line-height:1.5;margin:0 0 12px">The AI can read and write files in this repo when a coding conversation calls for it. The actual GitHub access token lives on the server, not here - this just tells the app which repo to point at. Every write commits directly to the repo, but you'll be asked to approve each one before it happens.</p>
     <input type="text" id="ghOwnerInput" class="fi" placeholder="Repo owner, e.g. solmasta" autocomplete="off" style="width:100%;margin-bottom:8px;box-sizing:border-box">
     <input type="text" id="ghRepoInput" class="fi" placeholder="Repo name, e.g. openai-router" autocomplete="off" style="width:100%;box-sizing:border-box">
+    <div id="ghRecentRepos" class="hidden" style="margin-top:10px">
+      <div style="font-size:11px;color:var(--mu);margin-bottom:6px">Recent repos</div>
+      <div id="ghRecentReposList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+    </div>
   </div>
   <div class="sf2" style="display:flex;gap:8px">
     <button class="bg hidden" id="githubDisconnectBtn" style="flex:1">Disconnect</button>
@@ -535,7 +539,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.56</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.57</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -545,7 +549,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
     <div class="sr"><div><div class="slb">Google Drive backup</div><div class="ssb" id="driveStatus">Not connected</div></div><div style="display:flex;gap:6px"><button class="bg hidden" id="driveBackupBtn">Back up</button><button class="bg hidden" id="driveRestoreBtn">Restore</button><button class="bg" id="driveConnectBtn">Connect</button></div></div>
     <div class="sr"><div><div class="slb">Manual import</div><div class="ssb">Paste a backup file's content directly - works even if Drive is rate-limited or disconnected</div></div><button class="bg" id="driveManualImportBtn">Import</button></div>
     <div class="sr"><div><div class="slb">Drive folder</div><div class="ssb" id="driveFolderStatus">Auto (finds/creates by name)</div></div><div style="display:flex;gap:6px"><button class="bg" id="driveFolderOpenBtn">Open</button><button class="bg" id="driveFolderSetBtn">Set</button></div></div>
-    <div class="sr"><div><div class="slb">GitHub repository</div><div class="ssb" id="githubStatus">Not connected</div></div><button class="bg" id="githubConnectBtn">Connect</button></div>
+    <div class="sr"><div><div class="slb">GitHub repository</div><div class="ssb" id="githubStatus">Not connected</div></div><div style="display:flex;gap:6px"><button class="bg hidden" id="githubClearBtn">Clear</button><button class="bg" id="githubConnectBtn">Connect</button></div></div>
     <div class="sr"><div><div class="slb">Agent auto-select</div><div class="ssb">Automatically pick the best model for each task</div></div><button class="bg" id="agentToggleBtn">ON</button></div>
     <div class="sr"><div><div class="slb">Overseer monitoring</div><div class="ssb">Track progress, detect stuck situations, suggest next steps</div></div><button class="bg" id="overseerToggleBtn">ON</button></div>
     <div class="sr"><div><div class="slb">Brainstorming mode</div><div class="ssb">Generate prompts and suggestions during conversation</div></div><button class="bg" id="brainstormToggleBtn">ON</button></div>
@@ -773,6 +777,43 @@ function updateGithubStatus(){
   if(s)s.textContent=(ghToken&&ghRepoOwner&&ghRepoName)?(ghRepoOwner+"/"+ghRepoName):"Not connected";
   var d=document.getElementById("githubDisconnectBtn");
   if(d)d.classList.toggle("hidden",!(ghToken&&ghRepoOwner&&ghRepoName));
+  var c=document.getElementById("githubClearBtn");
+  if(c)c.classList.toggle("hidden",!(ghToken&&ghRepoOwner&&ghRepoName));
+}
+/* Small "recently connected" list so switching which repo the AI points
+   at (e.g. starting a new app in a new repo) doesn't mean retyping
+   owner/name from scratch every time - separate from the single active
+   connection above, this is just a memory of what's been used before. */
+var GH_RECENT_KEY="gh_recent_repos";
+function getRecentRepos(){
+  try{return JSON.parse(localStorage.getItem(pk(GH_RECENT_KEY))||"[]");}catch(e){return[];}
+}
+function saveRecentRepo(owner,repo){
+  var full=owner+"/"+repo;
+  var list=getRecentRepos().filter(function(r){return r!==full;});
+  list.unshift(full);
+  localStorage.setItem(pk(GH_RECENT_KEY),JSON.stringify(list.slice(0,5)));
+}
+function renderRecentRepos(){
+  var current=(ghRepoOwner&&ghRepoName)?(ghRepoOwner+"/"+ghRepoName):null;
+  var list=getRecentRepos().filter(function(r){return r!==current;});
+  var wrap=document.getElementById("ghRecentRepos");
+  var ul=document.getElementById("ghRecentReposList");
+  ul.innerHTML="";
+  if(!list.length){wrap.classList.add("hidden");return;}
+  wrap.classList.remove("hidden");
+  list.forEach(function(full){
+    var slash=full.indexOf("/");
+    var owner=full.slice(0,slash),repo=full.slice(slash+1);
+    var btn=document.createElement("button");
+    btn.className="bg";btn.style.cssText="font-size:12px;padding:6px 10px";
+    btn.textContent=full;
+    btn.addEventListener("click",function(){
+      document.getElementById("ghOwnerInput").value=owner;
+      document.getElementById("ghRepoInput").value=repo;
+    });
+    ul.appendChild(btn);
+  });
 }
 function disconnectGithub(){
   localStorage.removeItem(pk("gh_repo_owner"));
@@ -2148,7 +2189,7 @@ function generateOptimalInstructions(userMessage,selectedModel){
       instructions+="- read_file(path): Read files from "+ghRepoOwner+"/"+ghRepoName+"\n";
       instructions+="- write_file(path, content, message, branch): Create files/commits. NEVER set branch to \"main\"/\"master\" unless explicitly asked - use a descriptive working-branch name instead, it's created automatically.\n";
       instructions+="- list_files(path): Explore directory structure\n";
-      instructions+="Use these tools directly - don't ask permission (the user still approves every write and its branch before it's pushed).\n\n";
+      instructions+="Use these tools directly - don't ask permission (the user still approves every write and its branch before it's pushed). These only apply to "+ghRepoOwner+"/"+ghRepoName+" specifically - if the user is describing a different, new, or unrelated app/project, do NOT use these tools against this repo; just talk it through instead.\n\n";
     }
   }
 
@@ -3869,6 +3910,7 @@ document.getElementById("githubConnectBtn").addEventListener("click",function(){
   document.getElementById("ghOwnerInput").value=ghRepoOwner||"";
   document.getElementById("ghRepoInput").value=ghRepoName||"";
   updateGithubStatus();
+  renderRecentRepos();
   openModal("githubModal");
 });
 document.getElementById("githubSaveBtn").addEventListener("click",function(){
@@ -3877,6 +3919,7 @@ document.getElementById("githubSaveBtn").addEventListener("click",function(){
   if(!owner||!repo){alert("Enter both the repo owner and repo name.");return;}
   localStorage.setItem(pk("gh_repo_owner"),owner);
   localStorage.setItem(pk("gh_repo_name"),repo);
+  saveRecentRepo(owner,repo);
   loadGithubConnection();
   updateGithubStatus();
   closeModal("githubModal");
@@ -3886,6 +3929,13 @@ document.getElementById("githubDisconnectBtn").addEventListener("click",function
   document.getElementById("ghOwnerInput").value="";
   document.getElementById("ghRepoInput").value="";
   closeModal("githubModal");
+});
+/* One-tap clear right from the Settings row, for when you just want the
+   AI to stop pointing at whatever repo it's currently connected to
+   (e.g. before starting a new/unrelated app) without digging into the
+   Connect modal to find Disconnect. */
+document.getElementById("githubClearBtn").addEventListener("click",function(){
+  disconnectGithub();
 });
 function resolveGithubWriteConfirm(approved){
   closeModal("githubWriteConfirmModal");
@@ -4098,7 +4148,13 @@ async function sendOverseerChatMsg(){
      about it. Same confirm-before-write/merge safety gates as the main
      chat still apply below; this only changes who's allowed to ask. */
   var overseerHasTools=TOOL_MODELS.indexOf(currentModel.id)>=0;
-  var overseerHasRepoTools=overseerHasTools&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName;
+  /* Gated on the message actually being about the connected repo (same
+     signal doSendRequest uses below), not just "GitHub is connected" -
+     without this, any strategy-chat message got read_file/write_file/
+     merge_branch offered regardless of topic, so a model discussing a
+     totally different/new project could still reach for the wrong repo. */
+  var overseerRepoRelevant=analyzeTask(text).github>0;
+  var overseerHasRepoTools=overseerHasTools&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&overseerRepoRelevant;
   var sys="You are the Overseer, a strategic advisor built into this app. The user has stepped out of their main conversation with the AI model to talk strategy with you directly - about approach, what to try next, or whether they're stuck. Be direct and concise. Base advice on the actual context below, not generic platitudes.\n\n"+
     (overseerPersonality?("Personality: "+overseerPersonality+" - let this come through naturally in your tone and word choice, without announcing or explaining it.\n\n"):"")+
     "Goal: "+(overseerState.goalType||"not yet detected")+"\n"+
@@ -4110,7 +4166,7 @@ async function sendOverseerChatMsg(){
   if(overseerHasTools){
     sys+="\n\nYou have full operational privileges on the user's behalf: create_project, switch_model (change which model is active in the main chat), and remember - use them directly the moment the user's request calls for it, no permission needed.";
     if(overseerHasRepoTools){
-      sys+=" You also have direct repository access to "+ghRepoOwner+"/"+ghRepoName+": read_file, write_file, list_files, merge_branch. Use them directly instead of just describing what to do - the user still approves every write_file and merge_branch before it actually happens.";
+      sys+=" You also have direct repository access to "+ghRepoOwner+"/"+ghRepoName+": read_file, write_file, list_files, merge_branch. Use them directly instead of just describing what to do - the user still approves every write_file and merge_branch before it actually happens. These only apply to "+ghRepoOwner+"/"+ghRepoName+" - if the user is talking about a different or new project, don't use them against this repo.";
     }
   }
   var msgs=[{role:"system",content:sys}].concat(overseerState.strategyChat.slice(0,-1)).concat([{role:"user",content:text}]);
@@ -4574,16 +4630,18 @@ async function doSendRequest(userContent,isRegen,ap){
            described (each names its own explicit trigger phrase), unlike
            the repo tools below which get gated on actual relevance. */
         var initTools=getAppControlTools();
-        /* Gate on the same task-relevance analysis already used for the
-           search auto-trigger below (searchGateTasks) - without it, repo
-           tools were offered on EVERY message whenever GitHub was
-           connected, regardless of topic. A small model asked an
-           unrelated question (e.g. crypto/market talk) could hallucinate
-           a git clone and go hunting for nonexistent repo files instead
-           of just answering, and read_file/list_files/execute_command
-           have no confirm gate the way write_file does - they'd run
-           silently for a request that had nothing to do with the repo. */
-        if(modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&(searchGateTasks.github>0||searchGateTasks.code>0)){initTools=initTools.concat(REPO_TOOLS);}
+        /* Gated on searchGateTasks.github specifically, not .code too -
+           .code fires on generic coding words ("function", "error",
+           "debug", "javascript"...) that say nothing about THIS repo. A
+           message like "let's build a new app" or "why is this python
+           function throwing an error" used to still get read_file/
+           write_file/merge_branch handed to it just because it sounded
+           code-flavored, and a tool-eager model could then go write to
+           the connected repo for a project that had nothing to do with
+           it. .github only fires on actual repo/GitHub signal (github,
+           git, commit, push, pr, repo, branch, merge...), so an unrelated
+           coding question no longer gets repo tools at all. */
+        if(modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&searchGateTasks.github>0){initTools=initTools.concat(REPO_TOOLS);}
         if(initTools.length>0){
           /* One round used to be all a message got: capable models (e.g.
              Qwen3 Coder) often need list_files, THEN read_file, THEN answer
@@ -4679,7 +4737,7 @@ async function doSendRequest(userContent,isRegen,ap){
        came out as "(empty response)" even though the model had answered. */
     if(TOOL_MODELS.indexOf(currentModel.id)>=0){
       toolsToSend=toolsToSend.concat(getAppControlTools());
-      if(modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&(searchGateTasks.github>0||searchGateTasks.code>0)){toolsToSend=toolsToSend.concat(REPO_TOOLS);}
+      if(modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&searchGateTasks.github>0){toolsToSend=toolsToSend.concat(REPO_TOOLS);}
     }
     var reqBody={model:currentModel.id,messages:messages,temperature:temperature,stream:true};
     /* tool_choice "none", not "auto" - this streaming pass has no

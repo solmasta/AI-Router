@@ -43,6 +43,17 @@
    - a model not in TOOL_MODELS (e.g. Claude, OpenRouter) never gets the
      "you have read_file/write_file tools" system prompt text, since it
      was never actually offered those tools in the API request
+   - repo tools (read_file/write_file/list_files/merge_branch) are gated on
+     actual repo/GitHub signal, not generic coding keywords - a message
+     about an unrelated new app doesn't get them just for sounding
+     code-flavored, in both the main chat and the Overseer strategy chat
+   - a model that comes back with a genuinely empty completion (e.g. it
+     burned its turn on tool_calls and had nothing left once locked to
+     tool_choice:"none") triggers exactly one automatic fallback retry on a
+     different tool-capable model instead of just showing "(empty response)"
+   - GitHub Settings: a one-tap Clear button disconnects the active repo
+     without opening the Connect modal, and previously-connected repos are
+     offered as quick "recent" picks when reconnecting
    - every model, tool-capable or not, is explicitly told not to invent
      or call a tool/function that was never actually defined for the
      conversation (e.g. a fictional weather lookup)
@@ -353,6 +364,34 @@ function assert(cond, label) {
   const ghPersisted = await page.evaluate(() => localStorage.getItem('gh_repo_owner') === 'solmasta' && localStorage.getItem('gh_repo_name') === 'openai-router');
   assert(ghPersisted, 'GitHub connection persisted to localStorage');
 
+  console.log('\n-- quick Clear button disconnects without needing to open the Connect modal --');
+  // Settings previously only exposed Disconnect buried inside the Connect
+  // modal - a one-tap Clear right on the Settings row itself so switching
+  // away from whatever repo happens to be connected (e.g. before starting
+  // an unrelated new app) doesn't require digging for it.
+  await page.click('#settingsBtn'); await page.waitForTimeout(150);
+  const clearBtnVisibleWhileConnected = await page.evaluate(() => !document.getElementById('githubClearBtn').classList.contains('hidden'));
+  assert(clearBtnVisibleWhileConnected, 'Clear button is visible in Settings while a repo is connected');
+  await page.click('#githubClearBtn'); await page.waitForTimeout(150);
+  const ghStatusAfterQuickClear = await page.textContent('#githubStatus');
+  assert(ghStatusAfterQuickClear === 'Not connected', `the quick Clear button disconnects the repo directly from Settings (got "${ghStatusAfterQuickClear}")`);
+  const clearBtnHiddenAfterClear = await page.evaluate(() => document.getElementById('githubClearBtn').classList.contains('hidden'));
+  assert(clearBtnHiddenAfterClear, 'Clear button hides itself once there is nothing connected to clear');
+
+  console.log('\n-- previously connected repos are offered as quick "recent" picks when reconnecting --');
+  await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
+  const recentReposVisible = await page.evaluate(() => !document.getElementById('ghRecentRepos').classList.contains('hidden'));
+  assert(recentReposVisible, 'the repo just cleared shows up as a recent-repo quick pick');
+  const recentRepoLabel = await page.evaluate(() => document.getElementById('ghRecentReposList').textContent);
+  assert(recentRepoLabel.indexOf('solmasta/openai-router') >= 0, `the recent-repo list includes the repo that was just disconnected (got "${recentRepoLabel}")`);
+  await page.click('#ghRecentReposList button:has-text("solmasta/openai-router")');
+  const ownerFilledFromRecent = await page.inputValue('#ghOwnerInput');
+  const repoFilledFromRecent = await page.inputValue('#ghRepoInput');
+  assert(ownerFilledFromRecent === 'solmasta' && repoFilledFromRecent === 'openai-router', `tapping a recent-repo chip fills the owner/repo inputs (got "${ownerFilledFromRecent}/${repoFilledFromRecent}")`);
+  await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
+  const ghStatusAfterRecentReconnect = await page.textContent('#githubStatus');
+  assert(ghStatusAfterRecentReconnect === 'solmasta/openai-router', `reconnecting via the recent-repo chip actually reconnects (got "${ghStatusAfterRecentReconnect}")`);
+
   console.log('\n-- vision model + image request omits repo tools even with GitHub connected --');
   // With GitHub connected, an image sent to a vision model (not in
   // TOOL_MODELS - not vetted for function-calling) must not receive
@@ -407,6 +446,31 @@ function assert(cond, label) {
   // whether the message is actually code/github-relevant.
   const unrelatedToolNames = ((lastUnrelatedBody && lastUnrelatedBody.tools) || []).map((t) => t.function.name);
   assert(unrelatedToolNames.indexOf('read_file') < 0 && unrelatedToolNames.indexOf('write_file') < 0 && unrelatedToolNames.indexOf('list_files') < 0, `an unrelated (non-code/github) message gets no repo tools even with GitHub connected (got tools: ${JSON.stringify(unrelatedToolNames)})`);
+
+  console.log('\n-- a generic coding question (no actual repo/GitHub signal) does not get repo tools either --');
+  // The repo-tools gate used to fire on searchGateTasks.code too, which
+  // matches generic words like "function"/"error"/"javascript" - so a
+  // question about a totally different, unconnected codebase (e.g.
+  // starting a new app) still got read_file/write_file/merge_branch handed
+  // to it for the CONNECTED repo, and a tool-eager model could go write
+  // there for a project that had nothing to do with it. Only actual
+  // github/repo signal (searchGateTasks.github) should unlock repo tools.
+  let lastGenericCodeBody = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      try {
+        const parsed = JSON.parse(req.postData());
+        if (parsed.messages) lastGenericCodeBody = parsed;
+      } catch (e) {}
+    }
+    await route.continue();
+  });
+  await sendMsg('why is this javascript function throwing an error');
+  for (let i = 0; i < 60 && lastGenericCodeBody === null; i++) await page.waitForTimeout(200);
+  await page.unroute('**/*');
+  const genericCodeToolNames = ((lastGenericCodeBody && lastGenericCodeBody.tools) || []).map((t) => t.function.name);
+  assert(genericCodeToolNames.indexOf('read_file') < 0 && genericCodeToolNames.indexOf('write_file') < 0 && genericCodeToolNames.indexOf('list_files') < 0, `a generic coding question with no repo/GitHub signal gets no repo tools even with GitHub connected (got tools: ${JSON.stringify(genericCodeToolNames)})`);
 
   let lastRelatedBody = null;
   await page.route('**/*', async (route) => {
@@ -919,6 +983,35 @@ function assert(cond, label) {
   const overseerLogHasToolNotice = await page.evaluate(() => document.getElementById('overseerChatLog').textContent.indexOf('regtest-overseer-file.txt') >= 0);
   assert(overseerLogHasToolNotice, 'the tool-execution notice renders in the Overseer\'s own chat log, not just the main chat log');
   await page.waitForTimeout(500);
+  await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
+
+  console.log('\n-- Overseer chat withholds repo tools for a strategy question with no actual repo/GitHub signal --');
+  // Same relevance gate as the main chat: GitHub being connected must not
+  // be enough on its own to hand the Overseer read_file/write_file/
+  // merge_branch for a question that has nothing to do with the connected
+  // repo (e.g. talking through a brand new, unrelated app idea).
+  await page.dispatchEvent('#overseerBtn', 'mousedown');
+  await page.waitForTimeout(700);
+  await page.dispatchEvent('#overseerBtn', 'mouseup');
+  await page.waitForTimeout(200);
+  let lastOverseerUnrelatedBody = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      try {
+        const parsed = JSON.parse(req.postData());
+        if (parsed.messages) lastOverseerUnrelatedBody = parsed;
+      } catch (e) {}
+    }
+    await route.continue();
+  });
+  await page.fill('#overseerChatInput', 'I want to start a brand new app idea, any thoughts on the concept?');
+  await page.click('#overseerChatSendBtn');
+  for (let i = 0; i < 60 && lastOverseerUnrelatedBody === null; i++) await page.waitForTimeout(200);
+  await page.unroute('**/*');
+  const overseerUnrelatedToolNames = ((lastOverseerUnrelatedBody && lastOverseerUnrelatedBody.tools) || []).map((t) => t.function.name);
+  assert(overseerUnrelatedToolNames.indexOf('read_file') < 0 && overseerUnrelatedToolNames.indexOf('write_file') < 0 && overseerUnrelatedToolNames.indexOf('list_files') < 0 && overseerUnrelatedToolNames.indexOf('merge_branch') < 0, `an Overseer strategy question with no repo/GitHub signal gets no repo tools even with GitHub connected (got tools: ${JSON.stringify(overseerUnrelatedToolNames)})`);
+  await page.waitForTimeout(300);
   await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
 
   console.log('\n-- tool round loop actually advances multiple rounds, not just one --');
