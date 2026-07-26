@@ -253,7 +253,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.54</span></span>
+      <span class="wm">ai-router <span>v5.55</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -535,7 +535,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.54</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.55</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -2278,6 +2278,13 @@ function getModelSystemPrompt(ap){
     sys+="- Plan your approach in <think> tags\n";
     sys+="- Make changes using write_file with clear commit messages, on a dedicated working branch\n";
     sys+="- Each write_file creates one git commit\n\n";
+    sys+="CODING PRINCIPLES:\n";
+    sys+="- Keep changes proportional to what was actually asked - don't refactor, add abstractions, or fix unrelated things nobody asked for. Three similar lines beats a premature abstraction.\n";
+    sys+="- Default to writing no comments. Only add one when the WHY is genuinely non-obvious (a hidden constraint, a workaround, a subtle invariant) - never to explain WHAT the code does, and never referencing this task/fix by name.\n";
+    sys+="- Don't add error handling, fallbacks, or validation for scenarios that can't actually happen - trust existing guarantees, only validate at real boundaries (user input, external APIs).\n";
+    sys+="- Read enough of the surrounding file first to match its existing naming, style, and conventions instead of imposing your own.\n";
+    sys+="- Watch for security issues you might introduce (XSS, injection, secrets in code) - if you notice one in what you just wrote, fix it before moving on.\n";
+    sys+="- No half-finished implementations - a change either works end to end or it isn't done yet.\n\n";
     /* Hardcoded, accurate knowledge of THIS app's own structure and
        conventions - only when the connected repo actually IS this app
        (someone could point the GitHub connection at a totally different
