@@ -1,0 +1,40 @@
+# ai-router
+
+ai-router is a lightweight tool that allows users to route API requests through a customizable interface. It supports Google OAuth authentication and provides a simple way to manage, test, and forward API calls.
+
+---
+
+## What ai-router Does
+
+- Routes API requests through a clean, browser-based interface  
+- Allows optional Google OAuth authentication for enhanced functionality  
+- Lets you test endpoints quickly without installing extra software  
+- Processes requests in real time without storing user data  
+
+---
+
+## Privacy & Security
+
+ai-router does not store user data.  
+All API requests are processed instantly and discarded.  
+You can review our policies here:
+
+- [Privacy Policy](./privacy)  
+- [Terms of Service](./terms)
+
+---
+
+## Contact
+
+For support or questions, email:
+
+**lukedorsett@hotmail.com**
+
+---
+
+## About
+
+ai-router is created and maintained by **Luke Dorsett**.  
+The project is hosted on GitHub Pages at:
+
+**https://solmasta.github.io/openai-router/**
