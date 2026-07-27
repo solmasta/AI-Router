@@ -1,9 +1,15 @@
 # openai-router
 
 Single-file PWA (`index.html`) - all frontend logic lives in two inline
-`<script>` blocks. Backed by several Cloudflare Workers (`openai-router.js`,
-`claude-worker.js`, `openrouter-worker.js`, `github-ops-worker.js`), each with
-its own `wrangler*.jsonc`/`.toml` config.
+`<script>` blocks. Backed by several Cloudflare Workers, each in its own
+`workers/<name>/` folder alongside its own `wrangler.jsonc`/`.toml` config
+(`workers/openai-router-chat/`, `workers/claude-worker/`,
+`workers/openrouter-worker/`, `workers/drive-auth/`,
+`workers/github-ops-worker/`). Keep each Worker's config in its own folder -
+if a Worker's Cloudflare project uses Git auto-deploy, its dashboard "Root
+directory" build setting must point at that folder specifically, otherwise
+two projects sharing one config file will fight over its `name` field on
+every push (this happened before the split into `workers/`).
 
 ## Before committing any change to index.html
 
