@@ -13,13 +13,9 @@ ai-router is a lightweight tool that allows users to route API requests through 
 
 ---
 
-## Privacy & Security
+## Links
 
-ai-router does not store user data.  
-All API requests are processed instantly and discarded.  
-You can review our policies here:
-
-- [Privacy Policy](./privacy)  
+- [Privacy Policy](./privacy)
 - [Terms of Service](./terms)
 
 ---
