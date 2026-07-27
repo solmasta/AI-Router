@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.63</span></span>
+      <span class="wm">ai-router <span>v5.64</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -550,7 +550,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.63</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.64</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3447,13 +3447,23 @@ async function driveHandleFreshConnect(){
    than swallowing whatever the real failure was. */
 function driveErrText(err){
   if(!err)return "unknown error";
-  if(typeof err==="string")return err;
-  if(typeof err==="object"){
-    if(err.message)return err.message;
-    if(err.error)return driveErrText(err.error);
-    try{return JSON.stringify(err);}catch(e){}
+  var text;
+  if(typeof err==="string")text=err;
+  else if(typeof err==="object"){
+    if(err.message)text=err.message;
+    else if(err.error)return driveErrText(err.error);
+    else{try{text=JSON.stringify(err);}catch(e){text=String(err);}}
+  }else text=String(err);
+  /* This exact phrase is Google's token-endpoint error for an OAuth client
+     whose consent screen is still in "Testing" status when the signed-in
+     account isn't on its Test users list (or an org policy blocks the
+     client outright) - a Google Cloud Console setting, not something this
+     app can retry its way out of. Point at the fix instead of leaving the
+     user with a bare, unactionable Google string. */
+  if(/not authorized to access this resource/i.test(text)){
+    text+=" - the Google account isn't added as a Test user on this OAuth client's consent screen (or the app isn't published yet). Check Google Cloud Console > APIs & Services > OAuth consent screen.";
   }
-  return String(err);
+  return text;
 }
 function driveConnect(){
   driveInitClient();
