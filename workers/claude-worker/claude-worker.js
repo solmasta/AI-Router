@@ -88,15 +88,23 @@ export default {
       stream: body.stream || false,
     };
 
-    // Extract system message if present (should be first message with role="system")
+    // Extract leading system messages - the frontend stacks several
+    // separate role:"system" entries (model prompt, task instructions,
+    // active project, memory, docs) at the front of the array rather than
+    // sending just one, and Claude's API only accepts system content via
+    // the top-level 'system' parameter, never as a message role.
     let systemPrompt = body.system;
     if (body.messages && body.messages.length > 0) {
-      if (body.messages[0].role === "system") {
-        systemPrompt = body.messages[0].content;
-        claudeBody.messages = body.messages.slice(1);
-      } else {
-        claudeBody.messages = body.messages;
+      let splitAt = 0;
+      const systemParts = [];
+      while (splitAt < body.messages.length && body.messages[splitAt].role === "system") {
+        systemParts.push(body.messages[splitAt].content);
+        splitAt++;
       }
+      if (systemParts.length > 0) {
+        systemPrompt = systemParts.join("\n\n");
+      }
+      claudeBody.messages = body.messages.slice(splitAt);
     }
 
     if (systemPrompt) {
