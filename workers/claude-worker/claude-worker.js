@@ -103,6 +103,12 @@ export default {
       claudeBody.system = systemPrompt;
     }
 
+    // The frontend's message objects carry extra client-side-only fields
+    // (e.g. apId, used for its own regen tracking) that Claude's API
+    // rejects outright since it strictly validates message shape - strip
+    // down to just what Claude actually accepts.
+    claudeBody.messages = claudeBody.messages.map(m => ({ role: m.role, content: m.content }));
+
     // Add max_tokens - required by Claude API
     if (body.max_tokens) {
       claudeBody.max_tokens = body.max_tokens;
