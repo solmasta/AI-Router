@@ -1194,6 +1194,11 @@ function assert(cond, label) {
   const chatTextAfterFallback = await page.evaluate(() => document.getElementById('chat').textContent);
   assert(chatTextAfterFallback.indexOf('regtest fallback reply') >= 0, `the fallback model's actual reply is what ends up rendered, not "(empty response)" (chat text: ${chatTextAfterFallback.slice(-300)})`);
   assert(chatTextAfterFallback.indexOf('switched to') >= 0, 'a notice explaining the automatic model switch is shown in the chat');
+  const replyBubbleLabel = await page.evaluate(() => {
+    const bubbles = document.querySelectorAll('#chat .msg.ma3 .ml');
+    return bubbles.length ? bubbles[bubbles.length - 1].textContent : '';
+  });
+  assert(replyBubbleLabel.indexOf('Llama 3.1 8B Turbo') >= 0, `the reply bubble's own model label updates to the fallback model instead of staying on the original failed model (got "${replyBubbleLabel}")`);
 
   console.log('\n-- auto-router prefers a tool-capable model for a repo-flavored message --');
   // scoreModelForTask used to try to reward a DeepInfra model for a
