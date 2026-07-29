@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.69</span></span>
+      <span class="wm">ai-router <span>v5.70</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -550,7 +550,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.69</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.70</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1341,6 +1341,11 @@ function renderRecent(){
 
 /* ---- Agent Router: Auto-select best model for task ---- */
 var allAvailableModels=[],agentAutoSelect=true,lastAgentSelection=null;
+/* Deliberately explicit, multi-word phrases only - unlike analyzeTask's
+   short single-word keywords (which can false-positive inside unrelated
+   words), these gate a disruptive confirm() prompt, so precision matters
+   more than recall here. */
+var TOPIC_CHANGE_PHRASES=["new topic","different topic","switch topics","switching topics","change the subject","change of subject","on a different note","on another note","unrelated question","completely different topic","let's talk about something else","forget that","different subject","new subject"];
 function analyzeTask(text){
   var lower=typeof text==="string"?text.toLowerCase():(text.find&&text.find(function(c){return c.type==="text";})||{}).text||"";
   var tasks={github:0,code:0,write:0,reason:0,analyze:0,search:0};
@@ -1637,6 +1642,10 @@ function showAgentSelection(best){
    vision model for the rest of the conversation. */
 var preVisionModel=null;
 var msgsSinceLastImage=0;
+/* Offered at most once per conversation, not re-shown every message once
+   dismissed or accepted - reset alongside the other per-conversation
+   routing state (new tab, tab switch, Clear). */
+var projectSuggestionShown=false;
 async function ensureVisionModel(){
   if(VISION_MODELS.indexOf(currentModel.id)>=0)return;
   var found=null;
@@ -3206,7 +3215,7 @@ function applyTabAsLiveState(t){
   }
   if(overseerEnabled&&chatHistory.length>1){startOverseerMonitoring();}
   updateOverseerBar();
-  preVisionModel=null;
+  preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;
   declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
 }
 function renderTabBar(){
@@ -3250,7 +3259,7 @@ function createNewTab(){
   stopOverseerMonitoring();
   overseerState=defaultOverseerState();
   updateOverseerBar();
-  preVisionModel=null;
+  preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;
   declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   renderTabBar();
   saveTabsToStorage();
@@ -3373,6 +3382,56 @@ function showMemorySuggestion(text){
   var save=document.createElement("button");save.className="bp";save.style.cssText="font-size:11px;padding:4px 10px";save.textContent="Save";
   var dismiss=document.createElement("button");dismiss.className="bg";dismiss.style.cssText="font-size:11px;padding:4px 10px";dismiss.textContent="Dismiss";
   save.addEventListener("click",function(){addMemory(text);actions.remove();notice.style.opacity="0.6";notice.innerHTML+="<div style='margin-top:4px;color:var(--ac)'>Saved.</div>";});
+  dismiss.addEventListener("click",function(){notice.remove();});
+  actions.appendChild(save);actions.appendChild(dismiss);
+  notice.appendChild(actions);
+  document.getElementById("chat").appendChild(notice);
+  scrollBot();
+}
+/* Asks the currently active model to name and summarize the conversation
+   so far into a reusable project ruleset - same non-streaming completion
+   pattern doSummarize already uses for condensing context. Returns null
+   (rather than throwing) on any failure so the caller can just leave the
+   suggestion banner up for the user to retry. */
+async function generateProjectFromConversation(){
+  var lines=chatHistory.map(function(m){
+    var c=typeof m.content==="string"?m.content:((m.content&&m.content.find&&m.content.find(function(x){return x.type==="text";})||{}).text||"");
+    var who=m.role==="user"?"User: ":m.role==="assistant"?"AI: ":"";
+    return who+c.slice(0,500);
+  }).join("\n\n");
+  var sysmsg="Based on this conversation, invent a short project name (3-6 words) and complete instructions/ruleset for a reusable AI assistant project matching what this conversation has actually been about. Respond with ONLY valid JSON, no other text: {\"name\":\"...\",\"instructions\":\"...\"}";
+  try{
+    var res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:currentModel.id,messages:[{role:"system",content:sysmsg},{role:"user",content:lines}],temperature:0.3,stream:false,max_tokens:400})});
+    if(!res.ok)return null;
+    var data=await res.json();
+    var text=((data.choices||[])[0]||{}).message&&data.choices[0].message.content||"";
+    var jsonMatch=text.match(/\{[\s\S]*\}/);
+    if(!jsonMatch)return null;
+    var parsed=JSON.parse(jsonMatch[0]);
+    if(!parsed.name||!parsed.instructions)return null;
+    return parsed;
+  }catch(e){return null;}
+}
+function showProjectSuggestion(){
+  var notice=document.createElement("div");
+  notice.style.cssText="padding:8px 12px;margin:8px 0;background:rgba(139,140,247,0.08);border-left:3px solid var(--ac);border-radius:4px;font-size:12px;color:var(--tx)";
+  notice.innerHTML="📌 <strong>Save this conversation as a reusable project?</strong>";
+  var actions=document.createElement("div");actions.style.cssText="margin-top:6px;display:flex;gap:8px";
+  var save=document.createElement("button");save.className="bp";save.style.cssText="font-size:11px;padding:4px 10px";save.textContent="Save as Project";
+  var dismiss=document.createElement("button");dismiss.className="bg";dismiss.style.cssText="font-size:11px;padding:4px 10px";dismiss.textContent="Dismiss";
+  save.addEventListener("click",async function(){
+    save.disabled=true;save.textContent="Saving…";
+    var result=await generateProjectFromConversation();
+    if(!result){
+      save.disabled=false;save.textContent="Save as Project";
+      alert("Couldn't generate a project summary - try again.");
+      return;
+    }
+    createProjectFromTool(result.name,result.instructions);
+    actions.remove();
+    notice.style.opacity="0.6";
+    notice.innerHTML+="<div style='margin-top:4px;color:var(--ac)'>Saved as \""+esc(result.name)+"\".</div>";
+  });
   dismiss.addEventListener("click",function(){notice.remove();});
   actions.appendChild(save);actions.appendChild(dismiss);
   notice.appendChild(actions);
@@ -4681,6 +4740,14 @@ async function send(){
   var promptEl=document.getElementById("prompt");
   var text=promptEl.value.trim();
   if(!text&&!attachedFiles.length)return;
+  /* Conservative, phrase-based detection - not fuzzy keyword-category
+     drift scoring - a missed detection just means the user starts the
+     tab manually like before, but a false positive interrupts them with
+     an unwanted prompt, so only fire on an explicit, unambiguous signal
+     that they're deliberately moving on to something else. */
+  if(chatHistory.length>0&&TOPIC_CHANGE_PHRASES.some(function(p){return text.toLowerCase().indexOf(p)>=0;})){
+    if(confirm("This sounds like a new topic - start a fresh tab for it?"))createNewTab();
+  }
   var hasImg=attachedFiles.some(function(f){return f.type==="image";});
   if(hasImg&&VISION_MODELS.indexOf(currentModel.id)<0){
     await ensureVisionModel();
@@ -4844,8 +4911,14 @@ async function doSendRequest(userContent,isRegen,ap){
      of whatever model this conversation is actually using - the regular
      chat model never gets REPO_TOOLS at all anymore, so it can't lose
      tool access mid-task just because the auto-router picked a
-     non-tool-capable model for an ordinary message. */
-  if(modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&searchGateTasks.github>0){
+     non-tool-capable model for an ordinary message.
+     Also gated on there being no image in THIS message - the coding agent
+     runs on Qwen3 Coder, not a vision model, so an image+repo-flavored
+     message (e.g. a screenshot with "does this match the repo's style")
+     would otherwise silently route away from vision entirely and the
+     image would never actually get looked at. */
+  var hasImgInContent=Array.isArray(userContent)&&userContent.some(function(p){return p.type==="image_url";});
+  if(!hasImgInContent&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&searchGateTasks.github>0){
     try{
       await runCodingAgentTurn(messages);
     }finally{
@@ -5036,6 +5109,15 @@ async function doSendRequest(userContent,isRegen,ap){
     asstMsg.body.innerHTML=renderMd(full||(isRegen?"(no response)":triedFallback?"\u26a0\ufe0f No response from "+esc(currentModel.label)+" either - try rephrasing or pick a different model.":"(empty response)"));
     chatHistory.push({role:"assistant",content:full});
     memSuggestions.forEach(function(t){showMemorySuggestion(t);});
+    /* Offer to save an ordinary conversation as a reusable Work Project
+       once it's clearly settled into a topic (8 messages in) - never for
+       a conversation already running under a project (its own rules
+       already apply), and never more than once per conversation. */
+    var inProject=ap&&typeof ap.id==="string"&&ap.id.indexOf("wproj_")===0;
+    if(!inProject&&!projectSuggestionShown&&chatHistory.length>=8){
+      projectSuggestionShown=true;
+      showProjectSuggestion();
+    }
     if(searchUsed){var sb=document.createElement("span");sb.className="srch";sb.textContent="\uD83D\uDD0D searched "+searchTime;asstMsg.label.appendChild(sb);}
     if(messages.some(function(m){return m.role==="tool";})){var tb=document.createElement("span");tb.className="srch";tb.textContent="\uD83D\uDEE0\uFE0F used tools";asstMsg.label.appendChild(tb);}
     var cost=calcCost(full);
@@ -5081,7 +5163,7 @@ document.getElementById("clearBtn").addEventListener("click",function(){
   chatHistory=[];clearAttach();localStorage.removeItem(pk(AUTOSAVE_KEY));localStorage.removeItem(pk("ai_draft"));
   sessionId=Date.now().toString();responseCount=0;lastUsedModelId="";summarizing=false;
   clearActiveWproj();stopOverseerMonitoring();overseerState=defaultOverseerState();
-  preVisionModel=null;declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
+  preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">🤖</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';
   document.getElementById("tokenBar").classList.add("hidden");
   updateOverseerBar();
