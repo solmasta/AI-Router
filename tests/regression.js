@@ -248,6 +248,12 @@ function assert(cond, label) {
   assert(tabsHasMsg, 'tab storage still contains the message after a send error (not silently dropped)');
 
   console.log('\n-- vision model auto-switch + auto-restore --');
+  // "here's a photo" -> "what's wrong with it?" is an extremely common
+  // pattern - the immediate next message has no NEW attachment but still
+  // needs the image from chat history, so restoring on the very first
+  // image-less follow-up sent that question to a model that can't read
+  // the image at all. Only the SECOND consecutive image-less message
+  // should trigger the restore.
   const modelBefore = await page.textContent('#modelBtnLabel');
   const fileInput = await page.$('#fileInput');
   await fileInput.setInputFiles(imgPath);
@@ -255,9 +261,12 @@ function assert(cond, label) {
   await sendMsg('what is in this image');
   const modelDuring = await page.textContent('#modelBtnLabel');
   await sendMsg('thanks, tell me more');
-  const modelAfter = await page.textContent('#modelBtnLabel');
+  const modelAfterOneFollowup = await page.textContent('#modelBtnLabel');
+  await sendMsg('ok, switching topics now');
+  const modelAfterTwoFollowups = await page.textContent('#modelBtnLabel');
   assert(modelDuring !== modelBefore, `model switched for image attach (before="${modelBefore}" during="${modelDuring}")`);
-  assert(modelAfter === modelBefore, `model restored after image message (before="${modelBefore}" after="${modelAfter}")`);
+  assert(modelAfterOneFollowup === modelDuring, `model stays on the vision model through one image-less follow-up, since it likely still needs the image in context (during="${modelDuring}" after one follow-up="${modelAfterOneFollowup}")`);
+  assert(modelAfterTwoFollowups === modelBefore, `model restores once a second consecutive image-less message confirms the conversation moved on (before="${modelBefore}" after two follow-ups="${modelAfterTwoFollowups}")`);
 
   console.log('\n-- image attached with no caption still includes a text part --');
   let lastRequestBody = null;
