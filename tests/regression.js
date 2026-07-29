@@ -1779,6 +1779,44 @@ function assert(cond, label) {
   const thinkingClassClearedAfter = await page.evaluate(() => document.getElementById('overseerBtn').classList.contains('thinking'));
   assert(!thinkingClassClearedAfter, 'the "thinking" pulse clears once the routing decision is made');
 
+  console.log('\n-- renderMd escapes markdown-link URLs instead of letting them break out of the href attribute --');
+  // esc() only neutralizes &, <, > - a model reply (which can carry
+  // attacker-controlled text echoed back from a web search result) could
+  // previously put an unescaped " in the URL capture and inject arbitrary
+  // HTML attributes/event handlers. Drive it through the real send pipeline
+  // (renderMd itself isn't window-exposed - both script blocks are IIFEs)
+  // and inspect the rendered bubble.
+  const maliciousReply = '[click](" onmouseover="alert(1)" x="https://evil.example) [js](javascript:alert(1)) [safe](https://example.com/path?a=1&b=2)';
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.stream === false) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '' } }] }) });
+        return;
+      }
+      if (parsed && parsed.stream === true) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: 'data: ' + JSON.stringify({ choices: [{ delta: { content: maliciousReply } }] }) + '\n\ndata: [DONE]\n\n',
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('regtest xss link check');
+  await page.unroute('**/*');
+  const xssReplyHtml = await page.evaluate(() => {
+    const bubbles = document.querySelectorAll('#chat .msg.ma3 .body');
+    return bubbles.length ? bubbles[bubbles.length - 1].innerHTML : '';
+  });
+  assert(xssReplyHtml.indexOf('onmouseover=') < 0, `a crafted markdown link cannot inject an HTML attribute like onmouseover (got: ${xssReplyHtml})`);
+  assert(!/<a[^>]*javascript:/i.test(xssReplyHtml), `a javascript: URL is not rendered as a clickable link (got: ${xssReplyHtml})`);
+  assert(xssReplyHtml.indexOf('<a href="https://example.com/path?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">safe</a>') >= 0, `a normal https link still renders as a clickable anchor (got: ${xssReplyHtml})`);
+
   console.log(`\n-- page errors: ${realErrors().length} real (excluding expected sandbox network noise) --`);
   if (realErrors().length) console.log(realErrors());
   failures += realErrors().length;
