@@ -16,37 +16,35 @@
    - Overseer chat can also drive repo tool_calls (e.g. write_file) directly,
      through the same TOOL_MODELS gate and approval dialogs as the main
      chat, with its own tool-execution notices in the Overseer's chat log
+   - all repo/coding work (read_file/write_file/list_files/merge_branch)
+     runs on one fixed dedicated coding agent model, independent of
+     whatever the main chat is using - a repo-flavored message no longer
+     needs to switch the main chat model at all
+   - the coding agent runs one step (tool round) at a time and waits for
+     an explicit Continue click before starting the next one - it never
+     auto-chains multiple rounds in one burst
    - write_file tool never defaults to main/master; the approved branch is
      what actually reaches the GitHub ops worker
    - merge_branch tool requires its own dedicated approval dialog before
      anything happens, and the approved branch/op reach the GitHub ops
      worker correctly
-   - the final streaming call forces tool_choice:"none" so a model that
-     wants to call another tool after a successful tool round doesn't
-     silently render as "(empty response)"
-   - the tool round loop actually advances multiple rounds within one
-     message (not capped at one), and is bounded at MAX_TOOL_ROUNDS so a
-     model that keeps wanting to call tools can't loop indefinitely
    - list_files no longer requires a path - its schema allows omitting it
      to mean the repo root
-   - the auto-router actually prefers a tool-capable (DeepInfra) model for
-     a repo-flavored message instead of silently landing on Claude/
-     OpenRouter and losing all tool access
    - Manual import's "Fetch from Drive" guards against an unconnected/
      expired Drive session instead of silently failing
    - "Open" deep-links straight to the Drive folder by id, falling back to
      a name search only when no id is known yet
    - App-control tools (create_project/remember/switch_model) execute
      immediately on a model tool_call, with real observable side effects
-   - Hardcoded app-structure knowledge only appears when GitHub is
-     connected to this actual repo, not some other repo
-   - a model not in TOOL_MODELS (e.g. Claude, OpenRouter) never gets the
-     "you have read_file/write_file tools" system prompt text, since it
-     was never actually offered those tools in the API request
-   - repo tools (read_file/write_file/list_files/merge_branch) are gated on
-     actual repo/GitHub signal, not generic coding keywords - a message
-     about an unrelated new app doesn't get them just for sounding
-     code-flavored, in both the main chat and the Overseer strategy chat
+   - hardcoded app-structure knowledge only appears in the coding agent's
+     own system prompt when GitHub is connected to this actual repo, not
+     some other repo
+   - the main chat model is never told it has repository tools - that
+     system-prompt text lives only in the dedicated coding agent's prompt
+   - repo tools are gated on actual repo/GitHub signal, not generic coding
+     keywords - a message about an unrelated new app doesn't route to the
+     coding agent just for sounding code-flavored, in both the main chat
+     and the Overseer strategy chat
    - a model that comes back with a genuinely empty completion (e.g. it
      burned its turn on tool_calls and had nothing left once locked to
      tool_choice:"none") triggers exactly one automatic fallback retry on a
@@ -486,33 +484,44 @@ function assert(cond, label) {
   const genericCodeToolNames = ((lastGenericCodeBody && lastGenericCodeBody.tools) || []).map((t) => t.function.name);
   assert(genericCodeToolNames.indexOf('read_file') < 0 && genericCodeToolNames.indexOf('write_file') < 0 && genericCodeToolNames.indexOf('list_files') < 0, `a generic coding question with no repo/GitHub signal gets no repo tools even with GitHub connected (got tools: ${JSON.stringify(genericCodeToolNames)})`);
 
-  let lastRelatedBody = null;
+  console.log('\n-- a genuinely code/github-relevant message routes to the dedicated coding agent, not the main chat model --');
+  // Repo work (read_file/write_file/list_files/merge_branch) always runs
+  // on one fixed model now, independent of whatever the main chat is
+  // using - the main chat model never gets REPO_TOOLS attached at all
+  // anymore, so an auto-router switch away from a tool-capable model can
+  // no longer strand a later repo request.
+  let lastCodingAgentBody = null;
   await page.route('**/*', async (route) => {
     const req = route.request();
     if (req.method() === 'POST' && req.postData()) {
-      try {
-        const parsed = JSON.parse(req.postData());
-        if (parsed.messages) lastRelatedBody = parsed;
-      } catch (e) {}
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        lastCodingAgentBody = parsed;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'The README describes this project.' } }] }),
+        });
+        return;
+      }
     }
     await route.continue();
   });
   await sendMsg('please read the README file from the github repo');
-  for (let i = 0; i < 60 && lastRelatedBody === null; i++) await page.waitForTimeout(200);
+  for (let i = 0; i < 60 && lastCodingAgentBody === null; i++) await page.waitForTimeout(200);
   await page.unroute('**/*');
-  assert(lastRelatedBody && Array.isArray(lastRelatedBody.tools) && lastRelatedBody.tools.length > 0, 'a genuinely code/github-relevant message still gets the repo tools');
-  // The final streaming call still lists tools (so the model knows what it
-  // already did/could have done) but must force tool_choice:"none" - that
-  // call's reader only handles delta.content, so a real tool_choice:"auto"
-  // here lets the model try to call a tool again after a successful first
-  // round, which silently renders as "(empty response)" since nothing
-  // reads or executes tool_calls deltas in the streaming loop.
-  assert(lastRelatedBody && lastRelatedBody.tool_choice === 'none', `the final streaming call forces tool_choice:"none" so a tool-hungry model can't silently produce an empty response (got "${lastRelatedBody && lastRelatedBody.tool_choice}")`);
+  assert(!!lastCodingAgentBody, 'a repo-flavored message reaches the dedicated coding agent model');
+  assert(Array.isArray(lastCodingAgentBody.tools) && lastCodingAgentBody.tools.length > 0, 'the coding agent request carries the repo tools');
+  assert(lastCodingAgentBody.tool_choice === 'auto', `the coding agent gets tool_choice:"auto", free to call a tool or just answer (got "${lastCodingAgentBody.tool_choice}")`);
   // list_files used to require a path, so the model had no legitimate way
   // to ask for "the whole repo" - it had to guess a path or get an error
   // either way. Confirm the tool's own schema no longer forces one.
-  const listFilesTool = (lastRelatedBody && lastRelatedBody.tools || []).find((t) => t.function.name === 'list_files');
+  const listFilesTool = (lastCodingAgentBody.tools || []).find((t) => t.function.name === 'list_files');
   assert(listFilesTool && !(listFilesTool.function.parameters.required || []).includes('path'), 'list_files no longer requires a path - omitting it can mean "list the repo root"');
+  const chatTextAfterCodingAgent = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(chatTextAfterCodingAgent.indexOf('Coding Agent') >= 0, "the coding agent's response renders in its own labeled block");
+  assert(chatTextAfterCodingAgent.indexOf('README describes this project') >= 0, "the coding agent's final answer actually renders");
 
   await page.evaluate(() => {
     document.getElementById('ghwPath').textContent = 'test';
@@ -704,7 +713,7 @@ function assert(cond, label) {
   console.log('\n-- write_file tool never defaults to main/master, and the approved branch is what actually reaches the worker --');
   // write_file used to have no branch parameter at all - the ops worker
   // defaulted every write straight onto the repo's default branch, and
-  // nothing in the approval dialog said so. This mocks a full model
+  // nothing in the approval dialog said so. This mocks the coding agent's
   // tool_call for write_file with no branch specified and checks the whole
   // path: the approval dialog must default to a non-main working branch,
   // and that same branch (not "main") must be what's actually POSTed to
@@ -718,16 +727,8 @@ function assert(cond, label) {
   // modal (see its click handler) and Save & Connect only closes that
   // sub-modal, so Settings is already out of the way here - nothing left
   // to close.
-  // Force a known tool-capable model instead of trusting whatever
-  // switchToBestModel might auto-pick for this message - only some
-  // DeepInfra models are in TOOL_MODELS, and picking one outside that list
-  // would skip the tool-call path entirely for reasons unrelated to this fix.
-  await page.click('#modelBtn'); await page.waitForTimeout(150);
-  await page.locator('.mc:has-text("Mistral Small")').first().click();
-  await page.waitForTimeout(150);
 
   let capturedWriteBody = null;
-  let writeToolRoundCount = 0;
   await page.route('**/*', async (route) => {
     const req = route.request();
     const url = req.url();
@@ -743,49 +744,26 @@ function assert(cond, label) {
     if (req.method() === 'POST' && req.postData()) {
       let parsed = null;
       try { parsed = JSON.parse(req.postData()); } catch (e) {}
-      if (parsed && parsed.stream === false) {
-        writeToolRoundCount++;
-        if (writeToolRoundCount === 1) {
-          // The initial non-streaming tool-discovery call - fake a model
-          // response that calls write_file with NO branch specified, the
-          // exact case that used to silently land on the default branch.
-          await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              choices: [{
-                finish_reason: 'tool_calls',
-                message: {
-                  role: 'assistant',
-                  tool_calls: [{
-                    id: 'regtest_call_1',
-                    type: 'function',
-                    function: { name: 'write_file', arguments: JSON.stringify({ path: 'regtest.txt', content: 'hello world', message: 'regtest commit' }) },
-                  }],
-                },
-              }],
-            }),
-          });
-          return;
-        }
-        // The tool round loop keeps going until the model stops calling
-        // tools - round 2 must say it's done, or it'd re-issue the same
-        // write_file call and pop a second approval dialog nothing here
-        // ever clicks through, hanging the send indefinitely.
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        // Fake a coding-agent response that calls write_file with NO
+        // branch specified, the exact case that used to silently land on
+        // the default branch.
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest done' } }] }),
-        });
-        return;
-      }
-      if (parsed && parsed.stream === true) {
-        // The final streaming call after tool results are folded in - a
-        // minimal SSE body so the reader loop completes cleanly.
-        await route.fulfill({
-          status: 200,
-          contentType: 'text/event-stream',
-          body: 'data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n',
+          body: JSON.stringify({
+            choices: [{
+              finish_reason: 'tool_calls',
+              message: {
+                role: 'assistant',
+                tool_calls: [{
+                  id: 'regtest_call_1',
+                  type: 'function',
+                  function: { name: 'write_file', arguments: JSON.stringify({ path: 'regtest.txt', content: 'hello world', message: 'regtest commit' }) },
+                }],
+              },
+            }],
+          }),
         });
         return;
       }
@@ -809,20 +787,21 @@ function assert(cond, label) {
   await page.unroute('**/*');
   assert(!!capturedWriteBody, 'approving the write actually reaches the GitHub ops worker');
   assert(capturedWriteBody && capturedWriteBody.branch === 'ai-changes', `the approved branch (not "main") is what's actually sent to the worker (got "${capturedWriteBody && capturedWriteBody.branch}")`);
+  const continueBtnAfterWrite = await page.evaluate(() => {
+    const bodies = document.querySelectorAll('#chat .msg.ma3 .body');
+    const last = bodies[bodies.length - 1];
+    return last ? !!last.parentElement.querySelector('button') : false;
+  });
+  assert(continueBtnAfterWrite, 'a Continue button appears after the step instead of automatically starting another round');
 
   console.log('\n-- merge_branch tool requires its own approval dialog, and the approved branch/op reach the worker --');
   // merge_branch touches the repo's actual default branch - a materially
   // higher-stakes action than write_file - so it gets its own dedicated
   // confirm modal (githubMergeConfirmModal) instead of reusing
-  // githubWriteConfirmModal. Verify the model-issued tool_call surfaces
+  // githubWriteConfirmModal. Verify the coding agent's tool_call surfaces
   // that dialog, and that approving it sends the right op/branch to the
   // GitHub ops worker.
-  await page.click('#modelBtn'); await page.waitForTimeout(150);
-  await page.locator('.mc:has-text("Mistral Small")').first().click();
-  await page.waitForTimeout(150);
-
   let capturedMergeBody = null;
-  let mergeToolRoundCount = 0;
   await page.route('**/*', async (route) => {
     const req = route.request();
     const url = req.url();
@@ -838,46 +817,25 @@ function assert(cond, label) {
     if (req.method() === 'POST' && req.postData()) {
       let parsed = null;
       try { parsed = JSON.parse(req.postData()); } catch (e) {}
-      if (parsed && parsed.stream === false) {
-        mergeToolRoundCount++;
-        if (mergeToolRoundCount === 1) {
-          // The initial non-streaming tool-discovery call - fake a model
-          // response that calls merge_branch for a fixed branch name.
-          await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              choices: [{
-                finish_reason: 'tool_calls',
-                message: {
-                  role: 'assistant',
-                  tool_calls: [{
-                    id: 'regtest_call_2',
-                    type: 'function',
-                    function: { name: 'merge_branch', arguments: JSON.stringify({ branch: 'ai-changes', title: 'regtest merge', message: 'regtest merge body' }) },
-                  }],
-                },
-              }],
-            }),
-          });
-          return;
-        }
-        // The tool round loop keeps going until the model stops calling
-        // tools - round 2 must say it's done, or it'd re-issue the same
-        // merge_branch call and pop a second approval dialog nothing here
-        // ever clicks through, hanging the send indefinitely.
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        // Fake a coding-agent response that calls merge_branch for a
+        // fixed branch name.
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest done' } }] }),
-        });
-        return;
-      }
-      if (parsed && parsed.stream === true) {
-        await route.fulfill({
-          status: 200,
-          contentType: 'text/event-stream',
-          body: 'data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n',
+          body: JSON.stringify({
+            choices: [{
+              finish_reason: 'tool_calls',
+              message: {
+                role: 'assistant',
+                tool_calls: [{
+                  id: 'regtest_call_2',
+                  type: 'function',
+                  function: { name: 'merge_branch', arguments: JSON.stringify({ branch: 'ai-changes', title: 'regtest merge', message: 'regtest merge body' }) },
+                }],
+              },
+            }],
+          }),
         });
         return;
       }
@@ -917,6 +875,18 @@ function assert(cond, label) {
   // the main chat), the write still reaches the GitHub ops worker once
   // approved, and the tool-execution notice lands in the Overseer's own
   // chat log (overseerChatLog), not the main chat log.
+  // The Overseer chat's own tool access is still gated on the main chat's
+  // currentModel being in TOOL_MODELS (unlike the main chat's repo work,
+  // this side-channel wasn't moved onto the dedicated coding agent) -
+  // force a known tool-capable model explicitly rather than relying on
+  // whatever an earlier test happened to leave selected - the auto-router
+  // could have drifted to any backend by this point, and the model modal
+  // opens showing whichever backend tab is already active, not
+  // necessarily DeepInfra's.
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  await page.click('#deepinfraBtn'); await page.waitForTimeout(150);
+  await page.locator('.mc:has-text("Mistral Small")').first().click();
+  await page.waitForTimeout(150);
   await page.dispatchEvent('#overseerBtn', 'mousedown');
   await page.waitForTimeout(700);
   await page.dispatchEvent('#overseerBtn', 'mouseup');
@@ -1028,21 +998,15 @@ function assert(cond, label) {
   await page.waitForTimeout(300);
   await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
 
-  console.log('\n-- tool round loop actually advances multiple rounds, not just one --');
-  // Before this fix, a message got exactly ONE non-streaming round to call
-  // a tool - a model that needed a second call (e.g. read_file right after
-  // list_files) either had it silently vanish (old bug: streamed
-  // "(empty response)") or, once the final call was locked to
-  // tool_choice:"none", dumped the attempted call as literal text instead
-  // (e.g. Qwen3 Coder's own <tool_call><function=...> training format)
-  // since the structured path was closed but it still wanted to act.
-  // Mock 2 sequential tool_calls rounds then a stop, and check both tools
-  // actually ran.
-  await page.click('#modelBtn'); await page.waitForTimeout(150);
-  await page.locator('.mc:has-text("Mistral Small")').first().click();
-  await page.waitForTimeout(150);
-
-  let toolRoundCount = 0;
+  console.log('\n-- coding agent runs one step at a time, waiting for Continue before the next tool call --');
+  // The coding agent never auto-chains multiple tool rounds in one burst -
+  // each round stops after executing whatever tool_calls came back and
+  // shows a Continue button; the NEXT round (e.g. read_file right after
+  // list_files) only fires once the user actually taps it. Mock round 1
+  // (list_files), confirm read_file has NOT fired yet, click Continue,
+  // confirm round 2 (read_file) then fires, click Continue again, confirm
+  // the final text round completes and renders.
+  let codingRoundCount = 0;
   let sawListFilesCall = false;
   let sawReadFileCall = false;
   await page.route('**/*', async (route) => {
@@ -1063,9 +1027,9 @@ function assert(cond, label) {
     if (req.method() === 'POST' && req.postData()) {
       let parsed = null;
       try { parsed = JSON.parse(req.postData()); } catch (e) {}
-      if (parsed && parsed.stream === false) {
-        toolRoundCount++;
-        if (toolRoundCount === 1) {
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        codingRoundCount++;
+        if (codingRoundCount === 1) {
           await route.fulfill({
             status: 200,
             contentType: 'application/json',
@@ -1073,7 +1037,7 @@ function assert(cond, label) {
           });
           return;
         }
-        if (toolRoundCount === 2) {
+        if (codingRoundCount === 2) {
           await route.fulfill({
             status: 200,
             contentType: 'application/json',
@@ -1081,19 +1045,10 @@ function assert(cond, label) {
           });
           return;
         }
-        // Round 3: the model is done calling tools.
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest done' } }] }),
-        });
-        return;
-      }
-      if (parsed && parsed.stream === true) {
-        await route.fulfill({
-          status: 200,
-          contentType: 'text/event-stream',
-          body: 'data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest coding agent done' } }] }),
         });
         return;
       }
@@ -1101,55 +1056,29 @@ function assert(cond, label) {
     await route.continue();
   });
   await sendMsg('please read the readme after listing the repo');
+  assert(sawListFilesCall, 'round 1 calls list_files');
+  assert(!sawReadFileCall, 'read_file has NOT been called yet - the agent stopped after round 1 instead of auto-chaining to the next tool call');
+  // Continue clicks don't touch #sendBtn (that only reflects the main
+  // send() flow) - poll the actual expected side effect of each round
+  // instead of waitForSendDone(), which would return immediately here.
+  const continueBtnAfterRound1 = await page.locator('#chat .msg.ma3 button:has-text("Continue")').last();
+  await continueBtnAfterRound1.click();
+  for (let i = 0; i < 60 && !sawReadFileCall; i++) await page.waitForTimeout(200);
+  assert(sawReadFileCall, 'clicking Continue actually triggers round 2, which calls read_file');
+  const continueBtnAfterRound2 = await page.locator('#chat .msg.ma3 button:has-text("Continue")').last();
+  await continueBtnAfterRound2.click();
+  // codingRoundCount ticks up as soon as the mocked request lands, but
+  // rendering the final text happens after that response is parsed - wait
+  // for the actual rendered text, not just the request having fired.
+  let chatTextAfterCodingRounds = '';
+  for (let i = 0; i < 60; i++) {
+    chatTextAfterCodingRounds = await page.evaluate(() => document.getElementById('chat').textContent);
+    if (chatTextAfterCodingRounds.indexOf('regtest coding agent done') >= 0) break;
+    await page.waitForTimeout(200);
+  }
   await page.unroute('**/*');
-  assert(sawListFilesCall, 'round 1 of the tool loop actually calls list_files');
-  assert(sawReadFileCall, 'round 2 of the tool loop actually calls read_file - the loop did not stop after just one round');
-  assert(toolRoundCount === 3, `the loop stopped as soon as the model returned finish_reason:"stop" instead of always burning through every round (got ${toolRoundCount} non-streaming rounds, expected exactly 3)`);
-
-  console.log('\n-- tool round loop is bounded, does not call tools forever --');
-  // A model that keeps wanting to call tools every round must not loop
-  // indefinitely - MAX_TOOL_ROUNDS caps it, after which the final
-  // tool_choice:"none" call is the actual safety net that forces a text
-  // answer regardless of what the model still wants to do.
-  await page.click('#modelBtn'); await page.waitForTimeout(150);
-  await page.locator('.mc:has-text("Mistral Small")').first().click();
-  await page.waitForTimeout(150);
-
-  let unboundedRoundCount = 0;
-  await page.route('**/*', async (route) => {
-    const req = route.request();
-    const url = req.url();
-    if (url.indexOf('github-ops-worker') >= 0 && req.method() === 'POST') {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, files: [] }) });
-      return;
-    }
-    if (req.method() === 'POST' && req.postData()) {
-      let parsed = null;
-      try { parsed = JSON.parse(req.postData()); } catch (e) {}
-      if (parsed && parsed.stream === false) {
-        unboundedRoundCount++;
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', tool_calls: [{ id: 'regtest_round_' + unboundedRoundCount, type: 'function', function: { name: 'list_files', arguments: JSON.stringify({}) } }] } }] }),
-        });
-        return;
-      }
-      if (parsed && parsed.stream === true) {
-        await route.fulfill({
-          status: 200,
-          contentType: 'text/event-stream',
-          body: 'data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n',
-        });
-        return;
-      }
-    }
-    await route.continue();
-  });
-  await sendMsg('please explore the repo as much as needed');
-  await page.unroute('**/*');
-  assert(unboundedRoundCount === 4, `the tool loop stops after MAX_TOOL_ROUNDS (4) rounds even if the model keeps returning tool_calls every time (got ${unboundedRoundCount} rounds)`);
-  await page.waitForTimeout(500);
+  assert(codingRoundCount === 3, `exactly 3 coding-agent rounds ran, one per Continue click plus the initial send (got ${codingRoundCount})`);
+  assert(chatTextAfterCodingRounds.indexOf('regtest coding agent done') >= 0, "the final round's plain-text answer renders once the agent stops calling tools");
 
   console.log('\n-- an empty completion auto-switches to a fallback model and retries instead of just showing "(empty response)" --');
   // A model can burn its whole turn on tool_calls and have nothing left to
@@ -1209,24 +1138,52 @@ function assert(cond, label) {
   });
   assert(replyBubbleLabel.indexOf('Llama 3.1 8B Turbo') >= 0, `the reply bubble's own model label updates to the fallback model instead of staying on the original failed model (got "${replyBubbleLabel}")`);
 
-  console.log('\n-- auto-router prefers a tool-capable model for a repo-flavored message --');
-  // scoreModelForTask used to try to reward a DeepInfra model for a
-  // github-flavored message by checking model.id/label/desc for the
-  // literal string "deepinfra" - no model's id/label/desc actually
-  // contains that word, so the boost silently never fired for anything.
-  // That meant the auto-router could switch to a Claude/OpenRouter model
-  // for a repo-flavored message and silently lose all tool access (only
-  // DeepInfra models are in TOOL_MODELS). Start on Claude, send a message
-  // that's unambiguously repo-flavored, and confirm the router actually
-  // switches to a tool-capable (DeepInfra) model instead of staying put.
+  console.log('\n-- a repo-flavored message no longer needs to switch the main chat model at all --');
+  // Repo work now always runs on the dedicated coding agent, independent
+  // of whatever the main chat is using - the auto-router used to have to
+  // bias toward a tool-capable DeepInfra model for a repo-flavored message
+  // just so the CURRENT model could use the tools directly, which meant
+  // switching away from whatever the user was actually chatting with
+  // (e.g. Claude) for reasons that had nothing to do with the
+  // conversation itself. Start on Claude, send an unambiguously
+  // repo-flavored message, and confirm the main chat backend is left
+  // alone while the coding agent still does the actual work.
   await page.click('#modelBtn'); await page.waitForTimeout(150);
   await page.click('#claudeBtn'); await page.waitForTimeout(300);
   await page.click('#closeModelModal'); await page.waitForTimeout(150);
   const backendBeforeGithubMsg = await page.evaluate(() => document.getElementById('claudeBtn').classList.contains('act') ? 'claude' : 'other');
   assert(backendBeforeGithubMsg === 'claude', 'test setup: starts on the Claude backend');
+  let sawCodingAgentCallForBranchMsg = false;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        sawCodingAgentCallForBranchMsg = true;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest branch check done' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
   await sendMsg('please check the current branch and commit history in the repo');
-  const backendAfterGithubMsg = await page.evaluate(() => document.getElementById('deepinfraBtn').classList.contains('act') ? 'deepinfra' : 'other');
-  assert(backendAfterGithubMsg === 'deepinfra', `a repo-flavored message auto-switches away from a non-tool-capable model to a DeepInfra (tool-capable) one (backend after send: "${backendAfterGithubMsg}")`);
+  await page.unroute('**/*');
+  const backendAfterGithubMsg = await page.evaluate(() => document.getElementById('claudeBtn').classList.contains('act') ? 'claude' : 'other');
+  assert(backendAfterGithubMsg === 'claude', `the main chat backend stays on Claude - the coding agent handles repo work independently instead of forcing a model switch (backend after send: "${backendAfterGithubMsg}")`);
+  assert(sawCodingAgentCallForBranchMsg, 'the dedicated coding agent still actually engaged for the repo-flavored message');
+  // Switch back to a DeepInfra model - later tests assume the model
+  // picker is already showing the DeepInfra list, same baseline the
+  // pre-coding-agent version of this test used to leave behind by
+  // switching backends itself.
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  await page.click('#deepinfraBtn'); await page.waitForTimeout(150);
+  await page.locator('.mc:has-text("Mistral Small")').first().click();
+  await page.waitForTimeout(150);
 
   console.log('\n-- App-control tools (create_project/remember/switch_model) actually execute, no confirm needed --');
   // These are the Overseer's new "full autonomy" tools - unlike write_file
@@ -1308,20 +1265,19 @@ function assert(cond, label) {
   assert(modelLabelAfterToolSwitch === 'Llama 3.3 70B Turbo', `switch_model tool call actually switches the active model (got "${modelLabelAfterToolSwitch}")`);
 
   console.log('\n-- hardcoded app-structure knowledge only appears when the connected repo actually IS this app --');
-  // Without this, a model asked to do "a checkup" or "add a feature" on
-  // the app has to guess its own architecture from scratch every time.
-  // It must only apply to solmasta/openai-router specifically - injecting
-  // it for some other repo the user points GitHub at would just be wrong.
+  // Without this, the coding agent asked to do "a checkup" or "add a
+  // feature" on the app has to guess its own architecture from scratch
+  // every time. It must only apply to solmasta/openai-router specifically
+  // - injecting it for some other repo the user points GitHub at would
+  // just be wrong. This knowledge lives in the dedicated coding agent's
+  // own system prompt now (codingAgentSystemPrompt), not the main chat
+  // model's - repo work never touches the main chat model at all.
   // The previous test's create_project call left a Work Project active -
   // getModelSystemPrompt takes a completely different branch whenever a
-  // project is active (the project's own instructions take over), which
-  // would skip this block entirely regardless of GitHub state. Clear does
-  // this too, but also matches how a real user would move on for a new
-  // topic in this app.
+  // project is active, which would skip repo routing entirely regardless
+  // of GitHub state. Clear does this too, but also matches how a real
+  // user would move on for a new topic in this app.
   await page.click('#clearBtn'); await page.waitForTimeout(200);
-  await page.click('#modelBtn'); await page.waitForTimeout(150);
-  await page.locator('.mc:has-text("Mistral Small")').first().click();
-  await page.waitForTimeout(150);
   await page.click('#settingsBtn'); await page.waitForTimeout(150);
   await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
   await page.fill('#ghOwnerInput', 'solmasta');
@@ -1331,10 +1287,17 @@ function assert(cond, label) {
   await page.route('**/*', async (route) => {
     const req = route.request();
     if (req.method() === 'POST' && req.postData()) {
-      try {
-        const parsed = JSON.parse(req.postData());
-        if (parsed.messages) lastCheckupBody = parsed;
-      } catch (e) {}
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        lastCheckupBody = parsed;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest checkup done' } }] }),
+        });
+        return;
+      }
     }
     await route.continue();
   });
@@ -1342,12 +1305,7 @@ function assert(cond, label) {
   for (let i = 0; i < 60 && lastCheckupBody === null; i++) await page.waitForTimeout(200);
   await page.unroute('**/*');
   const checkupSysContent = ((lastCheckupBody && lastCheckupBody.messages) || []).filter((m) => m.role === 'system').map((m) => m.content).join('\n');
-  assert(checkupSysContent.indexOf("THIS REPO IS THE APP YOU'RE RUNNING IN") >= 0, 'a maintenance/checkup request on the connected openai-router repo gets the hardcoded app-structure knowledge');
-  // The "don't invent tools" instruction is unconditional - a tool-capable
-  // model still needs it, since the failure mode it guards against
-  // (inventing an entirely fictional tool, e.g. a weather lookup) isn't
-  // specific to non-tool-capable models.
-  assert(checkupSysContent.indexOf('never invent or attempt to call a tool/function that wasn\'t given to you') >= 0, 'a tool-capable model also gets the explicit instruction not to invent undefined tools');
+  assert(checkupSysContent.indexOf("THIS REPO IS THE APP YOU'RE RUNNING IN") >= 0, 'a maintenance/checkup request on the connected openai-router repo gets the coding agent the hardcoded app-structure knowledge');
 
   await page.click('#settingsBtn'); await page.waitForTimeout(150);
   await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
@@ -1358,10 +1316,17 @@ function assert(cond, label) {
   await page.route('**/*', async (route) => {
     const req = route.request();
     if (req.method() === 'POST' && req.postData()) {
-      try {
-        const parsed = JSON.parse(req.postData());
-        if (parsed.messages) lastOtherRepoBody = parsed;
-      } catch (e) {}
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        lastOtherRepoBody = parsed;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest checkup done' } }] }),
+        });
+        return;
+      }
     }
     await route.continue();
   });
@@ -1378,27 +1343,18 @@ function assert(cond, label) {
   await page.fill('#ghRepoInput', 'openai-router');
   await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
 
-  console.log('\n-- a model not in TOOL_MODELS never gets told it has tools it was never given --');
-  // Real user-reported bug: the system prompt used to claim "you have
-  // read_file/write_file tools, use them immediately" for ANY model
-  // whenever GitHub was connected, regardless of whether that model was
-  // actually in TOOL_MODELS - the only thing doSendRequest checks before
-  // actually attaching those tools to the API request. A model that was
-  // never really offered tools but was told it had them tried to call one
-  // anyway and, with no structured tool-calling mechanism available,
-  // dumped the attempt as literal text (e.g.
-  // "<tool_call><function=read_file>...") straight into its reply.
-  // Disable auto-select first - a repo-flavored message is exactly what
-  // switchToBestModel (fixed earlier this session) now actively steers
-  // toward a TOOL_MODELS model, which would silently defeat this test by
-  // switching away from Claude before the send this test cares about.
-  await page.click('#settingsBtn'); await page.waitForTimeout(150);
-  const agentAutoSelectWasOn = await page.evaluate(() => document.getElementById('agentToggleBtn').textContent === 'ON');
-  if (agentAutoSelectWasOn) { await page.click('#agentToggleBtn'); await page.waitForTimeout(150); }
-  await page.click('#closeSettingsModal'); await page.waitForTimeout(150);
-  await page.click('#modelBtn'); await page.waitForTimeout(150);
-  await page.click('#claudeBtn'); await page.waitForTimeout(300);
-  await page.click('#closeModelModal'); await page.waitForTimeout(150);
+  console.log('\n-- the main chat model is never told it has repository tools - only the dedicated coding agent ever gets that --');
+  // Real user-reported bug (predates the dedicated coding agent): the
+  // system prompt used to claim "you have read_file/write_file tools, use
+  // them immediately" for ANY model whenever GitHub was connected,
+  // regardless of whether that model was actually offered those tools. A
+  // model told it had tools it didn't get tried to call one anyway and,
+  // with no structured tool-calling mechanism available, dumped the
+  // attempt as literal text (e.g. "<tool_call><function=read_file>...")
+  // straight into its reply. Now this text lives only in the coding
+  // agent's own separate system prompt - confirm the regular chat model's
+  // prompt never contains it at all, for a message with no repo/github
+  // signal (so this stays on the normal chat path, not the coding agent).
   let lastNonToolModelBody = null;
   await page.route('**/*', async (route) => {
     const req = route.request();
@@ -1410,12 +1366,15 @@ function assert(cond, label) {
     }
     await route.continue();
   });
-  await sendMsg('can you check the repo files for me');
+  // Deliberately avoids any substring of analyzeTask's github keyword list
+  // (e.g. "approach" contains "pr" and would silently route to the coding
+  // agent instead) - a plain, unambiguous non-repo message.
+  await sendMsg('give me a summary of quantum computing');
   for (let i = 0; i < 60 && lastNonToolModelBody === null; i++) await page.waitForTimeout(200);
   await page.unroute('**/*');
   const nonToolSysContent = ((lastNonToolModelBody && lastNonToolModelBody.messages) || []).filter((m) => m.role === 'system').map((m) => m.content).join('\n');
-  assert(nonToolSysContent.indexOf('REPOSITORY ACCESS ENABLED') < 0, 'a model not in TOOL_MODELS is never told it has repository tools it was never actually given');
-  assert(nonToolSysContent.indexOf('read_file(path)') < 0, 'the same model does not get the read_file/write_file usage instructions either');
+  assert(nonToolSysContent.indexOf('REPOSITORY ACCESS ENABLED') < 0, 'the main chat model is never told it has repository tools it was never actually given');
+  assert(nonToolSysContent.indexOf('read_file(path)') < 0, 'the main chat model does not get the read_file/write_file usage instructions either');
   // Real user report, different flavor: a model invented an entirely
   // fictional tool ("get_weather_by_coordinates") that was never one of
   // this app's tools at all, regardless of whether real tools were
@@ -1424,17 +1383,12 @@ function assert(cond, label) {
   // has a captured system prompt handy.
   assert(nonToolSysContent.indexOf('never invent or attempt to call a tool/function that wasn\'t given to you') >= 0, 'the system prompt explicitly forbids inventing tools that were never defined');
 
-  // Switch back to a TOOL_MODELS model and restore auto-select, matching
-  // the baseline the remaining tests expect.
+  // Switch back to a TOOL_MODELS model, matching the baseline the
+  // remaining tests expect.
   await page.click('#modelBtn'); await page.waitForTimeout(150);
   await page.click('#deepinfraBtn'); await page.waitForTimeout(300);
   await page.locator('.mc:has-text("Mistral Small")').first().click();
   await page.waitForTimeout(150);
-  if (agentAutoSelectWasOn) {
-    await page.click('#settingsBtn'); await page.waitForTimeout(150);
-    await page.click('#agentToggleBtn'); await page.waitForTimeout(150);
-    await page.click('#closeSettingsModal'); await page.waitForTimeout(150);
-  }
   // Guard against any stray leftover text in the compose box carrying
   // into a later test's transcript simulation (voice-conversation mode
   // captures whatever's already in #prompt as its dataset.base and
