@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.68</span></span>
+      <span class="wm">ai-router <span>v5.69</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -550,7 +550,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.68</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.69</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1358,7 +1358,14 @@ function analyzeTask(text){
      what was actually asked. */
   var analyzeKeywords=["research","investigate","compare","statistics","stats","data","dataset","trend","insight","survey","findings"];
   var searchKeywords=["search","find","lookup","what is","who is","latest","news","price","weather"];
-  githubKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.github+=2;});
+  /* Word-boundary match, not a plain substring indexOf - short entries
+     like "pr" and "git" otherwise match inside completely unrelated words
+     ("approach", "project", "digit", "legitimate"...). This list now gates
+     something much more consequential than a scoring nudge: it decides
+     whether the message gets rerouted entirely to the dedicated coding
+     agent, so a false positive here doesn't just mildly bias model
+     choice, it silently hijacks an unrelated conversation. */
+  githubKeywords.forEach(function(k){if(new RegExp("\\b"+k.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\b").test(lower))tasks.github+=2;});
   codeKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.code+=1;});
   writeKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.write+=1;});
   reasonKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.reason+=1;});
@@ -1370,20 +1377,6 @@ function analyzeTask(text){
 function scoreModelForTask(model,tasks){
   var score=50;
   var capStr=(model.id+" "+model.label+" "+(model.desc||"")).toLowerCase();
-  if(tasks.github>0){
-    /* This used to check capStr/model.id for the literal string
-       "deepinfra" - no model's id, label, or description actually
-       contains that word, so the check never matched anything and this
-       boost silently never fired. The real intent is "prefer a model that
-       can actually use the repo tools this task needs" - TOOL_MODELS is
-       the actual gate that determines that (doSendRequest only offers
-       tools when currentModel.id is in it), so score against that
-       directly instead of a dead string match. Without this, the router
-       could switch to a Claude/OpenRouter model for a repo-flavored
-       message and silently lose all tool access - TOOL_MODELS only lists
-       DeepInfra models today. */
-    if(TOOL_MODELS.indexOf(model.id)>=0)score+=tasks.github*10;
-  }
   if(tasks.code>0){
     if(capStr.indexOf("code")>=0||capStr.indexOf("coder")>=0||capStr.indexOf("python")>=0||capStr.indexOf("javascript")>=0||model.id.indexOf("code")>=0)score+=tasks.code*8;
   }
@@ -2250,30 +2243,25 @@ function generateOptimalInstructions(userMessage,selectedModel){
     instructions+="- Suggest improvements\n\n";
   }
 
-  /* Both blocks below claim tools the model may never actually be offered
-     - doSendRequest only attaches app-control/repo tools to the API
-       request when selectedModel.id is in TOOL_MODELS at all. Without this
-     check, a non-tool-capable model (Claude, OpenRouter, or any DeepInfra
-     model not in TOOL_MODELS) was told it had create_project/switch_model/
-     remember and read_file/write_file/list_files it was never given - it
-     would then try to call one anyway and, with no structured tool-calling
-     mechanism available, dump the attempt as literal text (e.g.
-     "<tool_call><function=read_file>...") straight into its reply instead
-     of an error, since nothing told it the tools didn't exist. */
+  /* This block claims tools the model may never actually be offered -
+     doSendRequest only attaches app-control tools to the API request when
+     selectedModel.id is in TOOL_MODELS at all. Without this check, a
+     non-tool-capable model (Claude, OpenRouter, or any DeepInfra model
+     not in TOOL_MODELS) was told it had create_project/switch_model/
+     remember it was never given - it would then try to call one anyway
+     and, with no structured tool-calling mechanism available, dump the
+     attempt as literal text (e.g. "<tool_call><function=...>...") straight
+     into its reply instead of an error, since nothing told it the tools
+     didn't exist. Repo tools (read_file/write_file/list_files) used to
+     get claimed here too, but that access now runs exclusively through
+     the dedicated coding agent (runCodingAgentTurn) - this model never
+     gets them regardless of TOOL_MODELS membership. */
   if(TOOL_MODELS.indexOf(selectedModel.id)>=0){
     instructions+="APP CONTROL AVAILABLE (always, regardless of GitHub connection):\n";
     instructions+="- create_project(name, instructions): Turns this conversation into a saved, reusable Work Project when the user asks (e.g. \"make this a project\") - write the name and full instructions yourself based on the actual conversation, don't ask the user to write them.\n";
     instructions+="- switch_model(model_id): Switch the active model when the user asks, or when a clearly better-fitting model exists for what they need right now.\n";
     instructions+="- remember(fact): Save a durable fact the user asks you to remember.\n";
     instructions+="Use these directly the moment the user's request calls for them - don't just describe what you'd do, actually call the tool. No permission needed for these three; they're additive and reversible.\n\n";
-
-    if(modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName){
-      instructions+="TOOLS AVAILABLE:\n";
-      instructions+="- read_file(path): Read files from "+ghRepoOwner+"/"+ghRepoName+"\n";
-      instructions+="- write_file(path, content, message, branch): Create files/commits. NEVER set branch to \"main\"/\"master\" unless explicitly asked - use a descriptive working-branch name instead, it's created automatically.\n";
-      instructions+="- list_files(path): Explore directory structure\n";
-      instructions+="Use these tools directly - don't ask permission (the user still approves every write and its branch before it's pushed). These only apply to "+ghRepoOwner+"/"+ghRepoName+" specifically - if the user is describing a different, new, or unrelated app/project, do NOT use these tools against this repo; just talk it through instead.\n\n";
-    }
   }
 
   instructions+="EXECUTION:\n";
@@ -2380,6 +2368,156 @@ async function executeRepoTool(toolName,toolInput){
     return{error:"Unknown tool"};
   }catch(e){return{error:e.message};}
 }
+
+/* ---- Dedicated coding agent ----
+   Repo/tool work (read_file/write_file/list_files/merge_branch) always
+   runs on this one fixed model, independent of whatever the user is
+   chatting with in the main window. Before this, repo tools were only
+   ever offered to the currently active model IF it happened to be in
+   TOOL_MODELS - so the auto-router picking a non-tool-capable model for
+   an ordinary coding question could silently strand a later merge/push
+   request on a model that structurally couldn't do it, and switching the
+   MAIN conversation model just to keep tool access felt random and broke
+   continuity with whatever the user was actually talking to. */
+var CODING_AGENT_MODEL_ID="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo";
+var codingAgentActive=null;
+var codingAgentSeq=0;
+function codingAgentSystemPrompt(){
+  var sys="You are a focused coding agent with direct read/write access to the connected GitHub repository ("+ghRepoOwner+"/"+ghRepoName+").\n\n";
+  sys+="1. Use read_file(path) to examine existing code before making changes\n";
+  sys+="2. Use list_files(path) to explore repository structure\n";
+  sys+="3. Use write_file(path, content, message, branch) to make changes - includes automatic git commit\n";
+  sys+="4. Always provide COMPLETE working code in write_file calls - not snippets\n";
+  sys+="5. NEVER set branch to \"main\"/\"master\" unless the user explicitly asked you to change the default branch directly - use a short descriptive working-branch name instead, it's created automatically from the default branch if it doesn't exist\n";
+  sys+="6. Use merge_branch(branch, title, message) to land a working branch into the default branch via a pull request - only call this when the user explicitly asked you to merge/ship/land the change. Never chain it automatically right after a write_file just because the write succeeded.\n\n";
+  sys+="CODING PRINCIPLES:\n";
+  sys+="- Keep changes proportional to what was actually asked - don't refactor, add abstractions, or fix unrelated things nobody asked for. Three similar lines beats a premature abstraction.\n";
+  sys+="- Default to writing no comments. Only add one when the WHY is genuinely non-obvious (a hidden constraint, a workaround, a subtle invariant) - never to explain WHAT the code does, and never referencing this task/fix by name.\n";
+  sys+="- Don't add error handling, fallbacks, or validation for scenarios that can't actually happen - trust existing guarantees, only validate at real boundaries (user input, external APIs).\n";
+  sys+="- Read enough of the surrounding file first to match its existing naming, style, and conventions instead of imposing your own.\n";
+  sys+="- Watch for security issues you might introduce (XSS, injection, secrets in code) - if you notice one in what you just wrote, fix it before moving on.\n";
+  sys+="- No half-finished implementations - a change either works end to end or it isn't done yet.\n\n";
+  if(ghRepoOwner==="solmasta"&&ghRepoName==="openai-router"){
+    sys+="THIS REPO IS THE APP YOU'RE RUNNING IN - its own real structure, not a guess:\n";
+    sys+="- index.html is the ENTIRE frontend: markup, CSS, and all JS in two inline <script> blocks, each wrapped in its own IIFE. A plain top-level function is NOT reachable as window.foo unless explicitly assigned (window.foo=function(){...}) - inline onclick=\"...\" handlers run in global scope and need that, or they silently no-op.\n";
+    sys+="- Several Cloudflare Workers back it, each with its own wrangler config: openai-router.js (DeepInfra models + free web search), claude-worker.js (Claude/Anthropic), openrouter-worker.js (OpenRouter), github-ops-worker.js (this repo's own read_file/write_file/list_files - the tools you're using right now), drive-auth-worker.js (Google Drive OAuth).\n";
+    sys+="- tests/regression.js is a Playwright suite covering flows that have actually broken before. You have no shell/execute_command access, so you cannot run it yourself - tell the user to run it (NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js) before merging, and if your change touches a flow it covers, update the test in the same write_file call rather than letting it drift.\n";
+    sys+="- Bump the version string in BOTH spots (header \".wm span\" and the Settings modal title, both currently \"v5.x\") with every user-visible change, in the same commit.\n";
+    sys+="- Keep changes proportional to what's asked - this is a deliberately single-file app with no build step; don't introduce a framework, split it into multiple files, or add a build pipeline unless explicitly asked to.\n\n";
+  }
+  sys+="Work on ONE concrete step at a time - don't try to do the whole task in a single burst. After finishing this step, briefly state what you did and what the next step would be, then stop; the user will tell you to continue.\n";
+  sys+="If the request is ambiguous or you're missing information needed to proceed safely (which file, which branch, what exact behavior), ask a clarifying question instead of guessing.\n";
+  sys+="Show your reasoning in <think> tags.";
+  return sys;
+}
+/* A fresh, self-contained console block per step (not one growing log) -
+   each step's activity is genuinely new content, so nothing repeats or
+   piles up turn after turn the way the old inline tool-execution cards
+   did on every single message. */
+function renderCodingConsole(){
+  var wrap=document.createElement("div");
+  wrap.className="msg ma3";
+  var label=document.createElement("div");label.className="ml";
+  var av=document.createElement("span");av.className="av";av.textContent="🛠️";label.appendChild(av);
+  var lspan=document.createElement("span");lspan.textContent="Coding Agent";label.appendChild(lspan);
+  var body=document.createElement("div");body.className="body";body.innerHTML='<span class="cur">▇</span> starting&#8230;';
+  wrap.appendChild(label);wrap.appendChild(body);
+  document.getElementById("chat").appendChild(wrap);
+  wrap.scrollIntoView({behavior:"smooth",block:"end"});
+  return{wrap:wrap,body:body};
+}
+async function runCodingAgentTurn(assembledMessages){
+  var msgs=assembledMessages.slice();
+  msgs.unshift({role:"system",content:codingAgentSystemPrompt()});
+  codingAgentActive={messages:msgs,id:++codingAgentSeq};
+  await runCodingAgentRound();
+}
+/* sessionId ties a Continue click to the exact session it was rendered
+   for - without it, a stale Continue button left over from an earlier
+   turn (ignored in favor of starting a new one) would resume whatever
+   session happens to be active now instead of quietly doing nothing. */
+async function runCodingAgentRound(sessionId){
+  if(!codingAgentActive||(sessionId!==undefined&&sessionId!==codingAgentActive.id))return;
+  var mySession=codingAgentActive;
+  var msgs=mySession.messages;
+  var con=renderCodingConsole();
+  try{
+    var res=await fetch(DI_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:CODING_AGENT_MODEL_ID,messages:msgs,tools:REPO_TOOLS,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:1500})});
+    if(!res.ok){con.body.innerHTML='<span style="color:var(--er)">Coding agent request failed (HTTP '+res.status+').</span>';codingAgentActive=null;return;}
+    var data=await res.json();
+    var choice=(data.choices||[])[0]||{};
+    var msg=choice.message||{};
+    var thinkMatch=(msg.content||"").match(/<think>([\s\S]*?)<\/think>/);
+    if(thinkMatch)displayThinkingProcess(thinkMatch[1]);
+    if(choice.finish_reason==="tool_calls"&&msg.tool_calls&&msg.tool_calls.length){
+      msgs.push(msg);
+      var lines=[];
+      for(var i=0;i<msg.tool_calls.length;i++){
+        var tc=msg.tool_calls[i];
+        var toolName=tc["function"].name;
+        var toolArgs=JSON.parse(tc["function"].arguments||"{}");
+        var toolResult=null,lineText="";
+        if(toolName==="read_file"){
+          con.body.innerHTML=lines.concat('<span style="color:var(--mu)">📖 Reading '+esc(toolArgs.path||"")+'&#8230;</span>').join("<br>");
+          var readRes=await executeRepoTool("read_file",toolArgs);
+          toolResult=readRes.success?readRes.content:(readRes.error||"Failed to read file");
+          lineText=(readRes.success?"📖 Read ":"⚠️ Failed to read ")+esc(toolArgs.path||"");
+        }else if(toolName==="write_file"){
+          con.body.innerHTML=lines.concat('<span style="color:var(--mu)">✏️ Waiting for approval to write '+esc(toolArgs.path||"")+'&#8230;</span>').join("<br>");
+          var approvedBranch=await confirmGithubWrite(toolArgs);
+          if(!approvedBranch){
+            toolResult="The user declined this write. Do not retry the same change without asking first.";
+            lineText="🚫 Write declined: "+esc(toolArgs.path||"");
+          }else{
+            toolArgs.branch=approvedBranch;
+            con.body.innerHTML=lines.concat('<span style="color:var(--mu)">✏️ Writing '+esc(toolArgs.path||"")+' to '+esc(approvedBranch)+'&#8230;</span>').join("<br>");
+            var writeRes=await executeRepoTool("write_file",toolArgs);
+            toolResult=writeRes.success?("File written to branch '"+approvedBranch+"'. Commit: "+writeRes.commit):(writeRes.error||"Failed to write file");
+            lineText=(writeRes.success?"✏️ Wrote ":"⚠️ Failed to write ")+esc(toolArgs.path||"")+" ("+esc(approvedBranch)+")";
+          }
+        }else if(toolName==="list_files"){
+          con.body.innerHTML=lines.concat('<span style="color:var(--mu)">📂 Listing '+esc(toolArgs.path||".")+'&#8230;</span>').join("<br>");
+          var listRes=await executeRepoTool("list_files",toolArgs);
+          toolResult=listRes.success?JSON.stringify(listRes.files):(listRes.error||"Failed to list files");
+          lineText=(listRes.success?"📂 Listed ":"⚠️ Failed to list ")+esc(toolArgs.path||".");
+        }else if(toolName==="merge_branch"){
+          con.body.innerHTML=lines.concat('<span style="color:var(--mu)">⚡ Waiting for approval to merge '+esc(toolArgs.branch||"")+'&#8230;</span>').join("<br>");
+          var approvedMerge=await confirmGithubMerge(toolArgs);
+          if(!approvedMerge){
+            toolResult="The user declined this merge. Do not retry without asking first.";
+            lineText="🚫 Merge declined: "+esc(toolArgs.branch||"");
+          }else{
+            con.body.innerHTML=lines.concat('<span style="color:var(--mu)">⚡ Merging '+esc(toolArgs.branch||"")+'&#8230;</span>').join("<br>");
+            var mergeRes=await executeRepoTool("merge_branch",toolArgs);
+            toolResult=mergeRes.success?("Merged branch '"+toolArgs.branch+"' via PR #"+mergeRes.prNumber+" ("+mergeRes.prUrl+")."):(mergeRes.error||"Failed to merge");
+            lineText=(mergeRes.success?"⚡ Merged ":"⚠️ Failed to merge ")+esc(toolArgs.branch||"");
+          }
+        }
+        lines.push("<span>"+lineText+"</span>");
+        msgs.push({role:"tool",tool_call_id:tc.id,content:toolResult||"No result"});
+      }
+      con.body.innerHTML=lines.join("<br>");
+      if(msg.content&&msg.content.replace(/<think>[\s\S]*?<\/think>/g,"").trim()){
+        con.body.innerHTML+="<div style='margin-top:6px'>"+renderMd(msg.content.replace(/<think>[\s\S]*?<\/think>/g,"").trim())+"</div>";
+      }
+      var contBtn=document.createElement("button");
+      contBtn.className="ba";contBtn.textContent="Continue";
+      contBtn.style.cssText="margin-top:8px";
+      contBtn.onclick=function(){contBtn.disabled=true;contBtn.textContent="…";runCodingAgentRound(mySession.id);};
+      con.wrap.appendChild(contBtn);
+    }else{
+      var finalText=(msg.content||"(no response)").replace(/<think>[\s\S]*?<\/think>\s*/g,"").trim();
+      con.body.innerHTML=renderMd(finalText||"(no response)");
+      chatHistory.push({role:"assistant",content:finalText});
+      autoSave();
+      codingAgentActive=null;
+    }
+  }catch(e){
+    con.body.innerHTML='<span style="color:var(--er)">Coding agent error: '+esc(e.message)+'</span>';
+    codingAgentActive=null;
+  }
+}
+
 function getModelSystemPrompt(ap){
   /* A project defines its own purpose and behavior - it arrives as its own
      system message right after this one (see generateOptimalInstructions).
@@ -2398,63 +2536,16 @@ function getModelSystemPrompt(ap){
      the caller), not whatever happens to be selected right now. */
   var curAp2=ap!==undefined?ap:getAP();
   var inProject=curAp2&&typeof curAp2.id==="string"&&curAp2.id.indexOf("wproj_")===0;
-  var sys="You are the Overseer - the user's single point of contact in this app. You act directly using your tools instead of just describing what should be done, and you have advanced coding and repository control capabilities.\n\n";
+  var sys="You are the Overseer - the user's single point of contact in this app. You act directly using your tools instead of just describing what should be done.\n\n";
   if(overseerPersonality)sys+="Personality: "+overseerPersonality+" - let this come through naturally in your tone and word choice, without announcing or explaining it.\n\n";
   if(inProject){
     sys="You are a helpful assistant. An active project's instructions (sent separately) define your task and behavior for this conversation - follow them exactly.\n";
-  /* TOOL_MODELS.indexOf(currentModel.id)>=0 has to match here too - this
-     branch's whole text is "you have read_file/write_file/merge_branch,
-     use them immediately," but doSendRequest only actually attaches those
-     tools to the API request for models in TOOL_MODELS. Without this
-     check, a non-tool-capable model (Claude/OpenRouter, or any DeepInfra
-     model not in TOOL_MODELS) got told it had tools it was never given -
-     it would then try to call one anyway and, with no structured
-     tool-calling mechanism available, dump the attempt as literal text
-     (e.g. "<tool_call><function=read_file>...") straight into the reply
-     instead of an error, since nothing told it tools didn't exist. */
-  }else if(modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&TOOL_MODELS.indexOf(currentModel.id)>=0){
-    sys+="🔧 REPOSITORY ACCESS ENABLED:\n";
-    sys+="Repository: "+ghRepoOwner+"/"+ghRepoName+"\n\n";
-    sys+="You have direct access to read, modify, and commit code. For ALL code tasks:\n\n";
-    sys+="1. Use read_file(path) to examine existing code before making changes\n";
-    sys+="2. Use list_files(path) to explore repository structure\n";
-    sys+="3. Use write_file(path, content, message, branch) to make changes - includes automatic git commit\n";
-    sys+="4. Always provide COMPLETE working code in write_file calls - not snippets\n";
-    sys+="5. NEVER set branch to \"main\"/\"master\" unless the user explicitly asked you to change the default branch directly - use a short descriptive working-branch name instead, it's created automatically from the default branch if it doesn't exist\n";
-    sys+="6. Use merge_branch(branch, title, message) to land a working branch into the default branch via a pull request - only call this when the user explicitly asked you to merge/ship/land the change. Never chain it automatically right after a write_file just because the write succeeded.\n\n";
-    sys+="WORKFLOW:\n";
-    sys+="- Understand the problem by reading relevant files\n";
-    sys+="- Plan your approach in <think> tags\n";
-    sys+="- Make changes using write_file with clear commit messages, on a dedicated working branch\n";
-    sys+="- Each write_file creates one git commit\n\n";
-    sys+="CODING PRINCIPLES:\n";
-    sys+="- Keep changes proportional to what was actually asked - don't refactor, add abstractions, or fix unrelated things nobody asked for. Three similar lines beats a premature abstraction.\n";
-    sys+="- Default to writing no comments. Only add one when the WHY is genuinely non-obvious (a hidden constraint, a workaround, a subtle invariant) - never to explain WHAT the code does, and never referencing this task/fix by name.\n";
-    sys+="- Don't add error handling, fallbacks, or validation for scenarios that can't actually happen - trust existing guarantees, only validate at real boundaries (user input, external APIs).\n";
-    sys+="- Read enough of the surrounding file first to match its existing naming, style, and conventions instead of imposing your own.\n";
-    sys+="- Watch for security issues you might introduce (XSS, injection, secrets in code) - if you notice one in what you just wrote, fix it before moving on.\n";
-    sys+="- No half-finished implementations - a change either works end to end or it isn't done yet.\n\n";
-    /* Hardcoded, accurate knowledge of THIS app's own structure and
-       conventions - only when the connected repo actually IS this app
-       (someone could point the GitHub connection at a totally different
-       repo, where this would just be wrong). Without this, a model asked
-       to do "a checkup" or "add a feature" on the app has to guess at its
-       architecture from scratch every single time instead of already
-       knowing it. */
-    if(ghRepoOwner==="solmasta"&&ghRepoName==="openai-router"){
-      sys+="THIS REPO IS THE APP YOU'RE RUNNING IN - its own real structure, not a guess:\n";
-      sys+="- index.html is the ENTIRE frontend: markup, CSS, and all JS in two inline <script> blocks, each wrapped in its own IIFE. A plain top-level function is NOT reachable as window.foo unless explicitly assigned (window.foo=function(){...}) - inline onclick=\"...\" handlers run in global scope and need that, or they silently no-op.\n";
-      sys+="- 4 Cloudflare Workers back it, each with its own wrangler config: openai-router.js (DeepInfra models + free web search), claude-worker.js (Claude/Anthropic), openrouter-worker.js (OpenRouter), github-ops-worker.js (this repo's own read_file/write_file/list_files - the tools you're using right now).\n";
-      sys+="- tests/regression.js is a Playwright suite covering flows that have actually broken before. You have no shell/execute_command access, so you cannot run it yourself - tell the user to run it (NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js) before merging, and if your change touches a flow it covers, update the test in the same write_file call rather than letting it drift.\n";
-      sys+="- Bump the version string in BOTH spots (header \".wm span\" and the Settings modal title, both currently \"v5.x\") with every user-visible change, in the same commit.\n";
-      sys+="- Keep changes proportional to what's asked - this is a deliberately single-file app with no build step; don't introduce a framework, split it into multiple files, or add a build pipeline unless explicitly asked to.\n";
-      sys+="- For \"do a checkup\"/\"maintenance\" requests: read_file the relevant parts of index.html (and CLAUDE.md if useful), check the two version spots agree, look for obvious real issues, and report back or propose fixes via write_file - don't claim tests passed, since you can't run them.\n";
-      sys+="- For \"add a feature\"/\"new addition\" requests: read_file the relevant existing section first and match its actual patterns (naming, modal/localStorage/Drive-sync conventions already in use) rather than inventing a different style.\n\n";
-    }
-    sys+="Execute tools immediately - don't ask for permission.\n";
-    sys+="Show your reasoning in <think> tags. Be direct and action-oriented.\n";
   }else{
-    sys+="Provide clear explanations and code examples. For coding tasks, write complete, working code.\n";
+    /* Repository read/write access always runs on a dedicated coding
+       agent model now (runCodingAgentTurn), independent of whichever
+       model is active here - this model never gets REPO_TOOLS attached,
+       so it shouldn't claim to have committed/pushed anything itself. */
+    sys+="Provide clear explanations and code examples. For coding tasks, write complete, working code - a dedicated coding agent handles direct repository read/write access separately when that's needed, so describe changes clearly rather than claiming to have committed anything yourself.\n";
   }
   sys+="Always use <think> tags to show reasoning before acting.\n";
   /* Some models are so heavily trained on agentic tool-use that they'll
@@ -4742,6 +4833,31 @@ async function doSendRequest(userContent,isRegen,ap){
   }
   messages=messages.concat(chatHistory.slice(0,-1));
   messages.push({role:"user",content:userContent});
+  /* Gated on searchGateTasks.github specifically, not .code too - .code
+     fires on generic coding words ("function", "error", "debug",
+     "javascript"...) that say nothing about THIS repo. A message like
+     "let's build a new app" or "why is this python function throwing an
+     error" would still route to the coding agent just because it sounded
+     code-flavored. .github only fires on actual repo/GitHub signal
+     (github, git, commit, push, pr, repo, branch, merge...).
+     Repo work always runs on the dedicated coding agent now, independent
+     of whatever model this conversation is actually using - the regular
+     chat model never gets REPO_TOOLS at all anymore, so it can't lose
+     tool access mid-task just because the auto-router picked a
+     non-tool-capable model for an ordinary message. */
+  if(modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&searchGateTasks.github>0){
+    try{
+      await runCodingAgentTurn(messages);
+    }finally{
+      /* The normal reply path's own finally (below) resets sendBtn/sending
+         once doSendRequest's try block runs to completion - this early
+         return skips that block entirely, so without this the Send button
+         would stay stuck on "Stop" after every message the coding agent
+         handles. */
+      sending=false;document.getElementById("sendBtn").disabled=false;document.getElementById("sendBtn").textContent="Send";document.getElementById("sendBtn").style.background="";
+    }
+    return;
+  }
   var asstMsg=appendMsg("assistant","",true);
   var full="";
   try{
@@ -4749,21 +4865,8 @@ async function doSendRequest(userContent,isRegen,ap){
       try{
         /* App-control tools (create_project/switch_model/remember) are
            always offered here - they're additive/reversible and narrowly
-           described (each names its own explicit trigger phrase), unlike
-           the repo tools below which get gated on actual relevance. */
+           described (each names its own explicit trigger phrase). */
         var initTools=getAppControlTools();
-        /* Gated on searchGateTasks.github specifically, not .code too -
-           .code fires on generic coding words ("function", "error",
-           "debug", "javascript"...) that say nothing about THIS repo. A
-           message like "let's build a new app" or "why is this python
-           function throwing an error" used to still get read_file/
-           write_file/merge_branch handed to it just because it sounded
-           code-flavored, and a tool-eager model could then go write to
-           the connected repo for a project that had nothing to do with
-           it. .github only fires on actual repo/GitHub signal (github,
-           git, commit, push, pr, repo, branch, merge...), so an unrelated
-           coding question no longer gets repo tools at all. */
-        if(modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&searchGateTasks.github>0){initTools=initTools.concat(REPO_TOOLS);}
         if(initTools.length>0){
           /* One round used to be all a message got: capable models (e.g.
              Qwen3 Coder) often need list_files, THEN read_file, THEN answer
@@ -4859,7 +4962,6 @@ async function doSendRequest(userContent,isRegen,ap){
        came out as "(empty response)" even though the model had answered. */
     if(TOOL_MODELS.indexOf(currentModel.id)>=0){
       toolsToSend=toolsToSend.concat(getAppControlTools());
-      if(modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&searchGateTasks.github>0){toolsToSend=toolsToSend.concat(REPO_TOOLS);}
     }
     var reqBody={model:currentModel.id,messages:messages,temperature:temperature,stream:true};
     /* tool_choice "none", not "auto" - this streaming pass has no
