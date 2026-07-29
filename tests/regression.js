@@ -75,6 +75,16 @@
      the system prompt sent to the model
    - the compose bar's icon row wraps instead of pushing the Send button
      off-screen at a narrow phone viewport width
+   - an image message never routes to the dedicated coding agent even
+     with repo-flavored caption text - it still reaches a vision model
+   - vision auto-restore's one-message grace period is per-tab - a new
+     tab doesn't inherit a leftover grace-period count from a previous
+     tab's image interaction
+   - a settled, non-project conversation (8 messages) gets offered a
+     one-time suggestion to save itself as a reusable Work Project, and
+     accepting actually creates one from a model-generated name/summary
+   - an explicit topic-change phrase in a message prompts before starting
+     a new tab, rather than silently switching or staying put
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -1779,6 +1789,117 @@ function assert(cond, label) {
   assert(xssReplyHtml.indexOf('onmouseover=') < 0, `a crafted markdown link cannot inject an HTML attribute like onmouseover (got: ${xssReplyHtml})`);
   assert(!/<a[^>]*javascript:/i.test(xssReplyHtml), `a javascript: URL is not rendered as a clickable link (got: ${xssReplyHtml})`);
   assert(xssReplyHtml.indexOf('<a href="https://example.com/path?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">safe</a>') >= 0, `a normal https link still renders as a clickable anchor (got: ${xssReplyHtml})`);
+
+  console.log('\n-- an image with repo-flavored text still goes to a vision model, not the coding agent --');
+  // The coding-agent routing check used to fire regardless of whether the
+  // message had an image attached - a photo with "does this match the
+  // repo's style" would silently skip vision entirely and the image
+  // would never actually get analyzed.
+  let sawCodingAgentForImageMsg = false;
+  let sawVisionModelRequest = false;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        sawCodingAgentForImageMsg = true;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest should not happen' } }] }) });
+        return;
+      }
+      if (parsed && parsed.model === 'Qwen/Qwen3-VL-30B-A3B-Instruct' && parsed.stream === true) {
+        sawVisionModelRequest = true;
+        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"choices":[{"delta":{"content":"regtest image analysis"}}]}\n\ndata: [DONE]\n\n' });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  const fileInputRepoImg = await page.$('#fileInput');
+  await fileInputRepoImg.setInputFiles(imgPath);
+  await waitForAttachCount(1);
+  await sendMsg('does this match the repo style guide');
+  await page.unroute('**/*');
+  assert(!sawCodingAgentForImageMsg, 'an image message never routes to the coding agent even with repo-flavored text');
+  assert(sawVisionModelRequest, 'the image still gets sent to a vision model');
+
+  console.log('\n-- vision grace-period state does not leak across a new tab --');
+  // preVisionModel is reset on new-tab creation but msgsSinceLastImage
+  // wasn't, so a residual count from a previous tab's image interaction
+  // could cut the new tab's own one-message grace period short.
+  const fileInputLeakA = await page.$('#fileInput');
+  await fileInputLeakA.setInputFiles(imgPath);
+  await waitForAttachCount(1);
+  await sendMsg('what is in this image');
+  await sendMsg('thanks, tell me more');
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+  const fileInputLeakB = await page.$('#fileInput');
+  await fileInputLeakB.setInputFiles(imgPath);
+  await waitForAttachCount(1);
+  await sendMsg('what is in this image');
+  const modelDuringTabB = await page.textContent('#modelBtnLabel');
+  await sendMsg('thanks, tell me more');
+  const modelAfterOneFollowupTabB = await page.textContent('#modelBtnLabel');
+  assert(modelAfterOneFollowupTabB === modelDuringTabB, `a new tab gets its own full one-message vision grace period, not a leftover count from a previous tab (during="${modelDuringTabB}" after one follow-up="${modelAfterOneFollowupTabB}")`);
+
+  console.log('\n-- Overseer proactively suggests saving a settled conversation as a Work Project --');
+  // A fresh, non-project conversation that reaches 8 messages should
+  // offer to save itself as a reusable project; accepting generates a
+  // name/instructions from the conversation and actually creates it.
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  await page.click('#claudeBtn'); await page.waitForTimeout(300);
+  await page.click('#closeModelModal'); await page.waitForTimeout(150);
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.stream === true) {
+        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"choices":[{"delta":{"content":"regtest settle reply"}}]}\n\ndata: [DONE]\n\n' });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  for (let i = 0; i < 4; i++) {
+    await sendMsg(`regtest settle message ${i}`);
+  }
+  await page.unroute('**/*');
+  const projectSuggestionVisible = await page.evaluate(() => document.getElementById('chat').textContent.indexOf('Save this conversation as a reusable project') >= 0);
+  assert(projectSuggestionVisible, 'a suggestion to save the conversation as a project appears once it settles (8 messages)');
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.messages && parsed.messages.some((m) => typeof m.content === 'string' && m.content.indexOf('invent a short project name') >= 0)) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '{"name":"Regtest Auto Project","instructions":"Regtest auto instructions"}' } }] }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await page.click('#chat button:has-text("Save as Project")');
+  await page.waitForTimeout(500);
+  await page.unroute('**/*');
+  const autoProjectCreated = await page.evaluate(() => {
+    const raw = localStorage.getItem(Object.keys(localStorage).find((k) => k.indexOf('ai_workprojects') >= 0));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return parsed.some((p) => p.title === 'Regtest Auto Project' && p.instructions === 'Regtest auto instructions');
+  });
+  assert(autoProjectCreated, 'accepting the suggestion creates the Work Project with the model-generated name/instructions');
+
+  console.log('\n-- an explicit topic-change phrase prompts before starting a new tab --');
+  const tabCountBeforeTopicChange = await page.evaluate(() => document.querySelectorAll('#tabBar .tabpill').length);
+  page.once('dialog', async (dialog) => { await dialog.accept(); });
+  await page.fill('#prompt', 'ok, new topic - what is the capital of France');
+  await page.click('#sendBtn');
+  await page.waitForTimeout(600);
+  await dismissConfirmIfAny();
+  await waitForSendDone();
+  const tabCountAfterTopicChange = await page.evaluate(() => document.querySelectorAll('#tabBar .tabpill').length);
+  assert(tabCountAfterTopicChange === tabCountBeforeTopicChange + 1, `an explicit topic-change phrase prompts to start a new tab, and accepting creates one (before=${tabCountBeforeTopicChange}, after=${tabCountAfterTopicChange})`);
 
   console.log(`\n-- page errors: ${realErrors().length} real (excluding expected sandbox network noise) --`);
   if (realErrors().length) console.log(realErrors());
