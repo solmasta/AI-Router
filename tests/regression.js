@@ -23,6 +23,10 @@
    - the coding agent runs one step (tool round) at a time and waits for
      an explicit Continue click before starting the next one - it never
      auto-chains multiple rounds in one burst
+   - a coding-agent step abandoned without tapping Continue still leaves
+     its findings in real conversation history, so a later unrelated
+     message doesn't have the main chat model contradicting what the
+     coding agent already found
    - write_file tool never defaults to main/master; the approved branch is
      what actually reaches the GitHub ops worker
    - merge_branch tool requires its own dedicated approval dialog before
@@ -1089,6 +1093,54 @@ function assert(cond, label) {
   await page.unroute('**/*');
   assert(codingRoundCount === 3, `exactly 3 coding-agent rounds ran, one per Continue click plus the initial send (got ${codingRoundCount})`);
   assert(chatTextAfterCodingRounds.indexOf('regtest coding agent done') >= 0, "the final round's plain-text answer renders once the agent stops calling tools");
+
+  console.log('\n-- an abandoned coding-agent step (no Continue click) still leaves its findings in real conversation history --');
+  // Without this, moving on to an unrelated message after a pending
+  // coding-agent step (never tapped Continue) left the main chat model
+  // with zero awareness the repo was even looked at - it would flatly
+  // contradict what the coding agent just found (e.g. claiming it can't
+  // see the repo at all right after the agent listed its files).
+  let sawPendingListFiles = false;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        sawPendingListFiles = true;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', tool_calls: [{ id: 'regtest_abandoned', type: 'function', function: { name: 'list_files', arguments: JSON.stringify({}) } }] } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('can you see the repo files');
+  await page.unroute('**/*');
+  assert(sawPendingListFiles, 'test setup: the coding agent step actually ran');
+  const pendingContinueVisible = await page.evaluate(() => !!document.querySelector('#chat .msg.ma3 button'));
+  assert(pendingContinueVisible, 'test setup: the step left a Continue button pending (not yet clicked)');
+  let lastUnrelatedAfterAbandonedStep = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.stream === true) {
+        lastUnrelatedAfterAbandonedStep = parsed;
+        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"choices":[{"delta":{"content":"regtest unrelated reply"}}]}\n\ndata: [DONE]\n\n' });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('what is the capital of France');
+  await page.unroute('**/*');
+  const historyAfterAbandonedStep = ((lastUnrelatedAfterAbandonedStep && lastUnrelatedAfterAbandonedStep.messages) || []).map((m) => m.content).join('\n');
+  assert(historyAfterAbandonedStep.indexOf('[Coding agent]') >= 0 && historyAfterAbandonedStep.indexOf('Listed') >= 0, `an abandoned coding-agent step's findings still reach a later, unrelated message's conversation history (got: ${historyAfterAbandonedStep.slice(-400)})`);
 
   console.log('\n-- an empty completion auto-switches to a fallback model and retries instead of just showing "(empty response)" --');
   // A model can burn its whole turn on tool_calls and have nothing left to

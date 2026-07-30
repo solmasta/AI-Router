@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.70</span></span>
+      <span class="wm">ai-router <span>v5.71</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -550,7 +550,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.70</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.71</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -2461,6 +2461,7 @@ async function runCodingAgentRound(sessionId){
     if(choice.finish_reason==="tool_calls"&&msg.tool_calls&&msg.tool_calls.length){
       msgs.push(msg);
       var lines=[];
+      var plainLines=[];
       for(var i=0;i<msg.tool_calls.length;i++){
         var tc=msg.tool_calls[i];
         var toolName=tc["function"].name;
@@ -2503,12 +2504,22 @@ async function runCodingAgentRound(sessionId){
           }
         }
         lines.push("<span>"+lineText+"</span>");
+        plainLines.push(lineText);
         msgs.push({role:"tool",tool_call_id:tc.id,content:toolResult||"No result"});
       }
       con.body.innerHTML=lines.join("<br>");
-      if(msg.content&&msg.content.replace(/<think>[\s\S]*?<\/think>/g,"").trim()){
-        con.body.innerHTML+="<div style='margin-top:6px'>"+renderMd(msg.content.replace(/<think>[\s\S]*?<\/think>/g,"").trim())+"</div>";
+      var roundCommentary=msg.content?msg.content.replace(/<think>[\s\S]*?<\/think>/g,"").trim():"";
+      if(roundCommentary){
+        con.body.innerHTML+="<div style='margin-top:6px'>"+renderMd(roundCommentary)+"</div>";
       }
+      /* Record what this step actually did in the real conversation
+         history, not just the transient console block - otherwise the
+         main chat model has no idea the repo was even looked at if the
+         user moves on to a different message instead of tapping
+         Continue, and ends up flatly contradicting what the coding agent
+         just found (e.g. claiming it can't see the repo at all). */
+      chatHistory.push({role:"assistant",content:"[Coding agent] "+plainLines.join("; ")+(roundCommentary?" - "+roundCommentary:"")});
+      autoSave();
       var contBtn=document.createElement("button");
       contBtn.className="ba";contBtn.textContent="Continue";
       contBtn.style.cssText="margin-top:8px";
@@ -2517,7 +2528,7 @@ async function runCodingAgentRound(sessionId){
     }else{
       var finalText=(msg.content||"(no response)").replace(/<think>[\s\S]*?<\/think>\s*/g,"").trim();
       con.body.innerHTML=renderMd(finalText||"(no response)");
-      chatHistory.push({role:"assistant",content:finalText});
+      chatHistory.push({role:"assistant",content:"[Coding agent] "+finalText});
       autoSave();
       codingAgentActive=null;
     }
