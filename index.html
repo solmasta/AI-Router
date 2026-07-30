@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.72</span></span>
+      <span class="wm">ai-router <span>v5.73</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -550,7 +550,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.72</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.73</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -584,10 +584,11 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <button id="undoBtn">Undo</button>
 </div>
 
-<!-- App update toast -->
+<!-- App update notice: updates apply automatically (see tryApplyUpdate in
+     the script below) - this toast only confirms it already happened,
+     nothing for the user to tap. -->
 <div class="undo-toast hidden" id="updateToast" style="bottom:140px;max-width:calc(100vw - 32px);white-space:normal;flex-wrap:wrap;justify-content:center;text-align:center">
-  <span>&#128260; A new version is available - refresh to update</span>
-  <button id="updateRefreshBtn">Refresh Now</button>
+  <span id="updateToastText">&#9989; Updated</span>
 </div>
 
 <!-- Recent Chats modal -->
@@ -687,6 +688,13 @@ var docLibrary=[];
 var undoTimer=null,undoData=null;
 var activeBackend="deepinfra",workerUrl="",allModels=[],currentModel={id:"",label:""};
 var chatHistory=[],sending=false,attachedFiles=[];
+/* Exposed so the auto-update logic in the second script block (a plain
+   top-level block, not this IIFE) can tell whether a request is actively
+   in flight before reloading, without mirroring sending/codingAgentActive
+   as separate globals that would need manual upkeep at every assignment
+   site. codingAgentActive is declared further down but already hoisted by
+   the time this function is ever actually called. */
+window.isAppBusyForUpdate=function(){return sending||!!codingAgentActive;};
 var activePromptId=null,editingId=null,editingProjId=null,viewingProjId=null;
 var prompts=[],projects=[];
 var wproj=[],activeWProjId=null,editingWProjId=null,viewingWProjId=null;
@@ -5301,11 +5309,14 @@ document.getElementById("activeProfileLabel").textContent=activeProfile==="defau
 </script>
 
 <script>
-/* Surfaces a dismissible "Update available" toast instead of forcing a
-   silent reload - a silent reload used to fire the instant a new service
-   worker took control, which could yank the page out from under someone
-   mid-message with zero warning. Two independent triggers feed the same
-   toast:
+/* Applies fresh deploys automatically instead of leaving it on someone to
+   notice a toast and tap a button - the field techs using this app on
+   iPhone struggle even with clearing a cache, so a manual "refresh to
+   update" step just means they stay stuck on stale versions. A silent
+   reload is safe here because all real state (chat history, tabs, drafts,
+   memories) already lives in localStorage, not in memory - the only thing
+   that has to be respected is not yanking the page mid-request. Two
+   independent triggers feed the same apply path:
    1. The service worker itself updating (updatefound/controllerchange) -
       but the browser only treats this as "new" when sw.js's own bytes
       change, so an index.html-only deploy (the common case) never fires
@@ -5318,20 +5329,50 @@ var CURRENT_APP_VERSION = (function() {
   var el = document.querySelector('.wm span');
   return el ? el.textContent : null;
 })();
-var updateToastShown = false;
-function showUpdateToast() {
-  if (updateToastShown) return;
-  updateToastShown = true;
-  document.getElementById('updateToast').classList.remove('hidden');
+var UPDATE_NOTICE_KEY = 'ai_router_updated_notice';
+var updateApplyQueued = false;
+function isSafeToReloadForUpdate() {
+  return !(window.isAppBusyForUpdate && window.isAppBusyForUpdate());
 }
-document.getElementById('updateRefreshBtn').addEventListener('click', function() { window.location.reload(); });
+/* Reload right away when nothing is in flight; otherwise queue it. `sending`
+   and `codingAgentActive` each get reset back to falsy from several
+   different branches (success/error/abort), so rather than instrumenting
+   every one of those spots - and risking missing one - a small poller
+   below just rechecks the queue every couple seconds, which is cheap and
+   can't drift out of sync with how those flags actually get cleared. */
+/* Indirected through a plain global rather than calling
+   window.location.reload() inline - Location's own methods aren't a
+   normal writable data property in every engine, so a test stubbing it
+   directly can silently fail to stick and let a real navigation through. */
+function performUpdateReload() {
+  window.location.reload();
+}
+function tryApplyUpdate() {
+  if (!isSafeToReloadForUpdate()) { updateApplyQueued = true; return; }
+  updateApplyQueued = false;
+  try { localStorage.setItem(UPDATE_NOTICE_KEY, '1'); } catch (e) {}
+  performUpdateReload();
+}
+setInterval(function() { if (updateApplyQueued) tryApplyUpdate(); }, 2000);
 function checkForFreshVersion() {
   if (!CURRENT_APP_VERSION) return;
   fetch('./index.html', { cache: 'no-store' }).then(function(r) { return r.text(); }).then(function(html) {
     var m = html.match(/<span class="wm">ai-router <span>(v[\d.]+)<\/span><\/span>/);
-    if (m && m[1] !== CURRENT_APP_VERSION) showUpdateToast();
+    if (m && m[1] !== CURRENT_APP_VERSION) tryApplyUpdate();
   }).catch(function() {});
 }
+/* Post-reload confirmation only - nothing to tap, just a brief "updated"
+   flash so a tech watching it happen knows the app didn't just glitch. */
+(function() {
+  var justUpdated = false;
+  try { justUpdated = localStorage.getItem(UPDATE_NOTICE_KEY) === '1'; localStorage.removeItem(UPDATE_NOTICE_KEY); } catch (e) {}
+  if (justUpdated) {
+    var toast = document.getElementById('updateToast');
+    document.getElementById('updateToastText').textContent = '✅ Updated to ' + (CURRENT_APP_VERSION || 'the latest version');
+    toast.classList.remove('hidden');
+    setTimeout(function() { toast.classList.add('hidden'); }, 4000);
+  }
+})();
 /* Fired unconditionally, immediately, on every load - not nested inside
    the service-worker registration promise below, which only resolves
    after that async step completes. A PWA relaunched from the home screen
@@ -5347,7 +5388,7 @@ if ('serviceWorker' in navigator) {
       var worker = reg.installing;
       worker.addEventListener('statechange', function() {
         if (worker.state === 'installed' && navigator.serviceWorker.controller) {
-          showUpdateToast();
+          tryApplyUpdate();
         }
       });
     });
@@ -5363,7 +5404,7 @@ if ('serviceWorker' in navigator) {
     setInterval(function() { reg.update(); checkForFreshVersion(); }, 5 * 60 * 1000);
   });
   navigator.serviceWorker.addEventListener('controllerchange', function() {
-    showUpdateToast();
+    tryApplyUpdate();
   });
 } else {
   document.addEventListener('visibilitychange', function() {

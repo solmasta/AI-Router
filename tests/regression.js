@@ -56,9 +56,10 @@
    - GitHub Settings: a one-tap Clear button disconnects the active repo
      without opening the Connect modal, and previously-connected repos are
      offered as quick "recent" picks when reconnecting
-   - a fresh deploy that only changes index.html (the common case) still
-     surfaces a dismissible "Update available" toast, not just a service-
-     worker-byte-change-only reload that could otherwise never fire
+   - a fresh deploy that only changes index.html (the common case, which
+     never touches sw.js's own bytes) still applies itself automatically -
+     no tap required - and defers cleanly instead of reloading mid-request
+     if a send or coding-agent round is still in flight
    - the Overseer button visibly pulses while the auto-router is scoring
      which model fits the message just sent, and clears once it decides
    - every model, tool-capable or not, is explicitly told not to invent
@@ -1762,15 +1763,18 @@ function assert(cond, label) {
   if (defaultViewport) await page.setViewportSize(defaultViewport);
   await page.waitForTimeout(150);
 
-  console.log('\n-- app-update toast shows when a fresh deploy has a different version string --');
-  // The service worker's own update mechanism only fires when sw.js's
-  // bytes change, which a plain index.html content deploy never does -
-  // checkForFreshVersion is the actual safety net: it re-fetches
-  // index.html with no-store and diffs the version string in the header
-  // watermark against what's currently rendered, showing a dismissible
-  // "Update available" toast instead of a surprise silent reload.
-  const toastHiddenBefore = await page.evaluate(() => document.getElementById('updateToast').classList.contains('hidden'));
-  assert(toastHiddenBefore, 'test setup: update toast starts hidden');
+  console.log('\n-- a fresh deploy applies itself automatically instead of waiting for a tap --');
+  // Field techs on iPhone struggle even with clearing a cache, so the app
+  // no longer shows a "refresh to update" button - checkForFreshVersion
+  // (the safety net for a plain index.html-only deploy, which never
+  // touches sw.js's own bytes so the service worker's own update path
+  // never fires) now reloads on its own once it detects a version
+  // mismatch. Stub the app's own reload indirection (performUpdateReload)
+  // rather than window.location.reload directly - Location's methods
+  // aren't a plain writable data property in every engine, so overriding
+  // it in-place can silently fail to stick and let a real navigation
+  // through, tearing down the page mid-suite.
+  await page.evaluate(() => { window.__reloadCalls = 0; window.performUpdateReload = () => { window.__reloadCalls++; }; });
   await page.route('**/index.html', async (route) => {
     await route.fulfill({
       status: 200,
@@ -1781,8 +1785,39 @@ function assert(cond, label) {
   await page.evaluate(() => window.checkForFreshVersion());
   await page.waitForTimeout(300);
   await page.unroute('**/index.html');
-  const toastVisibleAfter = await page.evaluate(() => !document.getElementById('updateToast').classList.contains('hidden'));
-  assert(toastVisibleAfter, 'the update toast appears once a fresh fetch of index.html reports a different version string');
+  const reloadedWhenIdle = await page.evaluate(() => window.__reloadCalls);
+  assert(reloadedWhenIdle === 1, `a fresh version detected while idle reloads automatically with no tap required (reload calls: ${reloadedWhenIdle})`);
+  const noticeFlagSet = await page.evaluate(() => localStorage.getItem('ai_router_updated_notice') === '1');
+  assert(noticeFlagSet, 'a notice flag is persisted across the reload so the next load can confirm the update happened');
+  await page.evaluate(() => localStorage.removeItem('ai_router_updated_notice'));
+
+  console.log('\n-- an update detected mid-request is deferred, then applied automatically once things go idle --');
+  // Yanking the page out from under an in-flight send/coding-agent round
+  // would be worse than a stale version string, so the reload has to wait
+  // for isAppBusyForUpdate() to clear - simulate "busy" through that same
+  // seam rather than reaching into sending/codingAgentActive directly.
+  await page.evaluate(() => {
+    window.__reloadCalls = 0;
+    window.__realIsAppBusyForUpdate = window.isAppBusyForUpdate;
+    window.isAppBusyForUpdate = () => true;
+  });
+  await page.route('**/index.html', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<span class="wm">ai-router <span>v9.99</span></span>',
+    });
+  });
+  await page.evaluate(() => window.checkForFreshVersion());
+  await page.waitForTimeout(300);
+  await page.unroute('**/index.html');
+  const deferredNotReloaded = await page.evaluate(() => window.__reloadCalls === 0);
+  assert(deferredNotReloaded, 'the update is not applied while the app reports itself busy');
+  await page.evaluate(() => { window.isAppBusyForUpdate = window.__realIsAppBusyForUpdate; });
+  await page.waitForTimeout(2300); // the queued-update poller rechecks every 2s
+  const appliedOnceIdle = await page.evaluate(() => window.__reloadCalls === 1);
+  assert(appliedOnceIdle, 'the deferred update applies itself automatically once the app goes idle, with no further action needed');
+  await page.evaluate(() => localStorage.removeItem('ai_router_updated_notice'));
 
   console.log('\n-- Overseer button pulses while the router evaluates which model fits the message just sent --');
   // The actual scoring is synchronous and near-instant, which made the
