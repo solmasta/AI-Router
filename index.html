@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.73</span></span>
+      <span class="wm">ai-router <span>v5.74</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -550,7 +550,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.73</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.74</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -924,7 +924,7 @@ var MODEL_COST_TIER={
 function getModelCostTier(model){return MODEL_COST_TIER.hasOwnProperty(model.id)?MODEL_COST_TIER[model.id]:1;}
 var CTX_MAP={"meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo":131072,"mistralai/Mistral-Small-3.2-24B-Instruct-2506":128000,"Qwen/Qwen3.5-9B":262144,"Qwen/Qwen3.5-27B":262144,"meta-llama/Llama-3.3-70B-Instruct-Turbo":131072,"meta-llama/Llama-4-Scout-17B-16E-Instruct":327680,"Qwen/Qwen2.5-72B-Instruct":32768,"deepseek-ai/DeepSeek-V3.2":163840,"Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo":262144,"Qwen/Qwen3-32B":40960,"deepseek-ai/DeepSeek-R1-0528":163840,"moonshotai/Kimi-K2-Instruct":128000,"zai-org/GLM-4.6":128000,"MiniMaxAI/MiniMax-M2":128000,"openai/gpt-oss-120b":128000,"openai/gpt-oss-20b":128000,"Qwen/Qwen3-235B-A22B-Instruct-2507":262144};
 
-function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
 
 /* ---- Markdown ---- */
 function renderMd(raw){
@@ -2125,8 +2125,8 @@ function displayGeneratedPrompts(){
 
   prompts.forEach(function(prompt,i){
     var cleanPrompt=prompt.replace(/^["']|["']$/g,"");
-    promptsHtml+='<button style="padding:6px 10px;background:var(--up);border:1px solid var(--br);color:var(--tx);border-radius:4px;font-size:11px;cursor:pointer;text-align:left;transition:background 0.15s" onclick="insertPrompt(\''+esc(cleanPrompt.replace(/'/g,"\\'"))+'\')" title="Click to use this prompt">';
-    promptsHtml+=cleanPrompt.substring(0,60)+(cleanPrompt.length>60?"...":"");
+    promptsHtml+='<button style="padding:6px 10px;background:var(--up);border:1px solid var(--br);color:var(--tx);border-radius:4px;font-size:11px;cursor:pointer;text-align:left;transition:background 0.15s" onclick="insertPrompt(\''+esc(cleanPrompt.replace(/\\/g,"\\\\").replace(/'/g,"\\'"))+'\')" title="Click to use this prompt">';
+    promptsHtml+=esc(cleanPrompt.substring(0,60))+(cleanPrompt.length>60?"...":"");
     promptsHtml+='</button>';
   });
 
@@ -2148,8 +2148,8 @@ function displayBrainstormingSuggestions(){
   brainstormHtml+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
 
   suggestions.forEach(function(idea){
-    brainstormHtml+='<button style="padding:8px 10px;background:var(--up);border:1px solid var(--br);color:var(--tx);border-radius:4px;font-size:11px;cursor:pointer;text-align:left;transition:background 0.15s" onclick="insertPrompt(\''+esc(idea.prompt.replace(/'/g,"\\'"))+'\')" title="'+esc(idea.prompt)+'">';
-    brainstormHtml+='<strong>'+idea.title+'</strong><br><span style="font-size:10px;color:var(--mu)">'+idea.prompt.substring(0,40)+'...</span>';
+    brainstormHtml+='<button style="padding:8px 10px;background:var(--up);border:1px solid var(--br);color:var(--tx);border-radius:4px;font-size:11px;cursor:pointer;text-align:left;transition:background 0.15s" onclick="insertPrompt(\''+esc(idea.prompt.replace(/\\/g,"\\\\").replace(/'/g,"\\'"))+'\')" title="'+esc(idea.prompt)+'">';
+    brainstormHtml+='<strong>'+esc(idea.title)+'</strong><br><span style="font-size:10px;color:var(--mu)">'+esc(idea.prompt.substring(0,40))+'...</span>';
     brainstormHtml+='</button>';
   });
 
@@ -2302,7 +2302,7 @@ function interceptAndEnhanceMessage(userMessage){
 
   var notice=document.createElement("div");
   notice.style.cssText="padding:8px 12px;margin:8px 0;background:rgba(34,197,94,0.08);border-left:3px solid #22c55e;border-radius:4px;font-size:11px;color:var(--mu)";
-  notice.innerHTML="✓ <strong>Overseer injected task instructions</strong> for "+currentModel.label+" at "+timestamp;
+  notice.innerHTML="✓ <strong>Overseer injected task instructions</strong> for "+esc(currentModel.label)+" at "+esc(timestamp);
   document.getElementById("chat").appendChild(notice);
 
   lastInjectedPrompt=instructions;
@@ -3279,7 +3279,7 @@ function createNewTab(){
   saveTabsToStorage();
 }
 function closeTab(index){
-  if(openTabs.length<=1)return;
+  if(openTabs.length<=1||sending)return;
   var closingActive=(index===activeTabIndex);
   openTabs.splice(index,1);
   if(closingActive){
@@ -4687,7 +4687,11 @@ function appendMsg(role,content,streaming){
   else if(Array.isArray(content)){
     var txt=(content.find&&content.find(function(c){return c.type==="text";})||{}).text||"";
     var imgs=content.filter&&content.filter(function(c){return c.type==="image_url";});
-    body.innerHTML=(txt?renderMd(txt):"")+(imgs?imgs.map(function(im){return '<img class="mi" src="'+im.image_url.url+'">';}).join(""):"");
+    body.innerHTML=txt?renderMd(txt):"";
+    if(imgs)imgs.forEach(function(im){
+      var img=document.createElement("img");img.className="mi";img.src=im.image_url.url;
+      body.appendChild(img);
+    });
   }else{
     body.innerHTML=renderMd(content||"");
   }

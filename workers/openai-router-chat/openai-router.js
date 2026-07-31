@@ -13,6 +13,16 @@ function checkAuth(request, env) {
   return !!env.APP_SECRET && provided === env.APP_SECRET;
 }
 
+// Shared timeout wrapper for the free structured-data lookups below, so a
+// hung upstream (no response at all, as opposed to an HTTP error) can't
+// stall the whole /search request up to the Worker's wall-clock limit.
+async function fetchWithTimeout(url, ms) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), ms);
+  try { return await fetch(url, { signal: ac.signal }); }
+  finally { clearTimeout(timer); }
+}
+
 async function handleSearch(query, env) {
   // Defense in depth: cap query length regardless of what the client sends,
   // so a stray large paste can never produce an oversized downstream request.
@@ -60,8 +70,9 @@ async function handleSearch(query, env) {
 
   if (uniqueCoins.length > 0) {
     try {
-      const cgRes = await fetch(
-        `https://api.coingecko.com/api/v3/simple/price?ids=${uniqueCoins.join(',')}&vs_currencies=usd&include_24hr_change=true&include_market_cap=true`
+      const cgRes = await fetchWithTimeout(
+        `https://api.coingecko.com/api/v3/simple/price?ids=${uniqueCoins.join(',')}&vs_currencies=usd&include_24hr_change=true&include_market_cap=true`,
+        4000
       );
       const cgData = await cgRes.json();
       for (const [coin, data] of Object.entries(cgData)) {
@@ -78,7 +89,7 @@ async function handleSearch(query, env) {
   if (isWeather) {
     const loc = weatherMatch ? weatherMatch[1].trim().replace(/\s+/g, '+') : 'auto';
     try {
-      const wRes = await fetch(`https://wttr.in/${loc}?format=j1`);
+      const wRes = await fetchWithTimeout(`https://wttr.in/${loc}?format=j1`, 4000);
       const wData = await wRes.json();
       const cur = wData.current_condition[0];
       const area = wData.nearest_area[0];
@@ -114,7 +125,7 @@ async function handleSearch(query, env) {
     }
     if (ticker) {
       try {
-        const sRes = await fetch(`https://stooq.com/q/l/?s=${ticker.toLowerCase()}.us&f=sd2t2ohlcv&h&e=csv`);
+        const sRes = await fetchWithTimeout(`https://stooq.com/q/l/?s=${ticker.toLowerCase()}.us&f=sd2t2ohlcv&h&e=csv`, 4000);
         const csv = await sRes.text();
         const lines = csv.trim().split('\n');
         if (lines.length > 1) {
@@ -142,7 +153,7 @@ async function handleSearch(query, env) {
     }
     if (league) {
       try {
-        const eRes = await fetch(`https://site.api.espn.com/apis/site/v2/sports/${league}/scoreboard`);
+        const eRes = await fetchWithTimeout(`https://site.api.espn.com/apis/site/v2/sports/${league}/scoreboard`, 4000);
         const eData = await eRes.json();
         const events = (eData.events || []).slice(0, 5);
         events.forEach(ev => {

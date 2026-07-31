@@ -21,6 +21,23 @@ async function describeError(res) {
   return message ? `HTTP ${res.status} - ${message}` : `HTTP ${res.status}`;
 }
 
+// atob/btoa operate on Latin-1 bytes, not UTF-8 text - a plain atob()/btoa()
+// mangles (or throws on) any file content with multi-byte UTF-8 characters
+// (emoji, non-English text). Route through TextEncoder/TextDecoder so the
+// byte<->string boundary is explicit UTF-8 either way.
+function base64ToUtf8(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+function utf8ToBase64(str) {
+  const bytes = new TextEncoder().encode(str);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
 async function getDefaultBranch(owner, repo, headers) {
   const repoRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
   if (!repoRes.ok) throw new Error(`Failed to look up repo default branch: ${await describeError(repoRes)}`);
@@ -60,6 +77,17 @@ async function handleGitHubOp(body, env) {
   if (!token) return { error: "GitHub token not configured" };
   if (!owner || !repo) return { error: "Missing owner or repo" };
 
+  // Restrict writes to a caller-supplied owner/repo to a fixed allowlist -
+  // without this, anyone holding the shared secret (see claude-worker's
+  // /secret comment) could point this worker at any repo the GITHUB_TOKEN
+  // can reach, not just the one this project intends to operate on.
+  const allowedRepos = (env.ALLOWED_REPOS || "")
+    .split(",").map(r => r.trim().toLowerCase()).filter(Boolean);
+  const requested = `${owner}/${repo}`.toLowerCase();
+  if (allowedRepos.length === 0 || !allowedRepos.includes(requested)) {
+    return { error: `Repo ${owner}/${repo} is not in the allowlist` };
+  }
+
   const headers = {
     "Authorization": `token ${token}`,
     "Accept": "application/vnd.github.v3+json",
@@ -79,7 +107,7 @@ async function handleGitHubOp(body, env) {
         const res = await fetch(url, { headers });
         if (!res.ok) return { error: `Failed to read ${path}: ${await describeError(res)}`, status: res.status };
         const data = await res.json();
-        const fileContent = atob(data.content);
+        const fileContent = base64ToUtf8(data.content);
         return { success: true, content: fileContent, sha: data.sha };
 
       case "write_file":
@@ -121,7 +149,7 @@ async function handleGitHubOp(body, env) {
 
         const payload = {
           message: message || `Update ${path}`,
-          content: btoa(content),
+          content: utf8ToBase64(content),
           branch: targetBranch,
         };
         if (sha) payload.sha = sha;
@@ -201,9 +229,12 @@ async function handleGitHubOp(body, env) {
       }
 
       case "create_commit":
-        if (!message) return { error: "Missing commit message" };
-        // This is simplified - in reality you'd need to create a tree and commit
-        return { success: true, message: "Commit queued (use write_file for actual changes)" };
+        // Not implemented: a real commit needs a tree + commit object built
+        // from the caller's changes, which this op never did - it used to
+        // return {success:true} without writing anything, which told
+        // callers a commit had happened when it hadn't. Fail loudly instead;
+        // use write_file, which does perform a real commit per file.
+        return { error: "create_commit is not implemented - use write_file instead" };
 
       default:
         return { error: "Unknown operation" };

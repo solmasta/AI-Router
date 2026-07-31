@@ -17,18 +17,30 @@ export default {
       return new Response(null, { status: 204, headers: CORS });
     }
 
-    // Public endpoint: get APP_SECRET for frontend - validates origin only
+    // Public endpoint: get APP_SECRET for frontend - validates origin only.
+    // This is a deterrent against casual/automated abuse of the raw Worker
+    // URL, not real auth: Origin/Referer are ordinary request headers that
+    // any non-browser client (curl, a script) can set to whatever it likes,
+    // so a determined caller can still obtain the secret directly. Exact
+    // matching here only closes the suffix-bypass hole (an Origin such as
+    // "https://solmasta.github.io.evil.com" used to pass the old
+    // startsWith() check); it does not make this a security boundary.
     if (request.method === "GET" && url.pathname === "/secret") {
-      const origin = request.headers.get("Origin") || request.headers.get("Referer") || "";
-      const allowedOrigins = [
+      const allowedOrigins = new Set([
         "https://solmasta.github.io",
         "http://localhost:8000",
         "http://localhost:3000",
         "http://127.0.0.1:8000",
         "http://127.0.0.1:3000"
-      ];
+      ]);
 
-      if (!allowedOrigins.some(o => origin.startsWith(o))) {
+      let origin = request.headers.get("Origin");
+      if (!origin) {
+        const referer = request.headers.get("Referer");
+        try { origin = referer ? new URL(referer).origin : ""; } catch { origin = ""; }
+      }
+
+      if (!allowedOrigins.has(origin)) {
         return new Response(JSON.stringify({ error: "Origin not allowed" }), {
           status: 403, headers: { "Content-Type": "application/json", ...CORS }
         });
@@ -149,6 +161,17 @@ export default {
     // For non-streaming, Claude returns a different format, so we need to convert it
     if (!body.stream) {
       const claudeResp = await upstream.json();
+
+      // Surface upstream errors as-is instead of feeding them through the
+      // success-shape conversion below, which would otherwise turn a missing
+      // content array into a silent, misleadingly "successful" empty reply.
+      if (!upstream.ok) {
+        const message = (claudeResp.error && claudeResp.error.message) || `Claude API error (HTTP ${upstream.status})`;
+        return new Response(JSON.stringify({ error: { message, type: claudeResp.error && claudeResp.error.type } }), {
+          status: upstream.status,
+          headers: { "Content-Type": "application/json", ...CORS }
+        });
+      }
 
       // Convert Claude response to OpenAI format for compatibility
       const openaiResp = {
