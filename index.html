@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.83</span></span>
+      <span class="wm">ai-router <span>v5.84</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -549,7 +549,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.83</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.84</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3763,9 +3763,11 @@ function driveErrText(err){
   return text;
 }
 function driveConnect(){
-  driveInitClient();
-  if(!driveTokenClient){alert("Google sign-in is still loading - try again in a second.");return;}
-  driveTokenClient.requestCode();
+  try{
+    driveInitClient();
+    if(!driveTokenClient){alert("Google sign-in is still loading - try again in a second.");return;}
+    driveTokenClient.requestCode();
+  }catch(e){alert("Google Drive connect failed: "+e.message);}
 }
 function driveDisconnect(){
   driveToken=null;driveTokenExpiry=0;driveFolderId=null;driveFileIds={};driveRefreshToken=null;
@@ -3997,12 +3999,12 @@ function updateDriveUI(connected){
   var backupBtn=document.getElementById("driveBackupBtn");
   if(!btn)return;
   if(connected){
-    btn.textContent="Disconnect";btn.onclick=driveDisconnect;
+    btn.textContent="Disconnect";
     if(restoreBtn)restoreBtn.classList.remove("hidden");
     if(backupBtn)backupBtn.classList.remove("hidden");
     updateDriveStatus("Connected - tap Back up to save, Restore to pull down");
   }else{
-    btn.textContent="Connect";btn.onclick=driveConnect;
+    btn.textContent="Connect";
     if(restoreBtn)restoreBtn.classList.add("hidden");
     if(backupBtn)backupBtn.classList.add("hidden");
     updateDriveStatus("Not connected");
@@ -4011,6 +4013,12 @@ function updateDriveUI(connected){
 function updateDriveStatus(text){var s=document.getElementById("driveStatus");if(s)s.textContent=text;}
 document.getElementById("driveRestoreBtn").addEventListener("click",driveRestore);
 document.getElementById("driveBackupBtn").addEventListener("click",function(){driveEnsureFolder().then(function(){driveAutoPush(true);});});
+/* Persistent handler wired at page-load rather than via btn.onclick inside
+   updateDriveUI - this ensures the button is always responsive, even
+   during the async startup window before updateDriveUI has first run. */
+document.getElementById("driveConnectBtn").addEventListener("click",function(){
+  if(this.textContent.trim()==="Disconnect")driveDisconnect();else driveConnect();
+});
 /* Maps a DRIVE_FILES key to the localStorage key it actually backs -
    lets manual import write straight to disk with zero Drive API calls,
    so it still works while Drive is rate-limited, expired, or never
@@ -4144,6 +4152,16 @@ document.getElementById("driveFolderOpenBtn").addEventListener("click",openDrive
 document.getElementById("driveFolderOpenBtn2").addEventListener("click",openDriveFolderInNewTab);
 updateDriveFolderStatus();
 driveLoadCache();
+/* Initialise the GIS token client as early as possible so requestCode()
+   is ready before the first Connect click.  driveInitClient() is guarded
+   against double-init, so it's safe to call here AND from driveConnect().
+   We also hook window.onGoogleLibraryLoad so it fires even if the GIS
+   script hasn't finished loading yet when this code runs. */
+driveInitClient();
+(function(){
+  var prev=window.onGoogleLibraryLoad;
+  window.onGoogleLibraryLoad=function(){if(prev)prev();driveInitClient();};
+})();
 
 /* ---- Install (Android/Desktop native, iPhone guided) ---- */
 var deferredInstallPrompt=null;
