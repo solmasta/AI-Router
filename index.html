@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.80</span></span>
+      <span class="wm">ai-router <span>v5.81</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -550,7 +550,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.80</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.81</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -990,15 +990,9 @@ function estTokens(){
 }
 function updTokenBar(){
   var tok=estTokens();
-  if(tok<100){document.getElementById("tokenBar").classList.add("hidden");return;}
   var ctx=CTX_MAP[currentModel.id]||BACKENDS[activeBackend].ctx;
   var pct=Math.min(100,Math.round(tok/ctx*100));
-  document.getElementById("tokenBar").classList.remove("hidden");
-  document.getElementById("tokenCount").textContent=tok.toLocaleString()+" tokens";
-  document.getElementById("tokenPct").textContent=pct+"%";
-  var fill=document.getElementById("tokenFill");
-  fill.style.width=pct+"%";
-  fill.className="tf"+(pct>90?" danger":pct>70?" warn":"");
+  document.getElementById("tokenBar").classList.add("hidden");
   if(pct>=65&&chatHistory.length>6&&!summarizing){
     doSummarize();
   }
@@ -1997,9 +1991,13 @@ function updateOverseerBar(){
   bar.classList.remove("hidden");
   var dot=document.getElementById("overseerBarDot");
   dot.className="obd"+(overseerState.stuck?" stuck":(overseerState.progress<40?" warn":""));
-  var stepText=(overseerState.steps.length>0&&overseerState.currentStep<overseerState.steps.length)?(" • Step "+overseerState.currentStep+"/"+overseerState.steps.length):"";
-  var projectText=overseerState.activeProject?(" • 📌 "+overseerState.activeProject):"";
-  document.getElementById("overseerBarText").textContent="🤖 "+overseerState.goalType+" • "+overseerState.progress+"% • "+overseerState.conversationQuality+stepText+projectText;
+  var text="🤖 ";
+  if(overseerState.stuck)text+="Waiting on the next detail";
+  else if(overseerState.currentStep>0&&overseerState.steps.length>0)text+="Working on the next step";
+  else if(overseerState.goalType)text+="Working on "+overseerState.goalType.toLowerCase();
+  else text+="Tracking the conversation";
+  if(overseerState.activeProject)text+=" • "+overseerState.activeProject;
+  document.getElementById("overseerBarText").textContent=text;
 }
 /* Applies a recommended model_switch rec directly - same backend-switch +
    setModel + renderModelList sequence switchToBestModel/ensureVisionModel
@@ -2331,13 +2329,6 @@ function interceptAndEnhanceMessage(userMessage){
      actually added, or the UI misleadingly shows a green "injected" notice
      for a request that got no extra system message at all. */
   if(!instructions)return null;
-  var timestamp=new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
-
-  var notice=document.createElement("div");
-  notice.style.cssText="padding:8px 12px;margin:8px 0;background:rgba(34,197,94,0.08);border-left:3px solid #22c55e;border-radius:4px;font-size:11px;color:var(--mu)";
-  notice.innerHTML="✓ <strong>Overseer injected task instructions</strong> for "+esc(currentModel.label)+" at "+esc(timestamp);
-  document.getElementById("chat").appendChild(notice);
-
   lastInjectedPrompt=instructions;
   return instructions;
 }
@@ -2540,13 +2531,27 @@ function renderCodingConsole(){
   var wrap=document.createElement("div");
   wrap.className="msg ma3";
   var label=document.createElement("div");label.className="ml";
-  var av=document.createElement("span");av.className="av";av.textContent="🛠️";label.appendChild(av);
-  var lspan=document.createElement("span");lspan.textContent="Coding Agent";label.appendChild(lspan);
-  var body=document.createElement("div");body.className="body";body.innerHTML='<span class="cur">▇</span> starting&#8230;';
+  var av=document.createElement("span");av.className="av";av.textContent="✦";label.appendChild(av);
+  var lspan=document.createElement("span");lspan.textContent="Assistant";label.appendChild(lspan);
+  var body=document.createElement("div");body.className="body";body.innerHTML='<span class="cur">▇</span> working on the next step&#8230;';
   wrap.appendChild(label);wrap.appendChild(body);
   document.getElementById("chat").appendChild(wrap);
   wrap.scrollIntoView({behavior:"smooth",block:"end"});
   return{wrap:wrap,body:body};
+}
+function summarizeCodingStep(toolName,toolArgs,ok){
+  if(toolName==="read_file")return ok?"I checked "+(toolArgs.path||"that file")+".":"I couldn't read "+(toolArgs.path||"that file")+".";
+  if(toolName==="write_file")return ok?"I updated "+(toolArgs.path||"that file")+(toolArgs.branch?" on "+toolArgs.branch:"")+".":"I couldn't update "+(toolArgs.path||"that file")+".";
+  if(toolName==="list_files")return toolArgs.path&&toolArgs.path!=="."?(ok?"I looked through "+toolArgs.path+".":"I couldn't inspect "+toolArgs.path+"."):(ok?"I looked through the repository files.":"I couldn't inspect the repository files.");
+  if(toolName==="merge_branch")return ok?"I merged "+(toolArgs.branch||"that branch")+".":"I couldn't merge "+(toolArgs.branch||"that branch")+".";
+  return ok?"I finished the next repo step.":"I couldn't finish the next repo step.";
+}
+function summarizeCodingRound(plainLines,roundCommentary){
+  var summary=(roundCommentary||"").trim();
+  if(summary)return summary;
+  if(plainLines.length===1)return plainLines[0];
+  if(plainLines.length>1)return plainLines.join(" ");
+  return "I finished the next repo step. Continue if you want me to keep going.";
 }
 async function runCodingAgentTurn(assembledMessages){
   var msgs=assembledMessages.slice();
@@ -2565,7 +2570,7 @@ async function runCodingAgentRound(sessionId){
   var con=renderCodingConsole();
   try{
     var res=await fetch(DI_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:CODING_AGENT_MODEL_ID,messages:msgs,tools:REPO_TOOLS,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:1500})});
-    if(!res.ok){con.body.innerHTML='<span style="color:var(--er)">Coding agent request failed (HTTP '+res.status+').</span>';codingAgentActive=null;return;}
+    if(!res.ok){con.body.innerHTML='<span style="color:var(--er)">I hit an error and could not continue (HTTP '+res.status+').</span>';codingAgentActive=null;return;}
     var data=await res.json();
     var choice=(data.choices||[])[0]||{};
     var msg=choice.message||{};
@@ -2573,7 +2578,6 @@ async function runCodingAgentRound(sessionId){
     if(thinkMatch)displayThinkingProcess(thinkMatch[1]);
     if(choice.finish_reason==="tool_calls"&&msg.tool_calls&&msg.tool_calls.length){
       msgs.push(msg);
-      var lines=[];
       var plainLines=[];
       for(var i=0;i<msg.tool_calls.length;i++){
         var tc=msg.tool_calls[i];
@@ -2581,57 +2585,54 @@ async function runCodingAgentRound(sessionId){
         var toolArgs=JSON.parse(tc["function"].arguments||"{}");
         var toolResult=null,lineText="";
         if(toolName==="read_file"){
-          con.body.innerHTML=lines.concat('<span style="color:var(--mu)">📖 Reading '+esc(toolArgs.path||"")+'&#8230;</span>').join("<br>");
+          con.body.innerHTML=renderMd("I'm checking "+(toolArgs.path||"that file")+".");
           var readRes=await executeRepoTool("read_file",toolArgs);
           toolResult=readRes.success?readRes.content:(readRes.error||"Failed to read file");
-          lineText=(readRes.success?"📖 Read ":"⚠️ Failed to read ")+esc(toolArgs.path||"");
+          lineText=summarizeCodingStep(toolName,toolArgs,readRes.success);
         }else if(toolName==="write_file"){
-          con.body.innerHTML=lines.concat('<span style="color:var(--mu)">✏️ Waiting for approval to write '+esc(toolArgs.path||"")+'&#8230;</span>').join("<br>");
+          con.body.innerHTML=renderMd("I need approval before I update "+(toolArgs.path||"that file")+".");
           var approvedBranch=await confirmGithubWrite(toolArgs);
           if(!approvedBranch){
             toolResult="The user declined this write. Do not retry the same change without asking first.";
-            lineText="🚫 Write declined: "+esc(toolArgs.path||"");
+            lineText="I paused because the write wasn't approved.";
           }else{
             toolArgs.branch=approvedBranch;
-            con.body.innerHTML=lines.concat('<span style="color:var(--mu)">✏️ Writing '+esc(toolArgs.path||"")+' to '+esc(approvedBranch)+'&#8230;</span>').join("<br>");
+            con.body.innerHTML=renderMd("I'm updating "+(toolArgs.path||"that file")+".");
             var writeRes=await executeRepoTool("write_file",toolArgs);
             toolResult=writeRes.success?("File written to branch '"+approvedBranch+"'. Commit: "+writeRes.commit):(writeRes.error||"Failed to write file");
-            lineText=(writeRes.success?"✏️ Wrote ":"⚠️ Failed to write ")+esc(toolArgs.path||"")+" ("+esc(approvedBranch)+")";
+            lineText=summarizeCodingStep(toolName,toolArgs,writeRes.success);
           }
         }else if(toolName==="list_files"){
-          con.body.innerHTML=lines.concat('<span style="color:var(--mu)">📂 Listing '+esc(toolArgs.path||".")+'&#8230;</span>').join("<br>");
+          con.body.innerHTML=renderMd(toolArgs.path&&toolArgs.path!=="."?"I'm looking through "+toolArgs.path+".":"I'm looking through the repository.");
           var listRes=await executeRepoTool("list_files",toolArgs);
           toolResult=listRes.success?JSON.stringify(listRes.files):(listRes.error||"Failed to list files");
-          lineText=(listRes.success?"📂 Listed ":"⚠️ Failed to list ")+esc(toolArgs.path||".");
+          lineText=summarizeCodingStep(toolName,toolArgs,listRes.success);
         }else if(toolName==="merge_branch"){
-          con.body.innerHTML=lines.concat('<span style="color:var(--mu)">⚡ Waiting for approval to merge '+esc(toolArgs.branch||"")+'&#8230;</span>').join("<br>");
+          con.body.innerHTML=renderMd("I need approval before I merge "+(toolArgs.branch||"that branch")+".");
           var approvedMerge=await confirmGithubMerge(toolArgs);
           if(!approvedMerge){
             toolResult="The user declined this merge. Do not retry without asking first.";
-            lineText="🚫 Merge declined: "+esc(toolArgs.branch||"");
+            lineText="I paused because the merge wasn't approved.";
           }else{
-            con.body.innerHTML=lines.concat('<span style="color:var(--mu)">⚡ Merging '+esc(toolArgs.branch||"")+'&#8230;</span>').join("<br>");
+            con.body.innerHTML=renderMd("I'm merging "+(toolArgs.branch||"that branch")+".");
             var mergeRes=await executeRepoTool("merge_branch",toolArgs);
             toolResult=mergeRes.success?("Merged branch '"+toolArgs.branch+"' via PR #"+mergeRes.prNumber+" ("+mergeRes.prUrl+")."):(mergeRes.error||"Failed to merge");
-            lineText=(mergeRes.success?"⚡ Merged ":"⚠️ Failed to merge ")+esc(toolArgs.branch||"");
+            lineText=summarizeCodingStep(toolName,toolArgs,mergeRes.success);
           }
         }
-        lines.push("<span>"+lineText+"</span>");
         plainLines.push(lineText);
         msgs.push({role:"tool",tool_call_id:tc.id,content:toolResult||"No result"});
       }
-      con.body.innerHTML=lines.join("<br>");
       var roundCommentary=msg.content?msg.content.replace(/<think>[\s\S]*?<\/think>/g,"").trim():"";
-      if(roundCommentary){
-        con.body.innerHTML+="<div style='margin-top:6px'>"+renderMd(roundCommentary)+"</div>";
-      }
+      var roundSummary=summarizeCodingRound(plainLines,roundCommentary);
+      con.body.innerHTML=renderMd(roundSummary);
       /* Record what this step actually did in the real conversation
          history, not just the transient console block - otherwise the
          main chat model has no idea the repo was even looked at if the
          user moves on to a different message instead of tapping
          Continue, and ends up flatly contradicting what the coding agent
          just found (e.g. claiming it can't see the repo at all). */
-      chatHistory.push({role:"assistant",content:"[Coding agent] "+plainLines.join("; ")+(roundCommentary?" - "+roundCommentary:"")});
+      chatHistory.push({role:"assistant",content:roundSummary});
       autoSave();
       var contBtn=document.createElement("button");
       contBtn.className="ba";contBtn.textContent="Continue";
@@ -2641,12 +2642,12 @@ async function runCodingAgentRound(sessionId){
     }else{
       var finalText=(msg.content||"(no response)").replace(/<think>[\s\S]*?<\/think>\s*/g,"").trim();
       con.body.innerHTML=renderMd(finalText||"(no response)");
-      chatHistory.push({role:"assistant",content:"[Coding agent] "+finalText});
+      chatHistory.push({role:"assistant",content:finalText});
       autoSave();
       codingAgentActive=null;
     }
   }catch(e){
-    con.body.innerHTML='<span style="color:var(--er)">Coding agent error: '+esc(e.message)+'</span>';
+    con.body.innerHTML='I hit an error and could not continue: '+esc(e.message);
     codingAgentActive=null;
   }
 }

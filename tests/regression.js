@@ -27,6 +27,8 @@
      its findings in real conversation history, so a later unrelated
      message doesn't have the main chat model contradicting what the
      coding agent already found
+   - repo/coding work stays conversational in the transcript instead of
+     dumping raw tool-status chatter into the main chat
    - write_file tool never defaults to main/master; the approved branch is
      what actually reaches the GitHub ops worker
    - merge_branch tool requires its own dedicated approval dialog before
@@ -540,7 +542,7 @@ function assert(cond, label) {
   const listFilesTool = (lastCodingAgentBody.tools || []).find((t) => t.function.name === 'list_files');
   assert(listFilesTool && !(listFilesTool.function.parameters.required || []).includes('path'), 'list_files no longer requires a path - omitting it can mean "list the repo root"');
   const chatTextAfterCodingAgent = await page.evaluate(() => document.getElementById('chat').textContent);
-  assert(chatTextAfterCodingAgent.indexOf('Coding Agent') >= 0, "the coding agent's response renders in its own labeled block");
+  assert(chatTextAfterCodingAgent.indexOf('Assistant') >= 0, "repo work renders as a normal assistant reply");
   assert(chatTextAfterCodingAgent.indexOf('README describes this project') >= 0, "the coding agent's final answer actually renders");
 
   await page.evaluate(() => {
@@ -1146,7 +1148,7 @@ function assert(cond, label) {
   await sendMsg('what is the capital of France');
   await page.unroute('**/*');
   const historyAfterAbandonedStep = ((lastUnrelatedAfterAbandonedStep && lastUnrelatedAfterAbandonedStep.messages) || []).map((m) => m.content).join('\n');
-  assert(historyAfterAbandonedStep.indexOf('[Coding agent]') >= 0 && historyAfterAbandonedStep.indexOf('Listed') >= 0, `an abandoned coding-agent step's findings still reach a later, unrelated message's conversation history (got: ${historyAfterAbandonedStep.slice(-400)})`);
+  assert(historyAfterAbandonedStep.indexOf('I looked through the repository files.') >= 0, `an abandoned coding-agent step's findings still reach a later, unrelated message's conversation history (got: ${historyAfterAbandonedStep.slice(-400)})`);
 
   console.log('\n-- an empty completion auto-switches to a fallback model and retries instead of just showing "(empty response)" --');
   // A model can burn its whole turn on tool_calls and have nothing left to
