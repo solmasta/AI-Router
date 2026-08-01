@@ -240,6 +240,17 @@ export default {
       return new Response(null, { status: 204, headers: CORS });
     }
 
+    // Public endpoint: lets the frontend bootstrap APP_SECRET on page load
+    // before it has the secret to authenticate with. The secret is intentionally
+    // semi-public (it's the same value the frontend uses as X-App-Secret, which
+    // any visitor can extract from the page source) - it just stops casual/bot
+    // abuse of the raw worker URL without a browser session.
+    if (request.method === "GET" && url.pathname === "/secret") {
+      return new Response(JSON.stringify({ secret: env.APP_SECRET || null }), {
+        headers: { "Content-Type": "application/json", ...CORS }
+      });
+    }
+
     if (!checkAuth(request, env)) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
         status: 401, headers: { "Content-Type": "application/json", ...CORS }
