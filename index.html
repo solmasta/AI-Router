@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.76</span></span>
+      <span class="wm">ai-router <span>v5.77</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -550,7 +550,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.76</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.77</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1387,6 +1387,40 @@ function analyzeTask(text){
   if(lower.indexOf("```")>=0)tasks.code+=2;
   return tasks;
 }
+/* Weighs the WHOLE conversation, not just the message that was just sent -
+   scoring only the latest message meant a short reply like "yeah, do that"
+   or "looks good, what about error handling" carried almost no keyword
+   signal on its own and could tip the router toward a cheap generic model
+   in the middle of an otherwise heavily code- or research-flavored thread.
+   Each user turn contributes analyzeTask() scaled by recency (the latest
+   message counts in full, each one before it counts half as much as the
+   one after it) so a real topic change still moves the decision within a
+   couple of messages, while one throwaway reply can't erase everything the
+   conversation has been about. Capped to the last 8 user turns - decay
+   alone already makes anything further back negligible, this just avoids
+   re-scanning an entire long conversation on every send.
+
+   Repo/GitHub-flavored turns (the same .github>0 signal that diverts a
+   message to the dedicated coding agent in doSendRequest) are excluded
+   entirely, not just left uncounted - repo work always runs on its own
+   agent independent of whatever model the main chat is using, and letting
+   those turns' complexity linger in this window would quietly undo that:
+   several GitHub turns in a row could out-pull the main chat's model
+   toward a bigger/pricier one for an unrelated message that follows,
+   exactly the coupling this window is supposed to leave broken. */
+function analyzeConversationTasks(){
+  var recent=chatHistory.filter(function(m){
+    return m.role==="user"&&analyzeTask(m.content).github===0;
+  }).slice(-8);
+  var merged={github:0,code:0,write:0,reason:0,analyze:0,search:0};
+  var n=recent.length;
+  recent.forEach(function(m,i){
+    var weight=Math.pow(0.5,n-1-i);
+    var t=analyzeTask(m.content);
+    Object.keys(merged).forEach(function(k){merged[k]+=t[k]*weight;});
+  });
+  return merged;
+}
 function scoreModelForTask(model,tasks){
   var score=50;
   var capStr=(model.id+" "+model.label+" "+(model.desc||"")).toLowerCase();
@@ -1611,10 +1645,10 @@ function showModelConfirmedStay(){
   btn.classList.add("confirmed");
   setTimeout(function(){btn.classList.remove("confirmed");},900);
 }
-async function switchToBestModel(text){
+async function switchToBestModel(){
   if(!agentAutoSelect)return;
   if(switchSuggestionCooldown>0){switchSuggestionCooldown--;return;}
-  var tasks=analyzeTask(text);
+  var tasks=analyzeConversationTasks();
   var best=selectBestModel(tasks);
   if(!best){consecutiveSameModelStreak++;showModelConfirmedStay();return;}
   best.reason=tasks;
@@ -4874,10 +4908,10 @@ async function send(){
     var overseerBtnEl=document.getElementById("overseerBtn");
     overseerBtnEl.classList.add("thinking");
     var minThinkDelay=new Promise(function(res){setTimeout(res,450);});
-    await Promise.all([switchToBestModel(outgoingText),minThinkDelay]);
+    await Promise.all([switchToBestModel(),minThinkDelay]);
     overseerBtnEl.classList.remove("thinking");
   }else if(!hasImg&&chatHistory.length>1){
-    await switchToBestModel(outgoingText);
+    await switchToBestModel();
   }
   await doSendRequest(userContent,false,ap);
 }
