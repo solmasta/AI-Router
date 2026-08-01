@@ -81,10 +81,21 @@ async function handleGitHubOp(body, env) {
   // without this, anyone holding the shared secret (see claude-worker's
   // /secret comment) could point this worker at any repo the GITHUB_TOKEN
   // can reach, not just the one this project intends to operate on.
+  // Supported ALLOWED_REPOS entries:
+  // - owner/repo (exact)
+  // - owner/* (all repos for that owner)
+  // - * (all repos reachable by the token)
   const allowedRepos = (env.ALLOWED_REPOS || "")
     .split(",").map(r => r.trim().toLowerCase()).filter(Boolean);
-  const requested = `${owner}/${repo}`.toLowerCase();
-  if (allowedRepos.length === 0 || !allowedRepos.includes(requested)) {
+  const requestedOwner = owner.toLowerCase();
+  const requestedRepo = repo.toLowerCase();
+  const requested = `${requestedOwner}/${requestedRepo}`;
+  const allowed = allowedRepos.some(entry => {
+    if (entry === "*") return true;
+    if (entry.endsWith("/*")) return requestedOwner === entry.slice(0, -2);
+    return entry === requested;
+  });
+  if (allowedRepos.length === 0 || !allowed) {
     return { error: `Repo ${owner}/${repo} is not in the allowlist` };
   }
 
