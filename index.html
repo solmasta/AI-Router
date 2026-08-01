@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.79</span></span>
+      <span class="wm">ai-router <span>v5.80</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -550,7 +550,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.79</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.80</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -2236,20 +2236,20 @@ function generateOptimalInstructions(userMessage,selectedModel){
 
   if(taskAnalysis.code>0){
     instructions+="CODING TASK - Approach:\n";
-    instructions+="1. Read the relevant files first to understand current implementation\n";
+    instructions+="1. Understand the current implementation before making changes\n";
     instructions+="2. Identify the specific issue or requirement\n";
     instructions+="3. Write COMPLETE, working code (not snippets or pseudo-code)\n";
-    instructions+="4. If using tools: read_file → write_file with git commit message\n";
-    instructions+="5. Commit message should be clear and descriptive\n\n";
+    instructions+="4. Explain your changes clearly so they can be applied\n";
+    instructions+="5. Describe the intent behind each change\n\n";
   }
 
   if(taskAnalysis.github>0){
     instructions+="GITHUB/REPO TASK - Workflow:\n";
-    instructions+="1. Use read_file to examine current repository state\n";
+    instructions+="1. Ask for or work with the relevant file contents provided\n";
     instructions+="2. Understand the file structure and current implementation\n";
-    instructions+="3. Make all changes via write_file with clear commit messages\n";
-    instructions+="4. Each write_file operation creates one atomic commit\n";
-    instructions+="5. Include commit messages that explain the 'why', not just 'what'\n\n";
+    instructions+="3. Provide complete, ready-to-apply changes with clear explanations\n";
+    instructions+="4. Each change should be atomic and well-described\n";
+    instructions+="5. Explain the 'why' behind each change, not just 'what'\n\n";
   }
 
   if(taskAnalysis.write>0){
