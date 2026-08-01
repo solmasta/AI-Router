@@ -72,7 +72,7 @@ This Worker is what lets the app read files, write commits, list directories, an
 1. Create another Worker and deploy `workers/github-ops-worker/github-ops-worker.js` to it - or run `npx wrangler deploy --config workers/github-ops-worker/wrangler.jsonc` from this repo. If you use Cloudflare's Git integration instead of manual `wrangler deploy`, set that project's **Root directory** to `workers/github-ops-worker`.
 2. Add a secret named `GITHUB_TOKEN` containing a GitHub personal access token with the repo permissions you want this app to use.
 3. Add a secret named `APP_SECRET` with the **same** string from step 1 of Setup.
-4. In `workers/github-ops-worker/wrangler.jsonc`, set `ALLOWED_REPOS` to a comma-separated list of the exact `owner/repo` pairs this Worker is allowed to touch. The default is just `solmasta/openai-router`.
+4. In `workers/github-ops-worker/wrangler.jsonc`, set `ALLOWED_REPOS` to a comma-separated allowlist. Supported entries: exact `owner/repo`, `owner/*` for all repos under one owner, or `*` for all repos the token can reach. The default is `solmasta/*`.
 5. Deploy and copy the Worker URL.
 
 ### 7. Point the frontend at your Workers

@@ -2,10 +2,12 @@
   "name": "github-ops-worker",
   "main": "github-ops-worker.js",
   "compatibility_date": "2025-09-23",
-  // Comma-separated "owner/repo" pairs this worker is allowed to write to.
-  // Update if this worker should ever operate on additional repos.
+  // Comma-separated allowlist entries:
+  // - owner/repo (exact)
+  // - owner/* (all repos for one owner)
+  // - * (all repos reachable by the token)
   "vars": {
-    "ALLOWED_REPOS": "solmasta/openai-router"
+    "ALLOWED_REPOS": "solmasta/*"
   },
   "observability": {
     "enabled": true,
