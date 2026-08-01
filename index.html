@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.85</span></span>
+      <span class="wm">ai-router <span>v5.86</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -549,7 +549,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.85</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.86</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -587,6 +587,11 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
      nothing for the user to tap. -->
 <div class="undo-toast hidden" id="updateToast" style="bottom:140px;max-width:calc(100vw - 32px);white-space:normal;flex-wrap:wrap;justify-content:center;text-align:center">
   <span id="updateToastText">&#9989; Updated</span>
+</div>
+
+<!-- General message toast (replaces browser alert() dialogs) -->
+<div class="undo-toast hidden" id="msgToast" style="max-width:calc(100vw - 32px);white-space:pre-wrap;flex-direction:column;text-align:center;cursor:pointer">
+  <span id="msgToastText"></span>
 </div>
 
 <!-- Recent Chats modal -->
@@ -638,16 +643,16 @@ function switchProfile(name){
 }
 function createProfile(name){
   name=(name||"").trim().toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,24);
-  if(!name){alert("Enter a valid name (letters/numbers).");return;}
+  if(!name){showToast("Enter a valid name (letters/numbers).");return;}
   var names=listProfiles();
-  if(names.indexOf(name)>=0){alert("A profile with that name already exists.");return;}
+  if(names.indexOf(name)>=0){showToast("A profile with that name already exists.");return;}
   names.push(name);
   saveProfilesList(names);
   switchProfile(name);
 }
 function deleteProfile(name){
-  if(name==="default"){alert("Can't delete the default profile.");return;}
-  if(name===activeProfile){alert("Switch to a different profile before deleting this one.");return;}
+  if(name==="default"){showToast("Can't delete the default profile.");return;}
+  if(name===activeProfile){showToast("Switch to a different profile before deleting this one.");return;}
   if(!confirm("Delete profile \""+name+"\"? This removes its chats, memories, prompts, and Drive connection permanently."))return;
   PROFILE_DATA_KEYS.forEach(function(k){localStorage.removeItem("prof_"+name+"__"+k);});
   var names=listProfiles().filter(function(n){return n!==name;});
@@ -1266,6 +1271,19 @@ function saveToRecent(){
     localStorage.setItem(pk(RECENT_KEY),JSON.stringify(recent));
   }catch(e){}
 }
+var msgToastTimer=null;
+function showToast(msg){
+  var el=document.getElementById("msgToast");
+  document.getElementById("msgToastText").textContent=msg;
+  el.classList.remove("hidden");
+  if(msgToastTimer)clearTimeout(msgToastTimer);
+  var dur=Math.min(Math.max(4000,msg.length*40),15000);
+  msgToastTimer=setTimeout(function(){el.classList.add("hidden");},dur);
+}
+document.getElementById("msgToast").addEventListener("click",function(){
+  if(msgToastTimer){clearTimeout(msgToastTimer);msgToastTimer=null;}
+  this.classList.add("hidden");
+});
 function showUndoToast(){
   var toast=document.getElementById("undoToast");
   var bar=document.getElementById("undoProgress");
@@ -2959,7 +2977,7 @@ function importDefaults(){
     }
   });
   savePrompts();refreshPL();renderPromptList();
-  alert(added>0?(added+" prompt"+(added!==1?"s":"")+" imported!"):"All defaults already loaded.");
+  showToast(added>0?(added+" prompt"+(added!==1?"s":"")+" imported!"):"All defaults already loaded.");
 }
 
 /* ---- Projects ---- */
@@ -3022,7 +3040,7 @@ function renderConvsList(proj,filter){
   });
 }
 function saveCurrentChat(projId){
-  if(!chatHistory.length){alert("No conversation to save.");return;}
+  if(!chatHistory.length){showToast("No conversation to save.");return;}
   var proj=projects.find(function(p){return p.id===projId;});
   var first=chatHistory.find(function(m){return m.role==="user";});
   var raw=typeof first.content==="string"?first.content:((first.content&&first.content.find&&first.content.find(function(c){return c.type==="text";})||{}).text||"Chat");
@@ -3033,7 +3051,7 @@ function saveCurrentChat(projId){
     savedAt:Date.now(),modelId:currentModel.id,modelLabel:currentModel.label,
     messages:chatHistory.map(function(m){return{role:m.role,content:typeof m.content==="string"?m.content:((m.content&&m.content.find&&m.content.find(function(c){return c.type==="text";})||{}).text||"")};})
   });
-  saveProjects();closeModal("projectsModal");alert("Saved!");
+  saveProjects();closeModal("projectsModal");showToast("Saved!");
 }
 function loadConv(conv){
   if(chatHistory.length&&!confirm("Load this chat? Current chat will be cleared."))return;
@@ -3535,7 +3553,7 @@ function showProjectSuggestion(){
     var result=await generateProjectFromConversation();
     if(!result){
       save.disabled=false;save.textContent="Save as Project";
-      alert("Couldn't generate a project summary - try again.");
+      showToast("Couldn't generate a project summary - try again.");
       return;
     }
     createProjectFromTool(result.name,result.instructions);
@@ -3680,26 +3698,26 @@ function driveInitClient(){
          here rather than through the main callback - without this handler
          they are silently dropped and the button appears to do nothing. */
       var msg=(err&&(err.message||err.type))||JSON.stringify(err)||"unknown error";
-      alert("Google Drive connect failed: "+msg);
+      showToast("Google Drive connect failed: "+msg);
     },
     callback:async function(resp){
       if(!resp||!resp.code){
         /* The popup closed without a code - surface any error Google
            returned so the user knows why it didn't work. */
-        if(resp&&resp.error){alert("Google Drive connect failed: "+driveErrText(resp.error_description||resp.error));}
+        if(resp&&resp.error){showToast("Google Drive connect failed: "+driveErrText(resp.error_description||resp.error));}
         return;
       }
       try{
         await ensureAppSecret();
         var res=await fetch(DRIVE_AUTH_URL+"/exchange",{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({code:resp.code})});
         var data=await res.json();
-        if(!res.ok||!data.access_token){alert("Google Drive connect failed: "+driveErrText(data.error));return;}
+        if(!res.ok||!data.access_token){showToast("Google Drive connect failed: "+driveErrText(data.error));return;}
         driveSaveToken(data.access_token,data.expires_in);
         if(data.refresh_token)driveSaveRefreshToken(data.refresh_token);
         localStorage.setItem(pk("drive_connected"),"1");
         updateDriveUI(true);
         driveHandleFreshConnect();
-      }catch(e){alert("Google Drive connect failed: "+e.message);}
+      }catch(e){showToast("Google Drive connect failed: "+e.message);}
     }
   });
 }
@@ -3765,9 +3783,9 @@ function driveErrText(err){
 function driveConnect(){
   try{
     driveInitClient();
-    if(!driveTokenClient){alert("Google sign-in is still loading - try again in a second.");return;}
+    if(!driveTokenClient){showToast("Google sign-in is still loading - try again in a second.");return;}
     driveTokenClient.requestCode();
-  }catch(e){alert("Google Drive connect failed: "+e.message);}
+  }catch(e){showToast("Google Drive connect failed: "+e.message);}
 }
 function driveDisconnect(){
   driveToken=null;driveTokenExpiry=0;driveFolderId=null;driveFileIds={};driveRefreshToken=null;
@@ -3923,7 +3941,7 @@ async function driveRestore(){
     var failed;
     if(!anyFound){
       var legacyId=await driveFindLegacyFile();
-      if(!legacyId){alert("No backup found in Drive yet.");return;}
+      if(!legacyId){showToast("No backup found in Drive yet.");return;}
       var lres=await fetch("https://www.googleapis.com/drive/v3/files/"+legacyId+"?alt=media",{headers:{Authorization:"Bearer "+driveToken}});
       var ldata=await lres.json();
       failed=await driveApplyRestoredData(ldata);
@@ -3934,12 +3952,12 @@ async function driveRestore(){
       });
     }
     if(failed.length){
-      alert("Restored, but your browser's storage is full - couldn't fit: "+failed.join(", ")+". Free up space (Settings > clear old chats/docs) and tap Restore again to pick those up.");
+      showToast("Restored, but your browser's storage is full - couldn't fit: "+failed.join(", ")+". Free up space (Settings > clear old chats/docs) and tap Restore again to pick those up.");
     }else{
-      alert("Restored from Google Drive!");
+      showToast("Restored from Google Drive!");
     }
-    location.reload();
-  }catch(e){alert("Restore failed: "+e.message);}
+    setTimeout(function(){location.reload();},2000);
+  }catch(e){showToast("Restore failed: "+e.message);}
 }
 /* Shared by driveAutoRestoreIfEmpty (never auto-restore over real local
    data) and the page-load block below (proactively push real local data
@@ -4039,23 +4057,23 @@ document.getElementById("driveFetchFromDriveBtn").addEventListener("click",async
      is automated; Import still requires its own tap so there's always a
      review before anything is applied. */
   if(!(await driveEnsureToken())){
-    alert("Not connected to Google Drive (or the connection expired) - connect in Settings first, or paste the file's content in below instead.");
+    showToast("Not connected to Google Drive (or the connection expired) - connect in Settings first, or paste the file's content in below instead.");
     return;
   }
   var btn=this;btn.disabled=true;btn.textContent="Fetching…";
   try{
     var folderId=driveFolderId||await driveEnsureFolder();
-    if(!folderId){alert("Couldn't reach the Drive folder - check your connection, or paste the file's content in below instead.");return;}
+    if(!folderId){showToast("Couldn't reach the Drive folder - check your connection, or paste the file's content in below instead.");return;}
     var type=document.getElementById("driveImportType").value;
     var filename=DRIVE_FILES[type];
     var data=await driveDownloadNamedFile(filename);
     if(data===null||data===undefined){
-      alert("Couldn't find \""+filename+"\" in the connected Drive folder - it may not exist yet, or paste its content in below instead.");
+      showToast("Couldn't find \""+filename+"\" in the connected Drive folder - it may not exist yet, or paste its content in below instead.");
       return;
     }
     document.getElementById("driveImportText").value=JSON.stringify(data,null,2);
   }catch(e){
-    alert("Fetch failed: "+e.message+" - paste the file's content in below instead.");
+    showToast("Fetch failed: "+e.message+" - paste the file's content in below instead.");
   }finally{
     btn.disabled=false;btn.textContent="Fetch from Drive";
   }
@@ -4063,9 +4081,9 @@ document.getElementById("driveFetchFromDriveBtn").addEventListener("click",async
 document.getElementById("driveManualImportApplyBtn").addEventListener("click",function(){
   var type=document.getElementById("driveImportType").value;
   var raw=document.getElementById("driveImportText").value.trim();
-  if(!raw){alert("Paste the file's content first.");return;}
+  if(!raw){showToast("Paste the file's content first.");return;}
   var parsed;
-  try{parsed=JSON.parse(raw);}catch(e){alert("That's not valid JSON - make sure you copied the file's full raw content.");return;}
+  try{parsed=JSON.parse(raw);}catch(e){showToast("That's not valid JSON - make sure you copied the file's full raw content.");return;}
   var localKey=DRIVE_LOCAL_KEYS[type];
   try{
     if(type==="autosave"){
@@ -4079,13 +4097,13 @@ document.getElementById("driveManualImportApplyBtn").addEventListener("click",fu
       localStorage.setItem(pk(localKey),JSON.stringify(parsed));
     }
   }catch(e){
-    if(e.name==="QuotaExceededError")alert("Import failed: your browser's storage is full and this data doesn't fit. Free up space (Settings > clear old chats/docs) and try again.");
-    else alert("Import failed: "+e.message);
+    if(e.name==="QuotaExceededError")showToast("Import failed: your browser's storage is full and this data doesn't fit. Free up space (Settings > clear old chats/docs) and try again.");
+    else showToast("Import failed: "+e.message);
     return;
   }
   closeModal("driveManualImportModal");
-  alert("Imported. Reloading now.");
-  location.reload();
+  showToast("Imported. Reloading…");
+  setTimeout(function(){location.reload();},1500);
 });
 /* Pin the exact Drive folder by ID instead of trusting name-based search -
    that search is what created a second "ai-router-backups" folder in the
@@ -4118,11 +4136,11 @@ document.getElementById("driveFolderSetBtn").addEventListener("click",function()
     localStorage.removeItem(pk("drive_folder_id"));
     driveFolderId=null;
     updateDriveFolderStatus();
-    alert("Reverted to automatic folder detection.");
+    showToast("Reverted to automatic folder detection.");
     return;
   }
   var id=extractDriveFolderId(input);
-  if(!id){alert("Couldn't find a folder ID in that - paste the full Drive folder URL or just its ID.");return;}
+  if(!id){showToast("Couldn't find a folder ID in that - paste the full Drive folder URL or just its ID.");return;}
   localStorage.setItem(pk("drive_folder_id_locked"),id);
   localStorage.setItem(pk("drive_folder_id"),id);
   driveFolderId=id;
@@ -4132,7 +4150,7 @@ document.getElementById("driveFolderSetBtn").addEventListener("click",function()
      file IDs inside the newly-locked folder. */
   driveFileIds={};localStorage.setItem(pk("drive_file_ids"),JSON.stringify({}));
   updateDriveFolderStatus();
-  alert("Drive folder locked in. Backups and restores will use this exact folder from now on.");
+  showToast("Drive folder locked in. Backups and restores will use this exact folder from now on.");
 });
 /* Jumps straight to the actual "ai-router-backups" folder instead of
    making the user search Drive for it by name - uses the same cached
@@ -4196,9 +4214,9 @@ async function handleInstallClick(){
     await deferredInstallPrompt.userChoice;
     deferredInstallPrompt=null;updateInstallUI();
   }else if(isIOS){
-    alert("To install on iPhone/iPad:\n\n1. Tap the Share button in Safari (square with an arrow)\n2. Scroll down and tap \"Add to Home Screen\"\n3. Tap \"Add\"\n\nIt will then open full-screen from your home screen like a native app.");
+    showToast("To install on iPhone/iPad:\n\n1. Tap the Share button in Safari (square with an arrow)\n2. Scroll down and tap \"Add to Home Screen\"\n3. Tap \"Add\"\n\nIt will then open full-screen from your home screen like a native app.");
   }else{
-    alert("To install:\n\nOpen your browser menu (usually three dots) and look for \"Install app\" or \"Add to Home screen\".");
+    showToast("To install:\n\nOpen your browser menu (usually three dots) and look for \"Install app\" or \"Add to Home screen\".");
   }
 }
 document.getElementById("installBtn").addEventListener("click",handleInstallClick);
@@ -4232,24 +4250,24 @@ async function exportBackup(){
   var blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
   var filename="ai-router-backup-"+new Date().toISOString().slice(0,10)+".json";
   var outcome=await shareOrDownload(blob,filename,"application/json");
-  if(outcome==="downloaded")alert("Saved to your Downloads folder as "+filename);
+  if(outcome==="downloaded")showToast("Saved to your Downloads folder as "+filename);
 }
 function importBackup(file){
   var reader=new FileReader();
   reader.onload=function(e){
     try{
-      var data=JSON.parse(e.target.result);if(!data.version){alert("Invalid backup.");return;}
+      var data=JSON.parse(e.target.result);if(!data.version){showToast("Invalid backup.");return;}
       if(data.prompts&&Object.keys(data.prompts).length){localStorage.setItem(pk("ai_prompts"),JSON.stringify(data.prompts));loadPrompts();}
       if(data.projects&&data.projects.length){localStorage.setItem(pk("ai_projects"),JSON.stringify(data.projects));loadProjects();}
       if(data.workprojects&&data.workprojects.length){localStorage.setItem(pk("ai_workprojects"),JSON.stringify(data.workprojects));loadWProjects();}
       if(data.autosave)localStorage.setItem(pk("ai_autosave"),data.autosave);
-      alert("Backup restored!");renderProjectList();
-    }catch(err){alert("Error: "+err.message);}
+      showToast("Backup restored!");renderProjectList();
+    }catch(err){showToast("Error: "+err.message);}
   };
   reader.readAsText(file);
 }
 async function exportChat(){
-  if(!chatHistory.length){alert("No conversation to export.");return;}
+  if(!chatHistory.length){showToast("No conversation to export.");return;}
   var lines=["# ai-router conversation","","Model: "+currentModel.label,"Date: "+new Date().toLocaleString(),"---",""];
   chatHistory.forEach(function(m){
     var role=m.role==="user"?"**You**":"**"+currentModel.label+"**";
@@ -4259,7 +4277,7 @@ async function exportChat(){
   var blob=new Blob([lines.join("\n")],{type:"text/markdown"});
   var filename="chat-"+new Date().toISOString().slice(0,10)+".md";
   var outcome=await shareOrDownload(blob,filename,"text/markdown");
-  if(outcome==="downloaded")alert("Saved to your Downloads folder as "+filename);
+  if(outcome==="downloaded")showToast("Saved to your Downloads folder as "+filename);
 }
 function shareChat(){
   var lines=[];
@@ -4270,7 +4288,7 @@ function shareChat(){
   });
   var text=lines.join("\n\n");
   if(navigator.share){navigator.share({title:"ai-router chat",text:text}).catch(function(){});}
-  else{navigator.clipboard.writeText(text).then(function(){alert("Copied to clipboard!");});}
+  else{navigator.clipboard.writeText(text).then(function(){showToast("Copied to clipboard!");});}
 }
 
 /* ---- Web search ---- */
@@ -4315,7 +4333,7 @@ document.getElementById("githubConnectBtn").addEventListener("click",function(){
 document.getElementById("githubSaveBtn").addEventListener("click",function(){
   var owner=document.getElementById("ghOwnerInput").value.trim();
   var repo=document.getElementById("ghRepoInput").value.trim();
-  if(!owner||!repo){alert("Enter both the repo owner and repo name.");return;}
+  if(!owner||!repo){showToast("Enter both the repo owner and repo name.");return;}
   localStorage.setItem(pk("gh_repo_owner"),owner);
   localStorage.setItem(pk("gh_repo_name"),repo);
   saveRecentRepo(owner,repo);
@@ -4448,7 +4466,7 @@ document.getElementById("brainstormBtn").addEventListener("click",function(){
   cmds.forEach(function(c){
     msg+="$ "+c.cmd+"\n";
   });
-  alert(msg);
+  showToast(msg);
 });
 function buildOverseerReportText(){
   var msg="📊 OVERSEER INTELLIGENCE REPORT\n";
@@ -4731,7 +4749,7 @@ document.getElementById("fileInput").addEventListener("change",async function(e)
     }
   }
   renderAttach();
-  if(failedNames.length){alert("Couldn't attach: "+failedNames.join(", ")+"\n\nUnsupported or unreadable file format.");}
+  if(failedNames.length){showToast("Couldn't attach: "+failedNames.join(", ")+"\n\nUnsupported or unreadable file format.");}
 });
 document.getElementById("tempSlider").addEventListener("input",function(){
   temperature=parseFloat(this.value);
@@ -4907,7 +4925,7 @@ async function send(){
     document.getElementById("sendBtn").disabled=false;
     document.getElementById("sendBtn").textContent="Send";
     document.getElementById("sendBtn").style.background="";
-    alert("This message is too large for "+currentModel.label+"'s context window ("+afterPct+"% full even after summarizing earlier messages). Try a shorter message, split it into parts, or tap Clear to start a fresh conversation.");
+    showToast("This message is too large for "+currentModel.label+"'s context window ("+afterPct+"% full even after summarizing earlier messages). Try a shorter message, split it into parts, or tap Clear to start a fresh conversation.");
     return;
   }
 
@@ -5332,10 +5350,10 @@ document.getElementById("activeProfileLabel").textContent=activeProfile==="defau
       updateDriveStatus("Reconnect needed - backup paused");
       /* The status text alone only gets seen if the user happens to open
          Settings - the whole point of this fix is that backup can go quiet
-         with nothing to prompt a check. An alert() here is a genuine
+         with nothing to prompt a check. showToast() here is a genuine
          response to a real page load (this isn't the auto-popup case above
          that browsers block), so it's safe to show without a click. */
-      alert("Google Drive backup is paused - your connection expired and couldn't be silently renewed. Reconnect in Settings to resume backing up and restore your latest data.");
+      showToast("Google Drive backup is paused - your connection expired and couldn't be silently renewed. Reconnect in Settings to resume backing up and restore your latest data.");
     }
   }else{
     updateDriveUI(false);

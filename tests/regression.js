@@ -323,12 +323,11 @@ function assert(cond, label) {
   // recover from short of a reload.
   const corruptImgPath = path.join(os.tmpdir(), 'regression_corrupt.png');
   fs.writeFileSync(corruptImgPath, Buffer.from('this is not a real png file, just garbage bytes'));
-  let dialogMessage = null;
-  page.once('dialog', async (dialog) => { dialogMessage = dialog.message(); await dialog.accept(); });
   const fileInputBad = await page.$('#fileInput');
   await fileInputBad.setInputFiles({ name: 'corrupt.png', mimeType: 'image/png', buffer: fs.readFileSync(corruptImgPath) });
   await page.waitForTimeout(1500);
-  assert(!!dialogMessage && dialogMessage.indexOf('corrupt.png') >= 0, `an undecodable image triggers a clear error naming the file (got dialog: ${JSON.stringify(dialogMessage)})`);
+  const corruptToastMsg = await page.textContent('#msgToastText');
+  assert(!!corruptToastMsg && corruptToastMsg.indexOf('corrupt.png') >= 0, `an undecodable image triggers a clear error naming the file (got toast: ${JSON.stringify(corruptToastMsg)})`);
   const attachCountAfterBadFile = await page.evaluate(() => document.querySelectorAll('#attachItems .ai').length);
   assert(attachCountAfterBadFile === 0, 'the undecodable file itself is not added to the attachment list');
   // The app must still work normally afterward - one bad file shouldn't leave anything stuck.
@@ -606,9 +605,8 @@ function assert(cond, label) {
   await page.click('#driveManualImportBtn'); await page.waitForTimeout(150);
   await page.selectOption('#driveImportType', 'workprojects');
   await page.fill('#driveImportText', JSON.stringify(importedProjects));
-  page.once('dialog', (dialog) => dialog.accept());
   await Promise.all([page.waitForNavigation({ timeout: 8000 }).catch(() => {}), page.click('#driveManualImportApplyBtn')]);
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(2000);
   const importedRaw = await page.evaluate(() => localStorage.getItem(Object.keys(localStorage).find((k) => k.indexOf('ai_workprojects') >= 0)));
   const importedParsed = importedRaw ? JSON.parse(importedRaw) : null;
   assert(importedParsed && importedParsed.length === 1 && importedParsed[0].id === 'regtestImported', `manually imported workprojects data is written to localStorage (got ${importedRaw})`);
@@ -618,15 +616,14 @@ function assert(cond, label) {
   // instead of making the user copy its content out of the Drive app by
   // hand - but this sandbox has no real Google OAuth, so the only
   // reachable path here is the guard: with no Drive connection at all,
-  // it must alert and leave the textarea untouched rather than silently
+  // it must show a toast and leave the textarea untouched rather than silently
   // failing or hanging.
   await page.click('#settingsBtn'); await page.waitForTimeout(150);
   await page.click('#driveManualImportBtn'); await page.waitForTimeout(150);
-  let fetchGuardDialogMessage = null;
-  page.once('dialog', async (dialog) => { fetchGuardDialogMessage = dialog.message(); await dialog.accept(); });
   await page.click('#driveFetchFromDriveBtn');
   await page.waitForTimeout(300);
-  assert(!!fetchGuardDialogMessage && fetchGuardDialogMessage.toLowerCase().indexOf('not connected') >= 0, `Fetch from Drive alerts when there's no Drive connection (got ${JSON.stringify(fetchGuardDialogMessage)})`);
+  const fetchGuardToastMessage = await page.textContent('#msgToastText');
+  assert(!!fetchGuardToastMessage && fetchGuardToastMessage.toLowerCase().indexOf('not connected') >= 0, `Fetch from Drive shows a toast when there's no Drive connection (got ${JSON.stringify(fetchGuardToastMessage)})`);
   const importTextAfterFailedFetch = await page.inputValue('#driveImportText');
   assert(importTextAfterFailedFetch === '', 'the textarea stays empty when the fetch is blocked by the connection guard');
   await page.click('#closeDriveManualImportModal'); await page.waitForTimeout(150);
