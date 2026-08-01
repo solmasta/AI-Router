@@ -1,4 +1,4 @@
-name = "openaiworker"
+name = "openrouter-worker"
 main = "openrouter-worker.js"
 compatibility_date = "2025-09-23"
 

@@ -71,7 +71,7 @@ In `index.html`, find these lines near the top of the `<script>` block:
 
 ```js
 var DI_URL="https://openai-router-chat.lukedorsett.workers.dev";
-var OR_URL="https://openaiworker.lukedorsett.workers.dev";
+var OR_URL="https://openrouter-worker.lukedorsett.workers.dev";
 var CLAUDE_URL="https://claude-worker.lukedorsett.workers.dev";
 var DRIVE_AUTH_URL="https://drive-auth-worker.lukedorsett.workers.dev";
 var APP_SECRET="CHANGE_ME_APP_SECRET";

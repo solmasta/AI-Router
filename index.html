@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.77</span></span>
+      <span class="wm">ai-router <span>v5.78</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -550,7 +550,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.77</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.78</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -602,7 +602,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <script>
 (function(){
 var DI_URL="https://openai-router-chat.lukedorsett.workers.dev";
-var OR_URL="https://openaiworker.lukedorsett.workers.dev";
+var OR_URL="https://openrouter-worker.lukedorsett.workers.dev";
 var CLAUDE_URL="https://claude-worker.lukedorsett.workers.dev";
 var DRIVE_AUTH_URL="https://ai-router-drive.lukedorsett.workers.dev";
 /* APP_SECRET is fetched from worker's /secret endpoint on page load */
@@ -2418,6 +2418,75 @@ async function executeRepoTool(toolName,toolInput){
     }
     return{error:"Unknown tool"};
   }catch(e){return{error:e.message};}
+}
+/* Executes one model-issued tool call and returns its result text - shared
+   by the Overseer chat and the main chat, which each used to carry their
+   own near-identical copy of this exact dispatch (same confirm dialogs,
+   same executeRepoTool calls, same app-control tool handlers). That
+   duplication was the actual risk, not just extra lines - a fix landing in
+   one copy and not the other (as nearly happened with the HTML-escaping
+   fix elsewhere in this file) would be silent and easy to miss.
+   renderStatus updates whichever transient "in progress" bubble the caller
+   is driving (the Overseer chat log's bubble vs the main chat's reply
+   bubble); logTarget is forwarded to displayToolExecution unchanged
+   (undefined for the main chat, "overseerChatLog" for the Overseer chat).
+   The coding agent's own dispatch (runCodingAgentRound) stays separate - it
+   drives a different, cumulative console UI and only ever sees the 4 repo
+   tools, never the app-control ones, so folding it in here would trade a
+   real duplication for a worse one: one function serving two incompatible
+   UI shapes. */
+async function executeToolCall(toolName,toolArgs,renderStatus,logTarget){
+  if(toolName==="web_search"){
+    renderStatus('<span style="color:var(--mu);font-size:13px">🔍 Searching: '+esc(toolArgs.query||"")+'&#8230;</span>');
+    var searchResult=await doSearch(toolArgs.query||"");
+    displayToolExecution("web_search",toolArgs,{success:true},logTarget);
+    return{toolResult:searchResult||"No results found",searchUsed:!!searchResult};
+  }else if(toolName==="read_file"){
+    renderStatus('<span style="color:var(--mu);font-size:13px">📖 Reading: '+esc(toolArgs.path||"")+'&#8230;</span>');
+    var readRes=await executeRepoTool("read_file",toolArgs);
+    displayToolExecution("read_file",toolArgs,readRes,logTarget);
+    return{toolResult:readRes.success?readRes.content:(readRes.error||"Failed to read file")};
+  }else if(toolName==="write_file"){
+    renderStatus('<span style="color:var(--mu);font-size:13px">✏️ Waiting for approval to write: '+esc(toolArgs.path||"")+'&#8230;</span>');
+    var approvedBranch=await confirmGithubWrite(toolArgs);
+    if(!approvedBranch){
+      displayToolExecution("write_file",toolArgs,{error:"Declined by user - not pushed"},logTarget);
+      return{toolResult:"The user declined this write. Do not retry the same change without asking first."};
+    }
+    toolArgs.branch=approvedBranch;
+    renderStatus('<span style="color:var(--mu);font-size:13px">✏️ Writing to branch '+esc(approvedBranch)+': '+esc(toolArgs.path||"")+'&#8230;</span>');
+    var writeRes=await executeRepoTool("write_file",toolArgs);
+    displayToolExecution("write_file",toolArgs,writeRes,logTarget);
+    return{toolResult:writeRes.success?("File written to branch '"+approvedBranch+"'. Commit: "+writeRes.commit):(writeRes.error||"Failed to write file")};
+  }else if(toolName==="list_files"){
+    var listRes=await executeRepoTool("list_files",toolArgs);
+    displayToolExecution("list_files",toolArgs,listRes,logTarget);
+    return{toolResult:listRes.success?JSON.stringify(listRes.files):(listRes.error||"Failed to list files")};
+  }else if(toolName==="merge_branch"){
+    renderStatus('<span style="color:var(--mu);font-size:13px">⚡ Waiting for approval to merge: '+esc(toolArgs.branch||"")+'&#8230;</span>');
+    var approvedMerge=await confirmGithubMerge(toolArgs);
+    if(!approvedMerge){
+      displayToolExecution("merge_branch",toolArgs,{error:"Declined by user - not merged"},logTarget);
+      return{toolResult:"The user declined this merge. Do not retry without asking first."};
+    }
+    renderStatus('<span style="color:var(--mu);font-size:13px">⚡ Merging '+esc(toolArgs.branch||"")+' into the default branch&#8230;</span>');
+    var mergeRes=await executeRepoTool("merge_branch",toolArgs);
+    displayToolExecution("merge_branch",toolArgs,mergeRes,logTarget);
+    return{toolResult:mergeRes.success?("Merged branch '"+toolArgs.branch+"' into the default branch via PR #"+mergeRes.prNumber+" ("+mergeRes.prUrl+")."):(mergeRes.error||"Failed to merge")};
+  }else if(toolName==="create_project"){
+    var cpRes=createProjectFromTool(toolArgs.name,toolArgs.instructions);
+    displayToolExecution("create_project",toolArgs,cpRes,logTarget);
+    return{toolResult:cpRes.success?("Created project \""+toolArgs.name+"\" and set it as the active project - this conversation will be saved under it from now on."):(cpRes.error||"Failed to create project")};
+  }else if(toolName==="switch_model"){
+    var smRes=await switchModelFromTool(toolArgs.model_id);
+    displayToolExecution("switch_model",toolArgs,smRes,logTarget);
+    return{toolResult:smRes.success?("Switched to "+smRes.label+"."):(smRes.error||"Failed to switch model")};
+  }else if(toolName==="remember"){
+    addMemory(toolArgs.fact);
+    displayToolExecution("remember",toolArgs,{success:true},logTarget);
+    return{toolResult:"Remembered: "+toolArgs.fact};
+  }
+  return{toolResult:"No result"};
 }
 
 /* ---- Dedicated coding agent ----
@@ -4513,55 +4582,8 @@ async function sendOverseerChatMsg(){
           var tc=p1choice.message.tool_calls[ti];
           var toolName=tc["function"].name;
           var toolArgs=JSON.parse(tc["function"].arguments||"{}");
-          var toolResult=null;
-          if(toolName==="read_file"){
-            body.innerHTML='<span style="color:var(--mu);font-size:13px">📖 Reading: '+esc(toolArgs.path||"")+'&#8230;</span>';
-            var readRes=await executeRepoTool("read_file",toolArgs);
-            displayToolExecution("read_file",toolArgs,readRes,"overseerChatLog");
-            toolResult=readRes.success?readRes.content:(readRes.error||"Failed to read file");
-          }else if(toolName==="write_file"){
-            body.innerHTML='<span style="color:var(--mu);font-size:13px">✏️ Waiting for approval to write: '+esc(toolArgs.path||"")+'&#8230;</span>';
-            var approvedBranch=await confirmGithubWrite(toolArgs);
-            if(!approvedBranch){
-              displayToolExecution("write_file",toolArgs,{error:"Declined by user - not pushed"},"overseerChatLog");
-              toolResult="The user declined this write. Do not retry the same change without asking first.";
-            }else{
-              toolArgs.branch=approvedBranch;
-              body.innerHTML='<span style="color:var(--mu);font-size:13px">✏️ Writing to branch '+esc(approvedBranch)+': '+esc(toolArgs.path||"")+'&#8230;</span>';
-              var writeRes=await executeRepoTool("write_file",toolArgs);
-              displayToolExecution("write_file",toolArgs,writeRes,"overseerChatLog");
-              toolResult=writeRes.success?("File written to branch '"+approvedBranch+"'. Commit: "+writeRes.commit):(writeRes.error||"Failed to write file");
-            }
-          }else if(toolName==="list_files"){
-            var listRes=await executeRepoTool("list_files",toolArgs);
-            displayToolExecution("list_files",toolArgs,listRes,"overseerChatLog");
-            toolResult=listRes.success?JSON.stringify(listRes.files):(listRes.error||"Failed to list files");
-          }else if(toolName==="merge_branch"){
-            body.innerHTML='<span style="color:var(--mu);font-size:13px">⚡ Waiting for approval to merge: '+esc(toolArgs.branch||"")+'&#8230;</span>';
-            var approvedMerge=await confirmGithubMerge(toolArgs);
-            if(!approvedMerge){
-              displayToolExecution("merge_branch",toolArgs,{error:"Declined by user - not merged"},"overseerChatLog");
-              toolResult="The user declined this merge. Do not retry without asking first.";
-            }else{
-              body.innerHTML='<span style="color:var(--mu);font-size:13px">⚡ Merging '+esc(toolArgs.branch||"")+' into the default branch&#8230;</span>';
-              var mergeRes=await executeRepoTool("merge_branch",toolArgs);
-              displayToolExecution("merge_branch",toolArgs,mergeRes,"overseerChatLog");
-              toolResult=mergeRes.success?("Merged branch '"+toolArgs.branch+"' into the default branch via PR #"+mergeRes.prNumber+" ("+mergeRes.prUrl+")."):(mergeRes.error||"Failed to merge");
-            }
-          }else if(toolName==="create_project"){
-            var cpRes=createProjectFromTool(toolArgs.name,toolArgs.instructions);
-            displayToolExecution("create_project",toolArgs,cpRes,"overseerChatLog");
-            toolResult=cpRes.success?("Created project \""+toolArgs.name+"\" and set it as the active project."):(cpRes.error||"Failed to create project");
-          }else if(toolName==="switch_model"){
-            var smRes=await switchModelFromTool(toolArgs.model_id);
-            displayToolExecution("switch_model",toolArgs,smRes,"overseerChatLog");
-            toolResult=smRes.success?("Switched to "+smRes.label+"."):(smRes.error||"Failed to switch model");
-          }else if(toolName==="remember"){
-            addMemory(toolArgs.fact);
-            displayToolExecution("remember",toolArgs,{success:true},"overseerChatLog");
-            toolResult="Remembered: "+toolArgs.fact;
-          }
-          msgs.push({role:"tool",tool_call_id:tc.id,content:toolResult||"No result"});
+          var toolExec=await executeToolCall(toolName,toolArgs,function(html){body.innerHTML=html;},"overseerChatLog");
+          msgs.push({role:"tool",tool_call_id:tc.id,content:toolExec.toolResult||"No result"});
         }
         body.innerHTML='<span class="cur">▇</span>';
       }
@@ -5037,61 +5059,9 @@ async function doSendRequest(userContent,isRegen,ap){
                 var tc=p1choice.message.tool_calls[ti];
                 var toolName=tc["function"].name;
                 var toolArgs=JSON.parse(tc["function"].arguments||"{}");
-                var toolResult=null;
-                if(toolName==="web_search"){
-                  asstMsg.body.innerHTML='<span style="color:var(--mu);font-size:13px">\uD83D\uDD0D Searching: '+esc(toolArgs.query||"")+'&#8230;</span>';
-                  toolResult=await doSearch(toolArgs.query||"");
-                  if(toolResult){searchUsed=true;searchTime=new Date().toLocaleTimeString();}
-                  displayToolExecution("web_search",toolArgs,{success:true});
-                  toolResult=toolResult||"No results found";
-                }else if(toolName==="read_file"){
-                  asstMsg.body.innerHTML='<span style="color:var(--mu);font-size:13px">\uD83D\uDCD6 Reading: '+esc(toolArgs.path||"")+'&#8230;</span>';
-                  var readRes=await executeRepoTool("read_file",toolArgs);
-                  displayToolExecution("read_file",toolArgs,readRes);
-                  toolResult=readRes.success?readRes.content:(readRes.error||"Failed to read file");
-                }else if(toolName==="write_file"){
-                  asstMsg.body.innerHTML='<span style="color:var(--mu);font-size:13px">\u270F\uFE0F Waiting for approval to write: '+esc(toolArgs.path||"")+'&#8230;</span>';
-                  var approvedBranch=await confirmGithubWrite(toolArgs);
-                  if(!approvedBranch){
-                    displayToolExecution("write_file",toolArgs,{error:"Declined by user - not pushed"});
-                    toolResult="The user declined this write. Do not retry the same change without asking first.";
-                  }else{
-                    toolArgs.branch=approvedBranch;
-                    asstMsg.body.innerHTML='<span style="color:var(--mu);font-size:13px">\u270F\uFE0F Writing to branch '+esc(approvedBranch)+': '+esc(toolArgs.path||"")+'&#8230;</span>';
-                    var writeRes=await executeRepoTool("write_file",toolArgs);
-                    displayToolExecution("write_file",toolArgs,writeRes);
-                    toolResult=writeRes.success?("File written to branch '"+approvedBranch+"'. Commit: "+writeRes.commit):(writeRes.error||"Failed to write file");
-                  }
-                }else if(toolName==="list_files"){
-                  var listRes=await executeRepoTool("list_files",toolArgs);
-                  displayToolExecution("list_files",toolArgs,listRes);
-                  toolResult=listRes.success?JSON.stringify(listRes.files):(listRes.error||"Failed to list files");
-                }else if(toolName==="merge_branch"){
-                  asstMsg.body.innerHTML='<span style="color:var(--mu);font-size:13px">⚡ Waiting for approval to merge: '+esc(toolArgs.branch||"")+'&#8230;</span>';
-                  var approvedMerge=await confirmGithubMerge(toolArgs);
-                  if(!approvedMerge){
-                    displayToolExecution("merge_branch",toolArgs,{error:"Declined by user - not merged"});
-                    toolResult="The user declined this merge. Do not retry without asking first.";
-                  }else{
-                    asstMsg.body.innerHTML='<span style="color:var(--mu);font-size:13px">⚡ Merging '+esc(toolArgs.branch||"")+' into the default branch&#8230;</span>';
-                    var mergeRes=await executeRepoTool("merge_branch",toolArgs);
-                    displayToolExecution("merge_branch",toolArgs,mergeRes);
-                    toolResult=mergeRes.success?("Merged branch '"+toolArgs.branch+"' into the default branch via PR #"+mergeRes.prNumber+" ("+mergeRes.prUrl+")."):(mergeRes.error||"Failed to merge");
-                  }
-                }else if(toolName==="create_project"){
-                  var cpRes=createProjectFromTool(toolArgs.name,toolArgs.instructions);
-                  displayToolExecution("create_project",toolArgs,cpRes);
-                  toolResult=cpRes.success?("Created project \""+toolArgs.name+"\" and set it as the active project - this conversation will be saved under it from now on."):(cpRes.error||"Failed to create project");
-                }else if(toolName==="switch_model"){
-                  var smRes=await switchModelFromTool(toolArgs.model_id);
-                  displayToolExecution("switch_model",toolArgs,smRes);
-                  toolResult=smRes.success?("Switched to "+smRes.label+"."):(smRes.error||"Failed to switch model");
-                }else if(toolName==="remember"){
-                  addMemory(toolArgs.fact);
-                  displayToolExecution("remember",toolArgs,{success:true});
-                  toolResult="Remembered: "+toolArgs.fact;
-                }
-                messages.push({role:"tool",tool_call_id:tc.id,content:toolResult||"No result"});
+                var toolExec=await executeToolCall(toolName,toolArgs,function(html){asstMsg.body.innerHTML=html;});
+                if(toolExec.searchUsed){searchUsed=true;searchTime=new Date().toLocaleTimeString();}
+                messages.push({role:"tool",tool_call_id:tc.id,content:toolExec.toolResult||"No result"});
               }
               asstMsg.body.innerHTML='<span class="cur">\u2587</span>';
           }
