@@ -17,18 +17,30 @@ export default {
       return new Response(null, { status: 204, headers: CORS });
     }
 
-    // Public endpoint: get APP_SECRET for frontend - validates origin only
+    // Public endpoint: get APP_SECRET for frontend - validates origin only.
+    // This is a deterrent against casual/automated abuse of the raw Worker
+    // URL, not real auth: Origin/Referer are ordinary request headers that
+    // any non-browser client (curl, a script) can set to whatever it likes,
+    // so a determined caller can still obtain the secret directly. Exact
+    // matching here only closes the suffix-bypass hole (an Origin such as
+    // "https://solmasta.github.io.evil.com" used to pass the old
+    // startsWith() check); it does not make this a security boundary.
     if (request.method === "GET" && url.pathname === "/secret") {
-      const origin = request.headers.get("Origin") || request.headers.get("Referer") || "";
-      const allowedOrigins = [
+      const allowedOrigins = new Set([
         "https://solmasta.github.io",
         "http://localhost:8000",
         "http://localhost:3000",
         "http://127.0.0.1:8000",
         "http://127.0.0.1:3000"
-      ];
+      ]);
 
-      if (!allowedOrigins.some(o => origin.startsWith(o))) {
+      let origin = request.headers.get("Origin");
+      if (!origin) {
+        const referer = request.headers.get("Referer");
+        try { origin = referer ? new URL(referer).origin : ""; } catch { origin = ""; }
+      }
+
+      if (!allowedOrigins.has(origin)) {
         return new Response(JSON.stringify({ error: "Origin not allowed" }), {
           status: 403, headers: { "Content-Type": "application/json", ...CORS }
         });
@@ -45,16 +57,18 @@ export default {
       });
     }
 
-    // Live model list endpoint - return hardcoded Claude models
+    // Live model list endpoint - proxies Anthropic's actual Models API so a
+    // model pulled from the picker (e.g. deprecated/renamed) drops out here
+    // too, the same way DeepInfra/OpenRouter's /models already do.
     if (request.method === "GET" && url.pathname === "/models") {
-      const models = {
-        data: [
-          { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
-          { id: "claude-sonnet-5", name: "Claude Sonnet 5" },
-          { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
-        ]
-      };
-      return new Response(JSON.stringify(models), {
+      const res = await fetch("https://api.anthropic.com/v1/models?limit=100", {
+        headers: {
+          "x-api-key": env.ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+        }
+      });
+      const data = await res.json();
+      return new Response(JSON.stringify(data), {
         headers: { "Content-Type": "application/json", ...CORS }
       });
     }
@@ -86,20 +100,34 @@ export default {
       stream: body.stream || false,
     };
 
-    // Extract system message if present (should be first message with role="system")
+    // Extract leading system messages - the frontend stacks several
+    // separate role:"system" entries (model prompt, task instructions,
+    // active project, memory, docs) at the front of the array rather than
+    // sending just one, and Claude's API only accepts system content via
+    // the top-level 'system' parameter, never as a message role.
     let systemPrompt = body.system;
     if (body.messages && body.messages.length > 0) {
-      if (body.messages[0].role === "system") {
-        systemPrompt = body.messages[0].content;
-        claudeBody.messages = body.messages.slice(1);
-      } else {
-        claudeBody.messages = body.messages;
+      let splitAt = 0;
+      const systemParts = [];
+      while (splitAt < body.messages.length && body.messages[splitAt].role === "system") {
+        systemParts.push(body.messages[splitAt].content);
+        splitAt++;
       }
+      if (systemParts.length > 0) {
+        systemPrompt = systemParts.join("\n\n");
+      }
+      claudeBody.messages = body.messages.slice(splitAt);
     }
 
     if (systemPrompt) {
       claudeBody.system = systemPrompt;
     }
+
+    // The frontend's message objects carry extra client-side-only fields
+    // (e.g. apId, used for its own regen tracking) that Claude's API
+    // rejects outright since it strictly validates message shape - strip
+    // down to just what Claude actually accepts.
+    claudeBody.messages = claudeBody.messages.map(m => ({ role: m.role, content: m.content }));
 
     // Add max_tokens - required by Claude API
     if (body.max_tokens) {
@@ -133,6 +161,17 @@ export default {
     // For non-streaming, Claude returns a different format, so we need to convert it
     if (!body.stream) {
       const claudeResp = await upstream.json();
+
+      // Surface upstream errors as-is instead of feeding them through the
+      // success-shape conversion below, which would otherwise turn a missing
+      // content array into a silent, misleadingly "successful" empty reply.
+      if (!upstream.ok) {
+        const message = (claudeResp.error && claudeResp.error.message) || `Claude API error (HTTP ${upstream.status})`;
+        return new Response(JSON.stringify({ error: { message, type: claudeResp.error && claudeResp.error.type } }), {
+          status: upstream.status,
+          headers: { "Content-Type": "application/json", ...CORS }
+        });
+      }
 
       // Convert Claude response to OpenAI format for compatibility
       const openaiResp = {

@@ -1,0 +1,25 @@
+{
+  "name": "github-ops-worker",
+  "main": "github-ops-worker.js",
+  "compatibility_date": "2025-09-23",
+  // Comma-separated "owner/repo" pairs this worker is allowed to write to.
+  // Update if this worker should ever operate on additional repos.
+  "vars": {
+    "ALLOWED_REPOS": "solmasta/openai-router"
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": false,
+      "persist": true,
+      "head_sampling_rate": 1
+    }
+  }
+}
