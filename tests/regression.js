@@ -27,6 +27,8 @@
      its findings in real conversation history, so a later unrelated
      message doesn't have the main chat model contradicting what the
      coding agent already found
+   - repo/coding work stays conversational in the transcript instead of
+     dumping raw tool-status chatter into the main chat
    - write_file tool never defaults to main/master; the approved branch is
      what actually reaches the GitHub ops worker
    - merge_branch tool requires its own dedicated approval dialog before
@@ -540,7 +542,7 @@ function assert(cond, label) {
   const listFilesTool = (lastCodingAgentBody.tools || []).find((t) => t.function.name === 'list_files');
   assert(listFilesTool && !(listFilesTool.function.parameters.required || []).includes('path'), 'list_files no longer requires a path - omitting it can mean "list the repo root"');
   const chatTextAfterCodingAgent = await page.evaluate(() => document.getElementById('chat').textContent);
-  assert(chatTextAfterCodingAgent.indexOf('Coding Agent') >= 0, "the coding agent's response renders in its own labeled block");
+  assert(chatTextAfterCodingAgent.indexOf('Assistant') >= 0, "repo work renders as a normal assistant reply");
   assert(chatTextAfterCodingAgent.indexOf('README describes this project') >= 0, "the coding agent's final answer actually renders");
 
   await page.evaluate(() => {
