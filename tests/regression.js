@@ -474,22 +474,26 @@ function assert(cond, label) {
   const unrelatedToolNames = ((lastUnrelatedBody && lastUnrelatedBody.tools) || []).map((t) => t.function.name);
   assert(unrelatedToolNames.indexOf('read_file') < 0 && unrelatedToolNames.indexOf('write_file') < 0 && unrelatedToolNames.indexOf('list_files') < 0, `an unrelated (non-code/github) message gets no repo tools even with GitHub connected (got tools: ${JSON.stringify(unrelatedToolNames)})`);
 
-  console.log('\n-- a generic coding question (no actual repo/GitHub signal) does not get repo tools either --');
-  // The repo-tools gate used to fire on searchGateTasks.code too, which
-  // matches generic words like "function"/"error"/"javascript" - so a
-  // question about a totally different, unconnected codebase (e.g.
-  // starting a new app) still got read_file/write_file/merge_branch handed
-  // to it for the CONNECTED repo, and a tool-eager model could go write
-  // there for a project that had nothing to do with it. Only actual
-  // github/repo signal (searchGateTasks.github) should unlock repo tools.
+  console.log('\n-- a generic coding question now defaults to the connected repo and reaches the dedicated coding agent --');
+  // With a repo connected, coding/debugging questions should default to
+  // that repo even if the user doesn't explicitly say "github" or "repo".
+  // The dedicated coding agent should receive the request and keep repo
+  // tools available, instead of leaving the message on the main chat path.
   let lastGenericCodeBody = null;
   await page.route('**/*', async (route) => {
     const req = route.request();
     if (req.method() === 'POST' && req.postData()) {
-      try {
-        const parsed = JSON.parse(req.postData());
-        if (parsed.messages) lastGenericCodeBody = parsed;
-      } catch (e) {}
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        lastGenericCodeBody = parsed;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Checked the connected repo.' } }] }),
+        });
+        return;
+      }
     }
     await route.continue();
   });
@@ -497,7 +501,8 @@ function assert(cond, label) {
   for (let i = 0; i < 60 && lastGenericCodeBody === null; i++) await page.waitForTimeout(200);
   await page.unroute('**/*');
   const genericCodeToolNames = ((lastGenericCodeBody && lastGenericCodeBody.tools) || []).map((t) => t.function.name);
-  assert(genericCodeToolNames.indexOf('read_file') < 0 && genericCodeToolNames.indexOf('write_file') < 0 && genericCodeToolNames.indexOf('list_files') < 0, `a generic coding question with no repo/GitHub signal gets no repo tools even with GitHub connected (got tools: ${JSON.stringify(genericCodeToolNames)})`);
+  assert(!!lastGenericCodeBody, 'a generic coding question reaches the dedicated coding agent when GitHub is connected');
+  assert(genericCodeToolNames.indexOf('read_file') >= 0 && genericCodeToolNames.indexOf('write_file') >= 0 && genericCodeToolNames.indexOf('list_files') >= 0, `a generic coding question gets repo tools through the dedicated coding agent when GitHub is connected (got tools: ${JSON.stringify(genericCodeToolNames)})`);
 
   console.log('\n-- a genuinely code/github-relevant message routes to the dedicated coding agent, not the main chat model --');
   // Repo work (read_file/write_file/list_files/merge_branch) always runs

@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.78</span></span>
+      <span class="wm">ai-router <span>v5.79</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -449,7 +449,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="modal hidden" id="githubModal"><div class="sheet">
   <div class="sh"><span>Connect GitHub Repo</span><button class="sc" id="closeGithubModal">&#10005;</button></div>
   <div class="sbody">
-    <p style="color:var(--mu);font-size:13px;line-height:1.5;margin:0 0 12px">The AI can read and write files in this repo when a coding conversation calls for it. The actual GitHub access token lives on the server, not here - this just tells the app which repo to point at. Every write commits directly to the repo, but you'll be asked to approve each one before it happens.</p>
+    <p style="color:var(--mu);font-size:13px;line-height:1.5;margin:0 0 12px">The AI can read and write files in this repo when a coding conversation calls for it. Once connected, coding/debugging requests default to this repo unless you clearly ask about some other code. The actual GitHub access token lives on the server, not here - this just tells the app which repo to point at. Every write commits directly to the repo, but you'll be asked to approve each one before it happens.</p>
     <input type="text" id="ghOwnerInput" class="fi" placeholder="Repo owner, e.g. solmasta" autocomplete="off" style="width:100%;margin-bottom:8px;box-sizing:border-box">
     <input type="text" id="ghRepoInput" class="fi" placeholder="Repo name, e.g. openai-router" autocomplete="off" style="width:100%;box-sizing:border-box">
     <div id="ghRecentRepos" class="hidden" style="margin-top:10px">
@@ -550,7 +550,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.78</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.79</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -788,8 +788,7 @@ var TOOL_MODELS=["mistralai/Mistral-Small-3.2-24B-Instruct-2506","meta-llama/Met
 var modelCanCodeAndControl=true;
 /* GitHub connection state. The actual GitHub PAT lives server-side as the
    github-ops-worker's GITHUB_TOKEN secret - ghToken here is just a local
-   "connected" flag (the worker's checkAuth never reads the Authorization
-   header this sends), so all that's persisted is which repo to point at. */
+   "connected" flag, so all that's persisted is which repo to point at. */
 var ghToken=null,ghRepoOwner=null,ghRepoName=null;
 var GH_OPS_URL="https://github-ops-worker.lukedorsett.workers.dev";
 function loadGithubConnection(){
@@ -2400,19 +2399,19 @@ async function executeRepoTool(toolName,toolInput){
   if(!ghToken||!ghRepoOwner||!ghRepoName){return{error:"GitHub not connected"};}
   try{
     if(toolName==="read_file"){
-      var res=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"Authorization":"Bearer "+ghToken},body:JSON.stringify({op:"read_file",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path})});
+      var res=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({op:"read_file",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path})});
       var data=await res.json();
       return data.success?{success:true,content:data.content}:{error:data.error};
     }else if(toolName==="write_file"){
-      var wres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"Authorization":"Bearer "+ghToken},body:JSON.stringify({op:"write_file",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path,content:toolInput.content,message:toolInput.message,branch:toolInput.branch})});
+      var wres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({op:"write_file",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path,content:toolInput.content,message:toolInput.message,branch:toolInput.branch})});
       var wdata=await wres.json();
       return wdata.success?{success:true,commit:wdata.commit,branch:wdata.branch}:{error:wdata.error};
     }else if(toolName==="list_files"){
-      var lres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"Authorization":"Bearer "+ghToken},body:JSON.stringify({op:"list_files",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path})});
+      var lres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({op:"list_files",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path})});
       var ldata=await lres.json();
       return ldata.success?{success:true,files:ldata.files}:{error:ldata.error};
     }else if(toolName==="merge_branch"){
-      var mres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"Authorization":"Bearer "+ghToken},body:JSON.stringify({op:"merge_branch",owner:ghRepoOwner,repo:ghRepoName,branch:toolInput.branch,title:toolInput.title,message:toolInput.message,merge_method:toolInput.merge_method})});
+      var mres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({op:"merge_branch",owner:ghRepoOwner,repo:ghRepoName,branch:toolInput.branch,title:toolInput.title,message:toolInput.message,merge_method:toolInput.merge_method})});
       var mdata=await mres.json();
       return mdata.success?{success:true,prNumber:mdata.prNumber,prUrl:mdata.prUrl,sha:mdata.sha}:{error:mdata.error};
     }
@@ -2510,6 +2509,9 @@ function codingAgentSystemPrompt(){
   sys+="4. Always provide COMPLETE working code in write_file calls - not snippets\n";
   sys+="5. NEVER set branch to \"main\"/\"master\" unless the user explicitly asked you to change the default branch directly - use a short descriptive working-branch name instead, it's created automatically from the default branch if it doesn't exist\n";
   sys+="6. Use merge_branch(branch, title, message) to land a working branch into the default branch via a pull request - only call this when the user explicitly asked you to merge/ship/land the change. Never chain it automatically right after a write_file just because the write succeeded.\n\n";
+  sys+="ASSUMPTION:\n";
+  sys+="- If the user is asking for coding/debugging help and a GitHub repo is connected, treat that repo as the default codebase even if they don't explicitly say \"GitHub\" or \"repo\".\n";
+  sys+="- If they're clearly asking about pasted code, a generic programming concept, or some other project, answer directly without touching repo tools.\n\n";
   sys+="CODING PRINCIPLES:\n";
   sys+="- Keep changes proportional to what was actually asked - don't refactor, add abstractions, or fix unrelated things nobody asked for. Three similar lines beats a premature abstraction.\n";
   sys+="- Default to writing no comments. Only add one when the WHY is genuinely non-obvious (a hidden constraint, a workaround, a subtle invariant) - never to explain WHAT the code does, and never referencing this task/fix by name.\n";
@@ -4532,12 +4534,13 @@ async function sendOverseerChatMsg(){
      about it. Same confirm-before-write/merge safety gates as the main
      chat still apply below; this only changes who's allowed to ask. */
   var overseerHasTools=TOOL_MODELS.indexOf(currentModel.id)>=0;
-  /* Gated on the message actually being about the connected repo (same
-     signal doSendRequest uses below), not just "GitHub is connected" -
-     without this, any strategy-chat message got read_file/write_file/
-     merge_branch offered regardless of topic, so a model discussing a
-     totally different/new project could still reach for the wrong repo. */
-  var overseerRepoRelevant=analyzeTask(text).github>0;
+  /* Gated on the message actually being about code or the connected repo
+     (same signal doSendRequest uses below), not just "GitHub is connected"
+     - without this, any strategy-chat message got read_file/write_file/
+     merge_branch offered regardless of topic, so a model discussing crypto
+     or some unrelated life topic could still reach for the wrong repo. */
+  var overseerTaskSignals=analyzeTask(text);
+  var overseerRepoRelevant=overseerTaskSignals.github>0||overseerTaskSignals.code>0;
   var overseerHasRepoTools=overseerHasTools&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&overseerRepoRelevant;
   var sys="You are the Overseer, a strategic advisor built into this app. The user has stepped out of their main conversation with the AI model to talk strategy with you directly - about approach, what to try next, or whether they're stuck. Be direct and concise. Base advice on the actual context below, not generic platitudes.\n\n"+
     (overseerPersonality?("Personality: "+overseerPersonality+" - let this come through naturally in your tone and word choice, without announcing or explaining it.\n\n"):"")+
@@ -4996,25 +4999,18 @@ async function doSendRequest(userContent,isRegen,ap){
   }
   messages=messages.concat(chatHistory.slice(0,-1));
   messages.push({role:"user",content:userContent});
-  /* Gated on searchGateTasks.github specifically, not .code too - .code
-     fires on generic coding words ("function", "error", "debug",
-     "javascript"...) that say nothing about THIS repo. A message like
-     "let's build a new app" or "why is this python function throwing an
-     error" would still route to the coding agent just because it sounded
-     code-flavored. .github only fires on actual repo/GitHub signal
-     (github, git, commit, push, pr, repo, branch, merge...).
-     Repo work always runs on the dedicated coding agent now, independent
-     of whatever model this conversation is actually using - the regular
-     chat model never gets REPO_TOOLS at all anymore, so it can't lose
-     tool access mid-task just because the auto-router picked a
-     non-tool-capable model for an ordinary message.
-     Also gated on there being no image in THIS message - the coding agent
-     runs on Qwen3 Coder, not a vision model, so an image+repo-flavored
-     message (e.g. a screenshot with "does this match the repo's style")
-     would otherwise silently route away from vision entirely and the
-     image would never actually get looked at. */
+  /* With a repo connected, code- or GitHub-flavored requests should reach
+     the dedicated coding agent by default - otherwise the user can ask for
+     debugging help about the connected project without ever saying the word
+     "GitHub" and silently lose repo access. Still keep unrelated messages
+     out of the repo path entirely, and keep image-bearing requests on the
+     current vision-capable model instead of routing them to the non-vision
+     coding agent. Repo work always runs on the dedicated coding agent,
+     independent of whatever model this conversation is actually using, so
+     tool access doesn't disappear just because the auto-router picked a
+     non-tool-capable model for the main chat. */
   var hasImgInContent=Array.isArray(userContent)&&userContent.some(function(p){return p.type==="image_url";});
-  if(!hasImgInContent&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&searchGateTasks.github>0){
+  if(!hasImgInContent&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&(searchGateTasks.github>0||searchGateTasks.code>0)){
     try{
       await runCodingAgentTurn(messages);
     }finally{

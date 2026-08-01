@@ -65,7 +65,17 @@ Google Drive backup uses an OAuth flow that needs a client secret, which can't l
 4. Add a secret named `APP_SECRET` with the **same** string from step 1 of Setup (check it's actually present - it's easy to add `GOOGLE_CLIENT_SECRET` first and forget this one).
 5. Confirm its URL under Settings → Domains (the default is `https://ai-router-drive.<your-subdomain>.workers.dev`) and use that for `DRIVE_AUTH_URL` in the next step.
 
-### 6. Point the frontend at your Workers
+### 6. Deploy the GitHub Ops Worker (optional — needed for repo-aware coding/file edits)
+
+This Worker is what lets the app read files, write commits, list directories, and merge branches in a connected repository. The browser only stores which repo to point at; the real GitHub token stays server-side as a Cloudflare secret.
+
+1. Create another Worker and deploy `workers/github-ops-worker/github-ops-worker.js` to it - or run `npx wrangler deploy --config workers/github-ops-worker/wrangler.jsonc` from this repo. If you use Cloudflare's Git integration instead of manual `wrangler deploy`, set that project's **Root directory** to `workers/github-ops-worker`.
+2. Add a secret named `GITHUB_TOKEN` containing a GitHub personal access token with the repo permissions you want this app to use.
+3. Add a secret named `APP_SECRET` with the **same** string from step 1 of Setup.
+4. In `workers/github-ops-worker/wrangler.jsonc`, set `ALLOWED_REPOS` to a comma-separated list of the exact `owner/repo` pairs this Worker is allowed to touch. The default is just `solmasta/openai-router`.
+5. Deploy and copy the Worker URL.
+
+### 7. Point the frontend at your Workers
 
 In `index.html`, find these lines near the top of the `<script>` block:
 
@@ -73,13 +83,14 @@ In `index.html`, find these lines near the top of the `<script>` block:
 var DI_URL="https://openai-router-chat.lukedorsett.workers.dev";
 var OR_URL="https://openrouter-worker.lukedorsett.workers.dev";
 var CLAUDE_URL="https://claude-worker.lukedorsett.workers.dev";
-var DRIVE_AUTH_URL="https://drive-auth-worker.lukedorsett.workers.dev";
+var DRIVE_AUTH_URL="https://ai-router-drive.lukedorsett.workers.dev";
+var GH_OPS_URL="https://github-ops-worker.lukedorsett.workers.dev";
 var APP_SECRET="CHANGE_ME_APP_SECRET";
 ```
 
-Replace `DI_URL`, `OR_URL`, `CLAUDE_URL`, and `DRIVE_AUTH_URL` with your own Worker URLs from steps 2–5, and `APP_SECRET` with the exact string you set as the `APP_SECRET` secret on all Workers.
+Replace `DI_URL`, `OR_URL`, `CLAUDE_URL`, `DRIVE_AUTH_URL`, and `GH_OPS_URL` with your own Worker URLs from steps 2–6, and `APP_SECRET` with the exact string you set as the `APP_SECRET` secret on all Workers.
 
-### 7. Deploy to GitHub Pages
+### 8. Deploy to GitHub Pages
 
 1. Push `index.html`, `manifest.json`, `sw.js`, and the icon files to the root of a repo.
 2. Enable GitHub Pages: **Settings → Pages → Deploy from branch → main → / (root)**.
