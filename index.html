@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.82</span></span>
+      <span class="wm">ai-router <span>v5.83</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -549,7 +549,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.82</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.83</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3661,7 +3661,7 @@ async function driveEnsureToken(){
   return await driveSilentRefresh();
 }
 function driveInitClient(){
-  if(!window.google||!google.accounts||driveTokenClient)return;
+  if(!window.google||!google.accounts||!google.accounts.oauth2||driveTokenClient)return;
   /* initCodeClient (authorization-code flow), not initTokenClient - the
      token flow only ever hands back a short-lived access_token with no way
      to renew it silently. access_type:"offline" + prompt:"consent" makes
@@ -3675,8 +3675,20 @@ function driveInitClient(){
     ux_mode:"popup",
     access_type:"offline",
     prompt:"consent",
+    error_callback:function(err){
+      /* GIS delivers popup-blocked, access-denied, and other OAuth errors
+         here rather than through the main callback - without this handler
+         they are silently dropped and the button appears to do nothing. */
+      var msg=(err&&(err.message||err.type))||JSON.stringify(err)||"unknown error";
+      alert("Google Drive connect failed: "+msg);
+    },
     callback:async function(resp){
-      if(!resp||!resp.code)return;
+      if(!resp||!resp.code){
+        /* The popup closed without a code - surface any error Google
+           returned so the user knows why it didn't work. */
+        if(resp&&resp.error){alert("Google Drive connect failed: "+driveErrText(resp.error_description||resp.error));}
+        return;
+      }
       try{
         await ensureAppSecret();
         var res=await fetch(DRIVE_AUTH_URL+"/exchange",{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({code:resp.code})});
