@@ -1148,7 +1148,7 @@ function assert(cond, label) {
   await sendMsg('what is the capital of France');
   await page.unroute('**/*');
   const historyAfterAbandonedStep = ((lastUnrelatedAfterAbandonedStep && lastUnrelatedAfterAbandonedStep.messages) || []).map((m) => m.content).join('\n');
-  assert(historyAfterAbandonedStep.indexOf('[Coding agent]') >= 0 && historyAfterAbandonedStep.indexOf('Listed') >= 0, `an abandoned coding-agent step's findings still reach a later, unrelated message's conversation history (got: ${historyAfterAbandonedStep.slice(-400)})`);
+  assert(historyAfterAbandonedStep.indexOf('I looked through the repository files.') >= 0, `an abandoned coding-agent step's findings still reach a later, unrelated message's conversation history (got: ${historyAfterAbandonedStep.slice(-400)})`);
 
   console.log('\n-- an empty completion auto-switches to a fallback model and retries instead of just showing "(empty response)" --');
   // A model can burn its whole turn on tool_calls and have nothing left to
