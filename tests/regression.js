@@ -1214,15 +1214,15 @@ function assert(cond, label) {
   // bias toward a tool-capable DeepInfra model for a repo-flavored message
   // just so the CURRENT model could use the tools directly, which meant
   // switching away from whatever the user was actually chatting with
-  // (e.g. Claude) for reasons that had nothing to do with the
-  // conversation itself. Start on Claude, send an unambiguously
+  // (e.g. OpenRouter) for reasons that had nothing to do with the
+  // conversation itself. Start on OpenRouter, send an unambiguously
   // repo-flavored message, and confirm the main chat backend is left
   // alone while the coding agent still does the actual work.
   await page.click('#modelBtn'); await page.waitForTimeout(150);
-  await page.click('#claudeBtn'); await page.waitForTimeout(300);
+  await page.click('#openrouterBtn'); await page.waitForTimeout(300);
   await page.click('#closeModelModal'); await page.waitForTimeout(150);
-  const backendBeforeGithubMsg = await page.evaluate(() => document.getElementById('claudeBtn').classList.contains('act') ? 'claude' : 'other');
-  assert(backendBeforeGithubMsg === 'claude', 'test setup: starts on the Claude backend');
+  const backendBeforeGithubMsg = await page.evaluate(() => document.getElementById('openrouterBtn').classList.contains('act') ? 'openrouter' : 'other');
+  assert(backendBeforeGithubMsg === 'openrouter', 'test setup: starts on the OpenRouter backend');
   let sawCodingAgentCallForBranchMsg = false;
   await page.route('**/*', async (route) => {
     const req = route.request();
@@ -1243,8 +1243,8 @@ function assert(cond, label) {
   });
   await sendMsg('please check the current branch and commit history in the repo');
   await page.unroute('**/*');
-  const backendAfterGithubMsg = await page.evaluate(() => document.getElementById('claudeBtn').classList.contains('act') ? 'claude' : 'other');
-  assert(backendAfterGithubMsg === 'claude', `the main chat backend stays on Claude - the coding agent handles repo work independently instead of forcing a model switch (backend after send: "${backendAfterGithubMsg}")`);
+  const backendAfterGithubMsg = await page.evaluate(() => document.getElementById('openrouterBtn').classList.contains('act') ? 'openrouter' : 'other');
+  assert(backendAfterGithubMsg === 'openrouter', `the main chat backend stays on OpenRouter - the coding agent handles repo work independently instead of forcing a model switch (backend after send: "${backendAfterGithubMsg}")`);
   assert(sawCodingAgentCallForBranchMsg, 'the dedicated coding agent still actually engaged for the repo-flavored message');
   // Switch back to a DeepInfra model - later tests assume the model
   // picker is already showing the DeepInfra list, same baseline the
@@ -1942,7 +1942,7 @@ function assert(cond, label) {
   // name/instructions from the conversation and actually creates it.
   await page.click('#newTabBtn'); await page.waitForTimeout(400);
   await page.click('#modelBtn'); await page.waitForTimeout(150);
-  await page.click('#claudeBtn'); await page.waitForTimeout(300);
+  await page.click('#openrouterBtn'); await page.waitForTimeout(300);
   await page.click('#closeModelModal'); await page.waitForTimeout(150);
   await page.route('**/*', async (route) => {
     const req = route.request();
