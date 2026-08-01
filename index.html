@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.75</span></span>
+      <span class="wm">ai-router <span>v5.76</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -550,7 +550,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.75</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.76</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3266,10 +3266,19 @@ function createNewTab(){
   syncActiveTabFromLiveState();
   saveTabsToStorage();
   var newSessionId=Date.now().toString();
-  openTabs.push({title:"New chat",chatHistory:[],modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:newSessionId});
+  /* Start every new chat on the active backend's designated general-purpose
+     model, not whatever the previous tab's conversation had auto-switched
+     to - the Overseer only has real signal to route on once a conversation
+     has actually started, so a brand-new tab shouldn't open already
+     steered toward whatever the last chat happened to need. */
+  var B=BACKENDS[activeBackend];
+  var defModel=B.models.find(function(m){return m.id===B.def;})||B.models[0];
+  setModel(defModel);
+  openTabs.push({title:"New chat",chatHistory:[],modelId:defModel.id,modelLabel:defModel.label,backend:activeBackend,sessionId:newSessionId});
   activeTabIndex=openTabs.length-1;
   sessionId=newSessionId;
   renderChatFromHistory([]);
+  renderModelList();
   stopOverseerMonitoring();
   overseerState=defaultOverseerState();
   updateOverseerBar();
@@ -4848,8 +4857,14 @@ async function send(){
   /* Skip general model auto-select for image messages - we already
      forced a vision-capable model above, and letting the keyword-based
      scorer suggest something else here could switch away from it and
-     leave the model unable to read the image after all. */
-  if(!hasImg&&agentAutoSelect){
+     leave the model unable to read the image after all. Also skip it
+     entirely on the very first message of a conversation (chatHistory.length
+     ===1, this message just having been pushed above) - the whole point of
+     starting every chat on the backend's general-purpose default (see
+     createNewTab) is to let it actually be a general chat until the
+     Overseer has something real to go on, rather than re-routing before a
+     single reply has even happened. */
+  if(!hasImg&&agentAutoSelect&&chatHistory.length>1){
     /* The actual scoring is near-instant, which used to make the routing
        decision invisible - nothing on screen distinguished "the Overseer
        just checked every model and picked this one again" from "nothing
@@ -4861,7 +4876,7 @@ async function send(){
     var minThinkDelay=new Promise(function(res){setTimeout(res,450);});
     await Promise.all([switchToBestModel(outgoingText),minThinkDelay]);
     overseerBtnEl.classList.remove("thinking");
-  }else if(!hasImg){
+  }else if(!hasImg&&chatHistory.length>1){
     await switchToBestModel(outgoingText);
   }
   await doSendRequest(userContent,false,ap);
