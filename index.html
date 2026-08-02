@@ -4248,7 +4248,12 @@ async function doSendRequest(userContent,isRegen,ap){
            have no confirm gate the way write_file does - they'd run
            silently for a request that had nothing to do with the repo. */
         if(modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&(searchGateTasks.github>0||searchGateTasks.code>0)){initTools=initTools.concat(REPO_TOOLS);}
-        if(initTools.length>0){
+        if(initTools.length>0 && (
+  searchGateTasks.github>0 ||
+  searchGateTasks.code>0 ||
+  searchGateTasks.search>0 ||
+  /\b(create|remember|save|file|repo|github|search|lookup|find)\b/i.test(qtext)
+)){
           /* One round used to be all a message got: capable models (e.g.
              Qwen3 Coder) often need list_files, THEN read_file, THEN answer
              - capped at one, the model either silently dropped its next
@@ -4261,7 +4266,7 @@ async function doSendRequest(userContent,isRegen,ap){
              first; the final call below still forces tool_choice:"none" as
              the actual safety net if the cap is hit. */
           for(var toolRound=0;toolRound<MAX_TOOL_ROUNDS;toolRound++){
-            var p1res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:currentModel.id,messages:messages,tools:initTools,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:1000})});
+            var p1res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:currentModel.id,messages:messages,tools:initTools,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:300})});
             if(!p1res.ok)break;
             var p1data=await p1res.json();
             var p1choice=(p1data.choices||[])[0]||{};
