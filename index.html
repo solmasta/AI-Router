@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.86</span></span>
+      <span class="wm">ai-router <span>v5.87</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -451,6 +451,8 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
     <p style="color:var(--mu);font-size:13px;line-height:1.5;margin:0 0 12px">The AI can read and write files in this repo when a coding conversation calls for it. Once connected, coding/debugging requests default to this repo unless you clearly ask about some other code. The actual GitHub access token lives on the server, not here - this just tells the app which repo to point at. Every write commits directly to the repo, but you'll be asked to approve each one before it happens.</p>
     <input type="text" id="ghOwnerInput" class="fi" placeholder="Repo owner, e.g. solmasta" autocomplete="off" style="width:100%;margin-bottom:8px;box-sizing:border-box">
     <input type="text" id="ghRepoInput" class="fi" placeholder="Repo name, e.g. openai-router" autocomplete="off" style="width:100%;box-sizing:border-box">
+    <input type="password" id="ghWriteSecretInput" class="fi" placeholder="Write secret (required to write or merge)" autocomplete="off" style="width:100%;margin-top:8px;box-sizing:border-box">
+    <p style="color:var(--mu);font-size:11px;line-height:1.4;margin:6px 0 0">Separate from the app's main secret and never fetched automatically - stored only on this device. Must match the WRITE_SECRET configured on github-ops-worker for file writes and merges to go through; reading/listing files doesn't need it.</p>
     <div id="ghRecentRepos" class="hidden" style="margin-top:10px">
       <div style="font-size:11px;color:var(--mu);margin-bottom:6px">Recent repos</div>
       <div id="ghRecentReposList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
@@ -549,7 +551,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.86</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.87</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -790,12 +792,19 @@ var modelCanCodeAndControl=true;
 /* GitHub connection state. The actual GitHub PAT lives server-side as the
    github-ops-worker's GITHUB_TOKEN secret - ghToken here is just a local
    "connected" flag, so all that's persisted is which repo to point at. */
-var ghToken=null,ghRepoOwner=null,ghRepoName=null;
+var ghToken=null,ghRepoOwner=null,ghRepoName=null,ghWriteSecret=null;
 var GH_OPS_URL="https://github-ops-worker.lukedorsett.workers.dev";
 function loadGithubConnection(){
   ghRepoOwner=localStorage.getItem(pk("gh_repo_owner"))||null;
   ghRepoName=localStorage.getItem(pk("gh_repo_name"))||null;
   ghToken=(ghRepoOwner&&ghRepoName)?"connected":null;
+  /* Separate from ghToken/APP_SECRET on purpose - APP_SECRET is bootstrapped
+     automatically from a semi-public endpoint, so it isn't enough on its own
+     to authorize commits/merges. This one is typed in by hand under
+     Settings > GitHub repository and only ever stored locally - it must
+     match the github-ops-worker's WRITE_SECRET for write_file/merge_branch
+     to succeed. */
+  ghWriteSecret=localStorage.getItem(pk("gh_write_secret"))||null;
 }
 function updateGithubStatus(){
   var s=document.getElementById("githubStatus");
@@ -843,7 +852,8 @@ function renderRecentRepos(){
 function disconnectGithub(){
   localStorage.removeItem(pk("gh_repo_owner"));
   localStorage.removeItem(pk("gh_repo_name"));
-  ghToken=null;ghRepoOwner=null;ghRepoName=null;
+  localStorage.removeItem(pk("gh_write_secret"));
+  ghToken=null;ghRepoOwner=null;ghRepoName=null;ghWriteSecret=null;
   updateGithubStatus();
 }
 /* Per-write confirmation gate - resolves to the branch name to write to on
@@ -2398,7 +2408,8 @@ async function executeRepoTool(toolName,toolInput){
       var data=await res.json();
       return data.success?{success:true,content:data.content}:{error:data.error};
     }else if(toolName==="write_file"){
-      var wres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({op:"write_file",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path,content:toolInput.content,message:toolInput.message,branch:toolInput.branch})});
+      if(!ghWriteSecret){return{error:"GitHub write secret not set - add it under Settings > GitHub repository before writing."};}
+      var wres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"X-Write-Secret":ghWriteSecret},body:JSON.stringify({op:"write_file",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path,content:toolInput.content,message:toolInput.message,branch:toolInput.branch})});
       var wdata=await wres.json();
       return wdata.success?{success:true,commit:wdata.commit,branch:wdata.branch}:{error:wdata.error};
     }else if(toolName==="list_files"){
@@ -2406,7 +2417,8 @@ async function executeRepoTool(toolName,toolInput){
       var ldata=await lres.json();
       return ldata.success?{success:true,files:ldata.files}:{error:ldata.error};
     }else if(toolName==="merge_branch"){
-      var mres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({op:"merge_branch",owner:ghRepoOwner,repo:ghRepoName,branch:toolInput.branch,title:toolInput.title,message:toolInput.message,merge_method:toolInput.merge_method})});
+      if(!ghWriteSecret){return{error:"GitHub write secret not set - add it under Settings > GitHub repository before merging."};}
+      var mres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"X-Write-Secret":ghWriteSecret},body:JSON.stringify({op:"merge_branch",owner:ghRepoOwner,repo:ghRepoName,branch:toolInput.branch,title:toolInput.title,message:toolInput.message,merge_method:toolInput.merge_method})});
       var mdata=await mres.json();
       return mdata.success?{success:true,prNumber:mdata.prNumber,prUrl:mdata.prUrl,sha:mdata.sha}:{error:mdata.error};
     }
@@ -4326,6 +4338,7 @@ document.getElementById("githubConnectBtn").addEventListener("click",function(){
   document.getElementById("settingsModal").classList.add("hidden");
   document.getElementById("ghOwnerInput").value=ghRepoOwner||"";
   document.getElementById("ghRepoInput").value=ghRepoName||"";
+  document.getElementById("ghWriteSecretInput").value=ghWriteSecret||"";
   updateGithubStatus();
   renderRecentRepos();
   openModal("githubModal");
@@ -4333,9 +4346,12 @@ document.getElementById("githubConnectBtn").addEventListener("click",function(){
 document.getElementById("githubSaveBtn").addEventListener("click",function(){
   var owner=document.getElementById("ghOwnerInput").value.trim();
   var repo=document.getElementById("ghRepoInput").value.trim();
+  var writeSecret=document.getElementById("ghWriteSecretInput").value.trim();
   if(!owner||!repo){showToast("Enter both the repo owner and repo name.");return;}
   localStorage.setItem(pk("gh_repo_owner"),owner);
   localStorage.setItem(pk("gh_repo_name"),repo);
+  if(writeSecret){localStorage.setItem(pk("gh_write_secret"),writeSecret);}
+  else{localStorage.removeItem(pk("gh_write_secret"));}
   saveRecentRepo(owner,repo);
   loadGithubConnection();
   updateGithubStatus();
@@ -4345,6 +4361,7 @@ document.getElementById("githubDisconnectBtn").addEventListener("click",function
   disconnectGithub();
   document.getElementById("ghOwnerInput").value="";
   document.getElementById("ghRepoInput").value="";
+  document.getElementById("ghWriteSecretInput").value="";
   closeModal("githubModal");
 });
 /* One-tap clear right from the Settings row, for when you just want the
