@@ -73,6 +73,7 @@ export default {
         grant_type: "authorization_code",
       });
       if (!ok || !data.access_token) {
+        console.log("GOOGLE TOKEN ERROR:", JSON.stringify(data));
         return new Response(JSON.stringify({ error: data.error_description || data.error || "Exchange failed" }), {
           status: 400, headers: { "Content-Type": "application/json", ...CORS }
         });
