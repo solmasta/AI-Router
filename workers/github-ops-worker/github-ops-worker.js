@@ -1,12 +1,27 @@
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
-  "Access-Control-Allow-Headers": "Content-Type, X-App-Secret, Authorization",
+  "Access-Control-Allow-Headers": "Content-Type, X-App-Secret, X-Write-Secret, Authorization",
 };
 
 function checkAuth(request, env) {
   const provided = request.headers.get("X-App-Secret");
   return !!env.APP_SECRET && provided === env.APP_SECRET;
+}
+
+// write_file/merge_branch need a second, separate secret on top of
+// APP_SECRET. APP_SECRET is deliberately semi-public - the frontend
+// bootstraps it from an unauthenticated-by-design endpoint on the
+// openai-router-chat worker, so anyone who can reach that worker can obtain
+// it. That's an acceptable bar for read-only ops and for spending the
+// chat/search API budget, but not for committing to or merging repos -
+// WRITE_SECRET is never served by any endpoint; it's entered once by hand
+// in the app's Settings and stored only in the browser's localStorage, so
+// holding APP_SECRET alone is no longer enough to reach write_file or
+// merge_branch.
+function checkWriteAuth(request, env) {
+  const provided = request.headers.get("X-Write-Secret");
+  return !!env.WRITE_SECRET && provided === env.WRITE_SECRET;
 }
 
 // GitHub's error responses are normally {"message": "..."} JSON, but some
@@ -286,6 +301,12 @@ export default {
     catch {
       return new Response(JSON.stringify({ error: "Invalid request body" }), {
         status: 400, headers: { "Content-Type": "application/json", ...CORS }
+      });
+    }
+
+    if ((body.op === "write_file" || body.op === "merge_branch") && !checkWriteAuth(request, env)) {
+      return new Response(JSON.stringify({ error: "Write secret missing or incorrect - set it under Settings > GitHub repository before writing or merging." }), {
+        status: 401, headers: { "Content-Type": "application/json", ...CORS }
       });
     }
 

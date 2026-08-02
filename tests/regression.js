@@ -741,6 +741,13 @@ function assert(cond, label) {
   await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
   await page.fill('#ghOwnerInput', 'solmasta');
   await page.fill('#ghRepoInput', 'openai-router');
+  // write_file/merge_branch now also require a separate write secret
+  // (never auto-fetched, entered here the same way a real user would) -
+  // without it executeRepoTool short-circuits before ever reaching the
+  // GitHub ops worker, which the rest of this block and the merge_branch
+  // and Overseer-chat write_file blocks below (same connection, reused)
+  // depend on actually happening.
+  await page.fill('#ghWriteSecretInput', 'regtest-write-secret');
   await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
   // githubConnectBtn hides Settings underneath before opening its own
   // modal (see its click handler) and Save & Connect only closes that
