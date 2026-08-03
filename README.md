@@ -57,13 +57,13 @@ Generate a random string (e.g. `openssl rand -hex 32`) — this is `APP_SECRET`.
 
 ### 5. Deploy the Drive Auth Worker (optional — only needed for Google Drive backup)
 
-Google Drive backup uses an OAuth flow that needs a client secret, which can't live in frontend JS - this Worker holds it and mints/renews Drive access tokens on the app's behalf so you don't have to reconnect Drive every time a token expires (~1hr). This deploys onto the existing **`ai-router-drive`** Worker (its `workers/drive-auth/wrangler.jsonc` config already targets that name) - no new Worker project needed.
+Google Drive backup uses an OAuth flow that needs a client secret, which can't live in frontend JS - this Worker holds it and mints/renews Drive access tokens on the app's behalf so you don't have to reconnect Drive every time a token expires (~1hr).
 
-1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials), open the OAuth 2.0 Client ID already used by `GOOGLE_CLIENT_ID` in `index.html` (a "Web application" type client). Copy its **Client Secret**. If it doesn't have one yet (older client types don't), you may need to create a new Web application OAuth client and update `GOOGLE_CLIENT_ID` in both `index.html` and `workers/drive-auth/drive-auth-worker.js` to match.
-2. Open the `ai-router-drive` Worker in the Cloudflare dashboard and replace its code with the contents of `workers/drive-auth/drive-auth-worker.js` (Edit Code / Quick Edit, then Deploy) - or run `npx wrangler deploy --config workers/drive-auth/wrangler.jsonc` from this repo, which targets that same Worker name. If you use Cloudflare's Git integration instead of manual `wrangler deploy`, set this project's **Root directory** (Settings → Build) to `workers/drive-auth` so it never touches another Worker's config.
+1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials), open the OAuth 2.0 Client ID already used by `GOOGLE_CLIENT_ID` in `index.html` (a "Web application" type client). Copy its **Client Secret**. If it doesn't have one yet (older client types don't), or you're issuing a fresh one, create a new Web application OAuth client and update `GOOGLE_CLIENT_ID` in both `index.html` and `workers/drive-auth/drive-auth-worker.js` to match - the two must always agree.
+2. Create a new Worker and deploy `workers/drive-auth/drive-auth-worker.js` to it (its `workers/drive-auth/wrangler.jsonc` config names it **`drive-auth-worker`**) - or run `npx wrangler deploy --config workers/drive-auth/wrangler.jsonc` from this repo. If you use Cloudflare's Git integration instead of manual `wrangler deploy`, set this project's **Root directory** (Settings → Build) to `workers/drive-auth` so it never touches another Worker's config.
 3. Add a secret named `GOOGLE_CLIENT_SECRET` with the value from step 1.
 4. Add a secret named `APP_SECRET` with the **same** string from step 1 of Setup (check it's actually present - it's easy to add `GOOGLE_CLIENT_SECRET` first and forget this one).
-5. Confirm its URL under Settings → Domains (the default is `https://ai-router-drive.<your-subdomain>.workers.dev`) and use that for `DRIVE_AUTH_URL` in the next step.
+5. Confirm its URL under Settings → Domains (the default is `https://drive-auth-worker.<your-subdomain>.workers.dev`) and use that for `DRIVE_AUTH_URL` in the next step.
 
 ### 6. Deploy the GitHub Ops Worker (optional — needed for repo-aware coding/file edits)
 
@@ -72,8 +72,9 @@ This Worker is what lets the app read files, write commits, list directories, an
 1. Create another Worker and deploy `workers/github-ops-worker/github-ops-worker.js` to it - or run `npx wrangler deploy --config workers/github-ops-worker/wrangler.jsonc` from this repo. If you use Cloudflare's Git integration instead of manual `wrangler deploy`, set that project's **Root directory** to `workers/github-ops-worker`.
 2. Add a secret named `GITHUB_TOKEN` containing a GitHub personal access token with the repo permissions you want this app to use.
 3. Add a secret named `APP_SECRET` with the **same** string from step 1 of Setup.
-4. In `workers/github-ops-worker/wrangler.jsonc`, set `ALLOWED_REPOS` to a comma-separated allowlist. Supported entries: exact `owner/repo`, `owner/*` for all repos under one owner, or `*` for all repos the token can reach. The default is `solmasta/*`.
-5. Deploy and copy the Worker URL.
+4. Add a secret named `WRITE_SECRET` with a **second, different** random string (e.g. `openssl rand -hex 32` again - don't reuse `APP_SECRET`). This gates `write_file`/`merge_branch` specifically: `APP_SECRET` alone is enough to read/list files, but committing or merging requires this separate value too, entered once in the app under Settings → GitHub repository → write secret. `APP_SECRET` bootstraps automatically from a public endpoint, so keeping write access behind a second, never-auto-served secret means holding `APP_SECRET` alone isn't enough to write to your repos.
+5. In `workers/github-ops-worker/wrangler.jsonc`, set `ALLOWED_REPOS` to a comma-separated allowlist. Supported entries: exact `owner/repo`, `owner/*` for all repos under one owner, or `*` for all repos the token can reach. The default is `solmasta/*`.
+6. Deploy and copy the Worker URL.
 
 ### 7. Point the frontend at your Workers
 
@@ -83,7 +84,7 @@ In `index.html`, find these lines near the top of the `<script>` block:
 var DI_URL="https://openai-router-chat.lukedorsett.workers.dev";
 var OR_URL="https://openrouter-worker.lukedorsett.workers.dev";
 var CLAUDE_URL="https://claude-worker.lukedorsett.workers.dev";
-var DRIVE_AUTH_URL="https://ai-router-drive.lukedorsett.workers.dev";
+var DRIVE_AUTH_URL="https://drive-auth-worker.lukedorsett.workers.dev";
 var GH_OPS_URL="https://github-ops-worker.lukedorsett.workers.dev";
 var APP_SECRET="CHANGE_ME_APP_SECRET";
 ```
