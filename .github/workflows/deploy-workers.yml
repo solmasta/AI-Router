@@ -1,0 +1,119 @@
+name: Deploy Cloudflare Workers
+
+# Deploys all 5 Workers and syncs their secrets from GitHub Actions secrets
+# on every push that touches workers/**, or on demand via workflow_dispatch.
+# Deploying all 5 every run (instead of only the one that changed) is
+# deliberate - it's what keeps every Worker's APP_SECRET in lockstep. The
+# actual outage this replaces was exactly a same-secret-different-value drift
+# across Workers that had to be diagnosed one dashboard at a time; a single
+# source of truth (these GitHub secrets) removes that failure mode entirely.
+#
+# Requires these to exist under Settings -> Secrets and variables -> Actions
+# on this repo before it can run successfully:
+#   CLOUDFLARE_API_TOKEN   - Cloudflare API token, "Edit Cloudflare Workers" template
+#   CLOUDFLARE_ACCOUNT_ID  - Cloudflare account ID (dash.cloudflare.com right sidebar)
+#   APP_SECRET             - shared across all 5 Workers
+#   WRITE_SECRET            - github-ops-worker only (write_file/merge_branch gate)
+#   DEEPINFRA_KEY           - openai-router-chat
+#   OPENROUTER_KEY          - openrouter-worker
+#   ANTHROPIC_API_KEY       - claude-worker
+#   GH_OPS_TOKEN            - github-ops-worker (a GitHub PAT; can't be named
+#                             GITHUB_TOKEN, GitHub reserves that name for the
+#                             token Actions injects automatically)
+#   GOOGLE_CLIENT_SECRET    - drive-auth-worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'workers/**'
+      - '.github/workflows/deploy-workers.yml'
+  workflow_dispatch: {}
+
+jobs:
+  openai-router-chat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/openai-router-chat
+          secrets: |
+            APP_SECRET
+            DEEPINFRA_KEY
+        env:
+          APP_SECRET: ${{ secrets.APP_SECRET }}
+          DEEPINFRA_KEY: ${{ secrets.DEEPINFRA_KEY }}
+
+  openrouter-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/openrouter-worker
+          secrets: |
+            APP_SECRET
+            OPENROUTER_KEY
+        env:
+          APP_SECRET: ${{ secrets.APP_SECRET }}
+          OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
+
+  claude-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/claude-worker
+          secrets: |
+            APP_SECRET
+            ANTHROPIC_API_KEY
+        env:
+          APP_SECRET: ${{ secrets.APP_SECRET }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+  github-ops-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/github-ops-worker
+          secrets: |
+            APP_SECRET
+            WRITE_SECRET
+            GITHUB_TOKEN
+        env:
+          APP_SECRET: ${{ secrets.APP_SECRET }}
+          WRITE_SECRET: ${{ secrets.WRITE_SECRET }}
+          # Renamed on purpose: the Worker's code reads env.GITHUB_TOKEN, but
+          # a *repository* secret can't be named GITHUB_TOKEN - that name is
+          # reserved for the token Actions injects on its own. GH_OPS_TOKEN
+          # is the repo secret; this line is what maps it onto the name the
+          # Worker actually expects.
+          GITHUB_TOKEN: ${{ secrets.GH_OPS_TOKEN }}
+
+  drive-auth-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: workers/drive-auth
+          secrets: |
+            APP_SECRET
+            GOOGLE_CLIENT_SECRET
+        env:
+          APP_SECRET: ${{ secrets.APP_SECRET }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
