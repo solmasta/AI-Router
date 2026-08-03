@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.93</span></span>
+      <span class="wm">ai-router <span>v5.94</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -551,7 +551,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.93</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.94</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -565,7 +565,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
     <div class="sr"><div><div class="slb">Worker connection test</div><div class="ssb" id="workerTestStatus">Checks whether each backend Worker accepts the app's current secret - useful when a Worker keeps saying "Unauthorized" and it's unclear which one is out of sync</div></div><button class="bg" id="workerTestBtn">Run test</button></div>
     <div class="sr"><div><div class="slb">Agent auto-select</div><div class="ssb">Automatically pick the best model for each task</div></div><button class="bg" id="agentToggleBtn">ON</button></div>
     <div class="sr"><div><div class="slb">Overseer monitoring</div><div class="ssb">Track progress, detect stuck situations, suggest next steps</div></div><button class="bg" id="overseerToggleBtn">ON</button></div>
-    <div class="sr"><div><div class="slb">Brainstorming mode</div><div class="ssb">Generate prompts and suggestions during conversation</div></div><button class="bg" id="brainstormToggleBtn">ON</button></div>
+    <div class="sr"><div><div class="slb">Brainstorming mode</div><div class="ssb">Show extra exploratory idea suggestions during conversation. The next-step prompt after each reply always shows, regardless of this setting.</div></div><button class="bg" id="brainstormToggleBtn">ON</button></div>
     <div class="sr"><div><div class="slb">Auto prompt injection</div><div class="ssb">Overseer auto-generates optimal instructions for each model</div></div><button class="bg" id="autoPropomptToggleBtn">ON</button></div>
     <div class="sr"><div><div class="slb">Overseer voice</div><div class="ssb">Which voice reads replies aloud</div></div><select id="voiceSelect" class="fi" style="max-width:170px"><option value="">Default</option></select></div>
     <div class="sr"><div><div class="slb">Overseer personality</div><div class="ssb">Shapes tone and word choice in replies</div></div><input type="text" id="personalityInput" class="fi" placeholder="e.g. warm, direct, playful" style="max-width:180px" autocomplete="off"></div>
@@ -2234,6 +2234,21 @@ function displayGeneratedPrompts(force){
   }
   var existing=document.getElementById("overseerPrompts");
   if(!existing.innerHTML.includes(prompts[0])){existing.innerHTML=promptsHtml;}
+}
+/* Unconditional next-step nudge, called from every way a send can end -
+   success, plain error, and an aborted stream with or without partial
+   content kept. Used to only fire on a clean successful reply gated behind
+   the brainstormMode toggle, which meant an error, an empty completion, or
+   brainstormMode simply being off left the conversation just sitting there
+   with nothing telling the user what to do next. generateContextualPrompts
+   only reads the user's own last message and overseerState (never the
+   assistant's reply), so it has something to show even when the reply
+   itself failed outright - this is deliberately not gated on brainstormMode
+   or on there being any actual response text. brainstormMode still
+   separately controls displayBrainstormingSuggestions, the bigger
+   exploratory idea grid - that's a different feature and stays opt-out. */
+function showNextStepPrompt(){
+  try{analyzeConversationFlow();displayGeneratedPrompts(true);}catch(e){}
 }
 function displayBrainstormingSuggestions(){
   var suggestions=generateBrainstormingPrompts();
@@ -5292,12 +5307,7 @@ async function doSendRequest(userContent,isRegen,ap){
     asstMsg.wrap.classList.remove("ma2");
     asstMsg.body.innerHTML=renderMd(full||(isRegen?"(no response)":triedFallback?"\u26a0\ufe0f No response from "+esc(currentModel.label)+" either - try rephrasing or pick a different model.":"(empty response)"));
     chatHistory.push({role:"assistant",content:full});
-    /* Always leave a next-step prompt after a real response, not just
-       sometimes - previously this only ever appeared via the periodic
-       Overseer monitor, which only fires within a narrow progress window
-       and polls every few seconds, so plenty of responses landed with no
-       suggestion at all. */
-    if(brainstormMode&&full.trim()){try{analyzeConversationFlow();displayGeneratedPrompts(true);}catch(e){}}
+    showNextStepPrompt();
     memSuggestions.forEach(function(t){showMemorySuggestion(t);});
     /* Offer to save an ordinary conversation as a reusable Work Project
        once it's clearly settled into a topic (8 messages in) - never for
@@ -5326,6 +5336,10 @@ async function doSendRequest(userContent,isRegen,ap){
         if(!isRegen)chatHistory.pop();
         autoSave();
       }
+      /* Stopping generation still ends the turn - the user needs the same
+         "what now" nudge as any other way a send can end, not just a bare
+         chat that stopped moving. */
+      showNextStepPrompt();
     }else{
       /* Keep the user's message in history on a plain send error (rate
          limit, timeout, dropped connection, etc.) instead of popping it -
@@ -5334,6 +5348,12 @@ async function doSendRequest(userContent,isRegen,ap){
          storage/tab snapshots out of sync with what's on screen. */
       asstMsg.body.className="body err";asstMsg.body.innerHTML="Error: "+esc(e.message);
       autoSave();
+      /* An error is exactly the case this exists for - "just sitting
+         there" with a dead error bubble and no visible way forward was
+         the actual complaint this fixes. Regen is already offered on the
+         bubble itself; this adds the same next-step options a successful
+         reply gets. */
+      showNextStepPrompt();
     }
   }finally{
     sending=false;abortController=null;document.getElementById("sendBtn").disabled=false;document.getElementById("sendBtn").textContent="Send";document.getElementById("sendBtn").style.background="";

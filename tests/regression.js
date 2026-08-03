@@ -7,6 +7,9 @@
    - basic send + Overseer status bar
    - a send error keeping the message in history (Regen stays usable,
      tabs/storage don't silently lose the message)
+   - a next-step suggestion prompt always appears after a send ends, no
+     matter how - success, error, or an aborted stream - and regardless of
+     the separate brainstorming-mode toggle
    - vision model auto-switch on image attach, and auto-restore after
    - memory add/delete
    - tab creation, per-tab isolation, and switching back
@@ -265,6 +268,27 @@ function assert(cond, label) {
   const tabsRaw = await page.evaluate(() => localStorage.getItem('ai_tabs'));
   const tabsHasMsg = !!tabsRaw && tabsRaw.indexOf('quick test') >= 0;
   assert(tabsHasMsg, 'tab storage still contains the message after a send error (not silently dropped)');
+
+  console.log('\n-- a next-step prompt always appears, even after a send error, even with brainstorming mode off --');
+  // Used to only appear after a clean successful reply, gated behind the
+  // brainstormMode toggle - an error, an empty completion, or the toggle
+  // simply being off left the conversation just sitting there with no cue
+  // for what to do next. Now unconditional: the previous message already
+  // failed (no sandbox egress), which is exactly the case this covers.
+  const nextStepPromptAfterError = await page.evaluate(() => !!document.getElementById('overseerPrompts'));
+  assert(nextStepPromptAfterError, 'a next-step suggestion prompt appears even after a send error, not just after a successful reply');
+  await page.evaluate(() => document.getElementById('overseerPrompts').remove());
+  await page.click('#settingsBtn'); await page.waitForTimeout(150);
+  await page.click('#brainstormToggleBtn'); await page.waitForTimeout(150);
+  const brainstormOffLabel = await page.textContent('#brainstormToggleBtn');
+  assert(brainstormOffLabel === 'OFF', `test setup: brainstorming mode is now off (got "${brainstormOffLabel}")`);
+  await page.click('#closeSettingsModal'); await page.waitForTimeout(150);
+  await sendMsg('another message that will also fail to send');
+  const nextStepPromptWithBrainstormOff = await page.evaluate(() => !!document.getElementById('overseerPrompts'));
+  assert(nextStepPromptWithBrainstormOff, 'the next-step prompt still appears with brainstorming mode off - only the separate exploratory idea grid is gated on that setting');
+  await page.click('#settingsBtn'); await page.waitForTimeout(150);
+  await page.click('#brainstormToggleBtn'); await page.waitForTimeout(150);
+  await page.click('#closeSettingsModal'); await page.waitForTimeout(150);
 
   console.log('\n-- vision model auto-switch + auto-restore --');
   // "here's a photo" -> "what's wrong with it?" is an extremely common
