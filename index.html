@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.87</span></span>
+      <span class="wm">ai-router <span>v5.88</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -551,7 +551,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.87</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.88</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -562,6 +562,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
     <div class="sr"><div><div class="slb">Manual import</div><div class="ssb">Paste a backup file's content directly - works even if Drive is rate-limited or disconnected</div></div><button class="bg" id="driveManualImportBtn">Import</button></div>
     <div class="sr"><div><div class="slb">Drive folder</div><div class="ssb" id="driveFolderStatus">Auto (finds/creates by name)</div></div><div style="display:flex;gap:6px"><button class="bg" id="driveFolderOpenBtn">Open</button><button class="bg" id="driveFolderSetBtn">Set</button></div></div>
     <div class="sr"><div><div class="slb">GitHub repository</div><div class="ssb" id="githubStatus">Not connected</div></div><div style="display:flex;gap:6px"><button class="bg hidden" id="githubClearBtn">Clear</button><button class="bg" id="githubConnectBtn">Connect</button></div></div>
+    <div class="sr"><div><div class="slb">Worker connection test</div><div class="ssb" id="workerTestStatus">Checks whether each backend Worker accepts the app's current secret - useful when a Worker keeps saying "Unauthorized" and it's unclear which one is out of sync</div></div><button class="bg" id="workerTestBtn">Run test</button></div>
     <div class="sr"><div><div class="slb">Agent auto-select</div><div class="ssb">Automatically pick the best model for each task</div></div><button class="bg" id="agentToggleBtn">ON</button></div>
     <div class="sr"><div><div class="slb">Overseer monitoring</div><div class="ssb">Track progress, detect stuck situations, suggest next steps</div></div><button class="bg" id="overseerToggleBtn">ON</button></div>
     <div class="sr"><div><div class="slb">Brainstorming mode</div><div class="ssb">Generate prompts and suggestions during conversation</div></div><button class="bg" id="brainstormToggleBtn">ON</button></div>
@@ -4370,6 +4371,36 @@ document.getElementById("githubDisconnectBtn").addEventListener("click",function
    Connect modal to find Disconnect. */
 document.getElementById("githubClearBtn").addEventListener("click",function(){
   disconnectGithub();
+});
+/* Every Worker's fetch handler checks X-App-Secret before doing anything
+   else, so a plain GET with no body reliably surfaces just that check: 401
+   means this Worker's stored APP_SECRET doesn't match what the app just
+   sent, any other status (200, 404, 405 - depends on the Worker, since none
+   of these expose a bare GET as their "real" functionality) means the
+   secret matched and the request got past auth into the Worker's own
+   routing. Written for troubleshooting a still-mismatched secret across
+   Workers set up by hand one at a time in the Cloudflare dashboard, where
+   there's no way to directly compare two saved secret values (Cloudflare
+   secrets are write-only once saved). */
+document.getElementById("workerTestBtn").addEventListener("click",async function(){
+  var statusEl=document.getElementById("workerTestStatus");
+  statusEl.textContent="Testing…";
+  await ensureAppSecret();
+  var workers=[
+    {name:"openai-router-chat",url:DI_URL},
+    {name:"openrouter-worker",url:OR_URL},
+    {name:"github-ops-worker",url:GH_OPS_URL},
+    {name:"ai-router-drive",url:DRIVE_AUTH_URL}
+  ];
+  var results=await Promise.all(workers.map(async function(w){
+    try{
+      var res=await fetch(w.url,{headers:{"X-App-Secret":APP_SECRET||""}});
+      return w.name+": "+(res.status===401?"✗ secret rejected":"✓ secret accepted (HTTP "+res.status+")");
+    }catch(e){
+      return w.name+": ✗ request failed ("+e.message+")";
+    }
+  }));
+  statusEl.textContent=results.join(" · ");
 });
 function resolveGithubWriteConfirm(approved){
   closeModal("githubWriteConfirmModal");
