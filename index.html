@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.91</span></span>
+      <span class="wm">ai-router <span>v5.92</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -551,7 +551,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.91</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.92</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1062,14 +1062,29 @@ async function doSummarize(){
         autoSave();updTokenBar();
       } else {
         note.remove();
+        warnSummarizeFailed();
       }
     } else {
       note.remove();
+      warnSummarizeFailed();
     }
   }catch(e){
     note.remove();
+    warnSummarizeFailed();
   }
   summarizing=false;
+}
+/* This used to fail silently on any hiccup (bad response, network error) -
+   the context bar just kept climbing with no clue why, until send() hit
+   the hard 92% stop and the conversation looked stuck with no way forward
+   besides Clear. One toast per session is enough to explain what's
+   happening without nagging on every retry - doSummarize gets called again
+   on the very next message anyway. */
+var summarizeFailWarned=false;
+function warnSummarizeFailed(){
+  if(summarizeFailWarned)return;
+  summarizeFailWarned=true;
+  showToast("Couldn't summarize earlier messages to free up context space (a temporary issue) - it'll retry on your next message. If this conversation gets too long to continue, tap Clear to start fresh.");
 }
 
 /* ---- Voice ---- */
@@ -2880,7 +2895,7 @@ function loadPrompts(){
   catch(e){prompts=[];activePromptId=null;}
   refreshPL();
 }
-function savePrompts(){localStorage.setItem(pk(PK),JSON.stringify({prompts:prompts,activeId:activePromptId}));}
+function savePrompts(){return safeSetLocal(pk(PK),JSON.stringify({prompts:prompts,activeId:activePromptId}));}
 function getAP(){
   if(activeWProjId){
     var p=wproj.find(function(x){return x.id===activeWProjId;});
@@ -3013,7 +3028,7 @@ function importDefaults(){
 /* ---- Projects ---- */
 var GK="ai_projects";
 function loadProjects(){try{projects=JSON.parse(localStorage.getItem(pk(GK))||"[]");}catch(e){projects=[];}}
-function saveProjects(){localStorage.setItem(pk(GK),JSON.stringify(projects));}
+function saveProjects(){return safeSetLocal(pk(GK),JSON.stringify(projects));}
 function renderProjectList(){
   var list=document.getElementById("projectList");list.innerHTML="";
   if(!projects.length){list.innerHTML='<p class="el">No folders yet.</p>';return;}
@@ -3116,7 +3131,7 @@ function delProject(){
 /* ---- Projects (dedicated, important-to-keep workspaces) ---- */
 var WPK="ai_workprojects";
 function loadWProjects(){try{wproj=JSON.parse(localStorage.getItem(pk(WPK))||"[]");}catch(e){wproj=[];}}
-function saveWProjects(){localStorage.setItem(pk(WPK),JSON.stringify(wproj));}
+function saveWProjects(){return safeSetLocal(pk(WPK),JSON.stringify(wproj));}
 
 function renderWprojHub(){
   var list=document.getElementById("wprojList");list.innerHTML="";
@@ -3250,8 +3265,21 @@ function saveChatToActiveWproj(){
   };
   if(existing){p.conversations[p.conversations.indexOf(existing)]=snap;}
   else{p.conversations.push(snap);}
-  saveWProjects();
+  /* saveWProjects can fail (QuotaExceededError) once a long-running chat's
+     duplicated-per-message snapshots push the origin over its localStorage
+     cap - it used to throw straight out of here and, since this runs
+     inside doSendRequest's main try block right after a reply renders
+     successfully, get caught by that function's generic error handler and
+     overwrite the already-correct reply with "Error: QuotaExceeded...".
+     safeSetLocal keeps this from throwing at all now; warn once per
+     session instead of every message so it doesn't nag on every send once
+     storage is actually full. */
+  if(!saveWProjects()&&!wprojStorageFullWarned){
+    wprojStorageFullWarned=true;
+    showToast("Your browser's storage is full, so this chat isn't being saved to its Work Project anymore. The reply above is fine - free up space under Settings (clear old chats/docs) to resume saving.");
+  }
 }
+var wprojStorageFullWarned=false;
 
 /* ---- Auto snapshot ---- */
 function autoSnap(){
@@ -3457,7 +3485,7 @@ function initTabs(){
    Overseer-mediated: only memories relevant to the current message get
    injected, not the whole list every time, to stay token-efficient. ---- */
 function loadMemories(){try{memories=JSON.parse(localStorage.getItem(pk(MK))||"[]");}catch(e){memories=[];}}
-function saveMemories(){localStorage.setItem(pk(MK),JSON.stringify(memories));}
+function saveMemories(){return safeSetLocal(pk(MK),JSON.stringify(memories));}
 function addMemory(text,always){
   text=(text||"").trim();if(!text)return;
   memories.push({id:Date.now().toString()+Math.random().toString(36).slice(2,5),text:text,always:!!always,createdAt:Date.now()});
@@ -3602,7 +3630,7 @@ function showProjectSuggestion(){
    future conversation, unlike one-message-only attachments. ---- */
 var DOC_LIBRARY_CAP=30;
 function loadDocLibrary(){try{docLibrary=JSON.parse(localStorage.getItem(pk(DLK))||"[]");}catch(e){docLibrary=[];}}
-function saveDocLibrary(){localStorage.setItem(pk(DLK),JSON.stringify(docLibrary));}
+function saveDocLibrary(){return safeSetLocal(pk(DLK),JSON.stringify(docLibrary));}
 function addToLibrary(file){
   docLibrary.push({id:Date.now().toString()+Math.random().toString(36).slice(2,5),name:file.name,type:file.type,content:file.content||null,dataUrl:file.dataUrl||null,addedAt:Date.now()});
   if(docLibrary.length>DOC_LIBRARY_CAP)docLibrary=docLibrary.slice(-DOC_LIBRARY_CAP);
