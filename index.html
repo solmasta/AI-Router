@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.89</span></span>
+      <span class="wm">ai-router <span>v5.90</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -551,7 +551,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.89</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.90</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1797,6 +1797,12 @@ function trackApproach(approach){
 }
 function analyzeConversationFlow(){
   if(chatHistory.length<2)return;
+  /* overseerState round-trips through JSON (tab save/restore), which turns
+     modelsUsed from a Set into a plain object - .add() below would throw
+     on that silently since this only used to run off a periodic timer with
+     no error boundary around it. Self-heal instead of ever calling .add()
+     on something that isn't actually still a Set. */
+  if(!(overseerState.modelsUsed instanceof Set))overseerState.modelsUsed=new Set();
   var now=Date.now();
   var recentMsgs=chatHistory.slice(-4);
   var userMsgs=recentMsgs.filter(function(m){return m.role==="user";});
@@ -2160,8 +2166,13 @@ function generateBrainstormingPrompts(){
 
   return prompts.slice(0,3);
 }
-function displayGeneratedPrompts(){
-  if(!overseerEnabled||overseerState.progress<15)return;
+function displayGeneratedPrompts(force){
+  /* force skips the Overseer-progress gate below - used right after a
+     response finishes so a next-step suggestion reliably shows up every
+     time, instead of only within the narrow progress window the periodic
+     monitor (startOverseerMonitoring) uses for its own separate nudges
+     during long conversations. */
+  if(!force&&(!overseerEnabled||overseerState.progress<15))return;
   var prompts=generateContextualPrompts();
   if(prompts.length===0)return;
 
@@ -5226,6 +5237,12 @@ async function doSendRequest(userContent,isRegen,ap){
     asstMsg.wrap.classList.remove("ma2");
     asstMsg.body.innerHTML=renderMd(full||(isRegen?"(no response)":triedFallback?"\u26a0\ufe0f No response from "+esc(currentModel.label)+" either - try rephrasing or pick a different model.":"(empty response)"));
     chatHistory.push({role:"assistant",content:full});
+    /* Always leave a next-step prompt after a real response, not just
+       sometimes - previously this only ever appeared via the periodic
+       Overseer monitor, which only fires within a narrow progress window
+       and polls every few seconds, so plenty of responses landed with no
+       suggestion at all. */
+    if(brainstormMode&&full.trim()){try{analyzeConversationFlow();displayGeneratedPrompts(true);}catch(e){}}
     memSuggestions.forEach(function(t){showMemorySuggestion(t);});
     /* Offer to save an ordinary conversation as a reusable Work Project
        once it's clearly settled into a topic (8 messages in) - never for
