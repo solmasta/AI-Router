@@ -21,6 +21,15 @@ name: Deploy Cloudflare Workers
 #                             GITHUB_TOKEN, GitHub reserves that name for the
 #                             token Actions injects automatically)
 #   GOOGLE_CLIENT_SECRET    - drive-auth-worker
+#
+# wranglerVersion is pinned because wrangler-action's own auto-install falls
+# back to an old cached Wrangler (3.90.0 as of writing) whenever the latest
+# isn't already present and it can't prompt interactively - and that old
+# version fails to read the "name" field out of wrangler.jsonc entirely
+# (errors "Required Worker name missing"), even though the file is valid.
+# Only the one Worker still on wrangler.toml (openrouter-worker) was
+# unaffected. Pinning a current major version sidesteps the fallback and its
+# jsonc-parsing gap.
 
 on:
   push:
@@ -39,6 +48,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
           workingDirectory: workers/openai-router-chat
           secrets: |
             APP_SECRET
@@ -55,6 +65,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
           workingDirectory: workers/openrouter-worker
           secrets: |
             APP_SECRET
@@ -71,6 +82,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
           workingDirectory: workers/claude-worker
           secrets: |
             APP_SECRET
@@ -87,6 +99,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
           workingDirectory: workers/github-ops-worker
           secrets: |
             APP_SECRET
@@ -110,6 +123,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
           workingDirectory: workers/drive-auth
           secrets: |
             APP_SECRET
