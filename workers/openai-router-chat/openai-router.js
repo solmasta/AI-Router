@@ -241,37 +241,19 @@ export default {
     }
 
     // Public endpoint: lets the frontend bootstrap APP_SECRET on page load
-    // before it has the secret to authenticate with - validates origin only,
-    // same as claude-worker's /secret. Origin/Referer are ordinary request
-    // headers any non-browser client (curl, a script) can set to whatever it
-    // likes, so this is a deterrent against casual/automated abuse of the raw
-    // Worker URL, not a security boundary: this secret is also the
-    // X-App-Secret that github-ops-worker accepts for writes/merges across
-    // ALLOWED_REPOS, so leaving this endpoint fully public (as it was before)
-    // let anyone script a straight-line path from "GET /secret" to write
-    // access on those repos, well past the "spend the API budget" abuse this
-    // check is meant to deter.
+    // before it has the secret to authenticate with. Deliberately no
+    // Origin/Referer gating here (an earlier version added one matching
+    // claude-worker's, and it broke secret bootstrapping in production for
+    // reasons that didn't reproduce from the request logs - Origin looked
+    // correct on other calls from the same page/session, but this endpoint
+    // still rejected it). Origin/Referer are ordinary request headers any
+    // non-browser client can set to whatever it likes anyway, so that check
+    // was only ever a deterrent, not a real boundary - and the operation it
+    // was actually guarding (github-ops-worker's write_file/merge_branch)
+    // now has its own separate WRITE_SECRET that this endpoint never serves,
+    // so leaving this fully public no longer means "public secret -> repo
+    // writes" the way it used to.
     if (request.method === "GET" && url.pathname === "/secret") {
-      const allowedOrigins = new Set([
-        "https://solmasta.github.io",
-        "http://localhost:8000",
-        "http://localhost:3000",
-        "http://127.0.0.1:8000",
-        "http://127.0.0.1:3000"
-      ]);
-
-      let origin = request.headers.get("Origin");
-      if (!origin) {
-        const referer = request.headers.get("Referer");
-        try { origin = referer ? new URL(referer).origin : ""; } catch { origin = ""; }
-      }
-
-      if (!allowedOrigins.has(origin)) {
-        return new Response(JSON.stringify({ error: "Origin not allowed" }), {
-          status: 403, headers: { "Content-Type": "application/json", ...CORS }
-        });
-      }
-
       return new Response(JSON.stringify({ secret: env.APP_SECRET || null }), {
         headers: { "Content-Type": "application/json", ...CORS }
       });
