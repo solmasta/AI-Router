@@ -386,6 +386,13 @@ function assert(cond, label) {
   await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
   await page.fill('#ghOwnerInput', 'solmasta');
   await page.fill('#ghRepoInput', 'openai-router');
+  // github-ops-worker now requires this secret for every repo op, including
+  // read_file/list_files, not just writes - without it the repo-tools gate
+  // (executeRepoTool and the two "hasRepoTools" checks) stays closed even
+  // once GitHub looks "connected", which the tool-offering assertions
+  // further down (e.g. "a generic coding question gets repo tools...")
+  // depend on.
+  await page.fill('#ghWriteSecretInput', 'regtest-write-secret');
   await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
   const ghStatusAfterConnect = await page.textContent('#githubStatus');
   assert(ghStatusAfterConnect === 'solmasta/openai-router', `GitHub status reflects connected repo (got "${ghStatusAfterConnect}")`);
@@ -416,6 +423,10 @@ function assert(cond, label) {
   const ownerFilledFromRecent = await page.inputValue('#ghOwnerInput');
   const repoFilledFromRecent = await page.inputValue('#ghRepoInput');
   assert(ownerFilledFromRecent === 'solmasta' && repoFilledFromRecent === 'openai-router', `tapping a recent-repo chip fills the owner/repo inputs (got "${ownerFilledFromRecent}/${repoFilledFromRecent}")`);
+  // The Clear button above (disconnectGithub) also wipes the stored write
+  // secret, and a recent-repo chip only fills owner/repo - re-enter it here
+  // too, same reason as the first connect above.
+  await page.fill('#ghWriteSecretInput', 'regtest-write-secret');
   await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
   const ghStatusAfterRecentReconnect = await page.textContent('#githubStatus');
   assert(ghStatusAfterRecentReconnect === 'solmasta/openai-router', `reconnecting via the recent-repo chip actually reconnects (got "${ghStatusAfterRecentReconnect}")`);
