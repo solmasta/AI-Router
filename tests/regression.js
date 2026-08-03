@@ -55,6 +55,10 @@
      burned its turn on tool_calls and had nothing left once locked to
      tool_choice:"none") triggers exactly one automatic fallback retry on a
      different tool-capable model instead of just showing "(empty response)"
+   - an unambiguous coding message always auto-routes to the same one
+     pinned coding model instead of the general auto-router's usual
+     shuffle-for-variety behavior rotating it between several
+     similarly-scored coding models message to message
    - GitHub Settings: a one-tap Clear button disconnects the active repo
      without opening the Connect modal, and previously-connected repos are
      offered as quick "recent" picks when reconnecting
@@ -567,6 +571,35 @@ function assert(cond, label) {
   await page.click('#githubDisconnectBtn'); await page.waitForTimeout(150);
   const ghStatusAfterDisconnect = await page.textContent('#githubStatus');
   assert(ghStatusAfterDisconnect === 'Not connected', `GitHub status reflects disconnect (got "${ghStatusAfterDisconnect}")`);
+
+  console.log('\n-- an unambiguous coding message always converges on the same pinned coding model --');
+  // The general auto-router's shuffle + recency-penalty scoring (added
+  // specifically so it wouldn't camp on one model for variety's sake)
+  // meant a coding conversation could rotate between several
+  // similarly-scored coding models message to message (Qwen2.5-72B,
+  // DeepSeek-V3.2, Qwen3-Coder, Kimi-K2, GLM-4.6, MiniMax-M2) - each with
+  // different conventions and tool-calling behavior, which reads as
+  // "random" for something that benefits from staying consistent. Force
+  // the model onto something clearly non-coding first, then send an
+  // unambiguous coding message and confirm it always lands on the one
+  // pinned coding model - same one the dedicated repo coding agent uses.
+  // Deliberately does NOT clear the chat first - #clearBtn wipes the
+  // active tab's history, and this runs on Tab A before the later "tabs"
+  // test switches away and back expecting Tab A's original content still
+  // there. The router weighs the last 8 non-github-flavored user turns by
+  // recency (latest counts in full, each one before it at half the weight
+  // of the one after it - see analyzeConversationTasks), so an unambiguous
+  // coding message with several matched keywords dominates that window
+  // regardless of whatever unrelated messages came before it.
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  await page.locator('.mc:has-text("Llama 3.1 8B Turbo")').first().click();
+  await page.waitForTimeout(150);
+  await sendMsg('why does this python function raise a TypeError when I pass it a list, can you fix and refactor the code');
+  const modelAfterCodeMsg = await page.textContent('#modelBtnLabel');
+  assert(modelAfterCodeMsg === 'Qwen3 Coder 480B', `an unambiguous coding message converges on the one pinned coding model instead of a rotating pick (got "${modelAfterCodeMsg}")`);
+  await sendMsg('please debug this javascript error and implement a fix');
+  const modelAfterSecondCodeMsg = await page.textContent('#modelBtnLabel');
+  assert(modelAfterSecondCodeMsg === 'Qwen3 Coder 480B', `a second, differently-worded coding message stays on the same pinned model instead of rotating (got "${modelAfterSecondCodeMsg}")`);
 
   console.log('\n-- memory add/delete --');
   await page.click('#settingsBtn'); await page.waitForTimeout(150);

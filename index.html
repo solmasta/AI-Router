@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.92</span></span>
+      <span class="wm">ai-router <span>v5.93</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -551,7 +551,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.92</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.93</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1579,7 +1579,28 @@ var switchSuggestionCooldown=0;
    were a reasonable fit. Reset alongside declinedSwitchTargets wherever
    that's reset - both are per-conversation routing state. */
 var recentAutoSelections=[];
+/* Coding is the one category where the shuffle-for-variety routing below
+   actively hurts: several catalog models score close enough on "code" that
+   the shuffle + recency penalty (both added specifically to stop the
+   router camping on one model) kept rotating a coding conversation through
+   Qwen2.5-72B/DeepSeek-V3.2/Qwen3-Coder/Kimi-K2/GLM-4.6/MiniMax-M2 message
+   to message - each with different conventions and tool-calling behavior,
+   which reads as "random" and actively hurts a project needing consistent
+   style. Unlike writing/research, where trying a different model can
+   genuinely help, there's no upside to varying the coding model - so when
+   code is clearly the dominant signal, skip the exploration entirely and
+   converge on one fixed, agentic coding model every time: the same one
+   already trusted for the dedicated repo coding agent. */
+function selectBestCodingModel(tasks){
+  if(!(tasks.code>0&&tasks.code>=tasks.write&&tasks.code>=tasks.reason&&tasks.code>=tasks.analyze&&tasks.code>=tasks.github))return undefined;
+  var pinned=getAllAvailableModels().find(function(item){return item.model.id===CODING_AGENT_MODEL_ID;});
+  if(!pinned)return undefined; /* not in the current catalog - fall through to normal scoring below */
+  if(pinned.backend===activeBackend&&pinned.model.id===currentModel.id)return null; /* already on it */
+  return{model:pinned.model,backend:pinned.backend,score:scoreModelForTask(pinned.model,tasks)};
+}
 function selectBestModel(tasks){
+  var codingPick=selectBestCodingModel(tasks);
+  if(codingPick!==undefined)return codingPick;
   /* Shuffle before scoring so an exact score tie between several
      comparably-good models doesn't always resolve to the same one (Array
      methods here are stable, so without this the first model in
