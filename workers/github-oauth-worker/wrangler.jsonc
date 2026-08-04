@@ -1,0 +1,31 @@
+{
+  "name": "github-oauth-worker",
+  "main": "github-oauth-worker.js",
+  "compatibility_date": "2025-09-23",
+  // APP_ORIGIN: the URL of your deployed index.html, e.g. https://your-app.pages.dev
+  // Used as a safety fallback; the actual redirect_uri is always <this-worker-origin>/callback.
+  // Set CALLBACK_URI as a var if you need to override the redirect_uri explicitly.
+  "vars": {
+    "APP_ORIGIN": "https://openai-router.pages.dev"
+  },
+  // Secrets to configure in the Cloudflare dashboard (Workers & Pages > github-oauth-worker > Settings > Variables & Secrets):
+  //   APP_SECRET           - same shared secret as the other workers
+  //   WRITE_SECRET         - same write secret as github-ops-worker
+  //   GITHUB_CLIENT_ID     - OAuth app Client ID
+  //   GITHUB_CLIENT_SECRET - OAuth app Client Secret
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": false,
+      "persist": true,
+      "head_sampling_rate": 1
+    }
+  }
+}

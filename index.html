@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.96</span></span>
+      <span class="wm">ai-router <span>v5.97</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -448,11 +448,13 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="modal hidden" id="githubModal"><div class="sheet">
   <div class="sh"><span>Connect GitHub Repo</span><button class="sc" id="closeGithubModal">&#10005;</button></div>
   <div class="sbody">
-    <p style="color:var(--mu);font-size:13px;line-height:1.5;margin:0 0 12px">The AI can read and write files in this repo when a coding conversation calls for it. Once connected, coding/debugging requests default to this repo unless you clearly ask about some other code. The actual GitHub access token lives on the server, not here - this just tells the app which repo to point at. Every write commits directly to the repo, but you'll be asked to approve each one before it happens.</p>
+    <p style="color:var(--mu);font-size:13px;line-height:1.5;margin:0 0 12px">The AI can read and write files in this repo when a coding conversation calls for it. Once connected, coding/debugging requests default to this repo unless you clearly ask about some other code. Every write commits directly to the repo, but you'll be asked to approve each one before it happens.</p>
+    <button class="bp" id="ghOauthConnectBtn" style="width:100%;margin-bottom:6px">Connect via GitHub OAuth</button>
+    <div id="ghOauthStatus" style="font-size:11px;color:var(--mu);margin-bottom:12px"></div>
+    <div style="font-size:11px;color:var(--mu);margin-bottom:10px;border-top:1px solid var(--br);padding-top:10px">Or use the legacy write secret (requires GITHUB_TOKEN + WRITE_SECRET set on the github-ops-worker):</div>
     <input type="text" id="ghOwnerInput" class="fi" placeholder="Repo owner, e.g. solmasta" autocomplete="off" style="width:100%;margin-bottom:8px;box-sizing:border-box">
     <input type="text" id="ghRepoInput" class="fi" placeholder="Repo name, e.g. openai-router" autocomplete="off" style="width:100%;box-sizing:border-box">
-    <input type="password" id="ghWriteSecretInput" class="fi" placeholder="Repo secret (required to read, write, or merge)" autocomplete="off" style="width:100%;margin-top:8px;box-sizing:border-box">
-    <p style="color:var(--mu);font-size:11px;line-height:1.4;margin:6px 0 0">Separate from the app's main secret and never fetched automatically - stored only on this device. Must match the WRITE_SECRET configured on github-ops-worker; required for every repo operation now, including reading and listing files, not just writes and merges.</p>
+    <input type="password" id="ghWriteSecretInput" class="fi" placeholder="Repo secret (legacy - leave blank if using OAuth)" autocomplete="off" style="width:100%;margin-top:8px;box-sizing:border-box">
     <div id="ghRecentRepos" class="hidden" style="margin-top:10px">
       <div style="font-size:11px;color:var(--mu);margin-bottom:6px">Recent repos</div>
       <div id="ghRecentReposList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
@@ -551,7 +553,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.96</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.97</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -610,6 +612,9 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 var DI_URL="https://openai-router-chat.lukedorsett.workers.dev";
 var OR_URL="https://openrouter-worker.lukedorsett.workers.dev";
 var DRIVE_AUTH_URL="https://ai-router-drive.lukedorsett.workers.dev";
+var GH_OAUTH_URL="https://github-oauth-worker.lukedorsett.workers.dev";
+// Must match GITHUB_CLIENT_ID in github-oauth-worker's Cloudflare secrets
+var GITHUB_CLIENT_ID="";
 /* APP_SECRET is fetched from worker's /secret endpoint on page load */
 var APP_SECRET=null;
 /* ---- Profiles: separate namespaces for chats/memories/prompts/projects
@@ -790,10 +795,14 @@ var DEFAULT_PROMPTS=[{id:"1000000001",name:"HVAC Field Tech",content:"You are an
 var VISION_MODELS=["Qwen/Qwen3-VL-30B-A3B-Instruct","google/gemma-3-27b-it","meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"];
 var TOOL_MODELS=["mistralai/Mistral-Small-3.2-24B-Instruct-2506","meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo","meta-llama/Llama-3.3-70B-Instruct-Turbo","meta-llama/Llama-4-Scout-17B-16E-Instruct","Qwen/Qwen2.5-72B-Instruct","Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo","deepseek-ai/DeepSeek-V3.2","moonshotai/Kimi-K2-Instruct","zai-org/GLM-4.6","MiniMaxAI/MiniMax-M2","openai/gpt-oss-120b"];
 var modelCanCodeAndControl=true;
-/* GitHub connection state. The actual GitHub PAT lives server-side as the
-   github-ops-worker's GITHUB_TOKEN secret - ghToken here is just a local
-   "connected" flag, so all that's persisted is which repo to point at. */
+/* GitHub connection state.  Two auth paths:
+   1. OAuth (preferred): user completes GitHub OAuth flow; access_token is
+      stored locally and passed as Authorization: ****** to github-ops-worker.
+      No server-side PAT needed.
+   2. Legacy: server-side GITHUB_TOKEN PAT on the worker + WRITE_SECRET.
+   ghToken is still used as a "connected" flag for UI gating. */
 var ghToken=null,ghRepoOwner=null,ghRepoName=null,ghWriteSecret=null;
+var ghOauthToken=null,ghOauthTokenExpiry=0,ghOauthRefreshToken=null;
 var GH_OPS_URL="https://github-ops-worker.lukedorsett.workers.dev";
 function loadGithubConnection(){
   ghRepoOwner=localStorage.getItem(pk("gh_repo_owner"))||null;
@@ -809,14 +818,89 @@ function loadGithubConnection(){
      WRITE_SECRET for read_file/write_file/list_files/merge_branch to
      succeed. */
   ghWriteSecret=localStorage.getItem(pk("gh_write_secret"))||null;
+  // OAuth tokens
+  ghOauthRefreshToken=localStorage.getItem(pk("gh_oauth_refresh_token"))||null;
+  var t=JSON.parse(localStorage.getItem(pk("gh_oauth_token"))||"null");
+  if(t&&t.expiry>Date.now()){ghOauthToken=t.token;ghOauthTokenExpiry=t.expiry;}
+  else{ghOauthToken=null;ghOauthTokenExpiry=0;}
 }
 function updateGithubStatus(){
   var s=document.getElementById("githubStatus");
-  if(s)s.textContent=(ghToken&&ghRepoOwner&&ghRepoName)?(ghRepoOwner+"/"+ghRepoName):"Not connected";
+  var oauthConnected=!!(ghOauthToken||ghOauthRefreshToken);
+  if(s){
+    if(ghToken&&ghRepoOwner&&ghRepoName){
+      s.textContent=(ghRepoOwner+"/"+ghRepoName)+(oauthConnected?" (OAuth)":"");
+    }else{
+      s.textContent="Not connected";
+    }
+  }
   var d=document.getElementById("githubDisconnectBtn");
   if(d)d.classList.toggle("hidden",!(ghToken&&ghRepoOwner&&ghRepoName));
   var c=document.getElementById("githubClearBtn");
   if(c)c.classList.toggle("hidden",!(ghToken&&ghRepoOwner&&ghRepoName));
+  // Show/hide the OAuth connect button label inside the modal
+  var ob=document.getElementById("ghOauthConnectBtn");
+  if(ob)ob.textContent=oauthConnected?"Reconnect GitHub OAuth":"Connect via GitHub OAuth";
+  var ost=document.getElementById("ghOauthStatus");
+  if(ost)ost.textContent=oauthConnected?"✓ OAuth token stored":"No OAuth token - connect above or enter write secret below";
+}
+function ghSaveOauthToken(token,expiresInSec,refreshToken){
+  ghOauthToken=token;
+  ghOauthTokenExpiry=expiresInSec?Date.now()+(expiresInSec*1000)-60000:0;
+  try{localStorage.setItem(pk("gh_oauth_token"),JSON.stringify({token:token,expiry:ghOauthTokenExpiry}));}catch(e){}
+  if(refreshToken){
+    ghOauthRefreshToken=refreshToken;
+    try{localStorage.setItem(pk("gh_oauth_refresh_token"),refreshToken);}catch(e){}
+  }
+}
+async function ghRefreshOauthToken(){
+  if(!ghOauthRefreshToken)return false;
+  try{
+    var res=await fetch(GH_OAUTH_URL+"/refresh",{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"X-Write-Secret":ghWriteSecret||""},body:JSON.stringify({refresh_token:ghOauthRefreshToken})});
+    var data=await res.json().catch(function(){return{};});
+    if(res.ok&&data.access_token){
+      ghSaveOauthToken(data.access_token,data.expires_in,data.refresh_token||null);
+      return true;
+    }
+    if(data.revoked){
+      ghOauthRefreshToken=null;
+      try{localStorage.removeItem(pk("gh_oauth_refresh_token"));}catch(e){}
+    }
+    return false;
+  }catch(e){return false;}
+}
+async function getGhAccessToken(){
+  // Return a valid OAuth access token, refreshing if expired.
+  // Falls back to null so the caller can use the server-side GITHUB_TOKEN PAT.
+  if(ghOauthToken){
+    if(ghOauthTokenExpiry===0||ghOauthTokenExpiry>Date.now())return ghOauthToken;
+    // Token has an expiry and it's past - try refreshing
+    var ok=await ghRefreshOauthToken();
+    if(ok)return ghOauthToken;
+    ghOauthToken=null;
+    return null;
+  }
+  if(ghOauthRefreshToken){
+    var ok2=await ghRefreshOauthToken();
+    if(ok2)return ghOauthToken;
+  }
+  return null;
+}
+function ghOAuthConnect(){
+  var popup=window.open(GH_OAUTH_URL+"/authorize","gh_oauth","width=700,height=600,popup");
+  if(!popup){showToast("Popup blocked - allow popups for this site and try again.");return;}
+  function onMessage(e){
+    if(!e.data||e.data.type!=="gh_oauth_success"&&e.data.type!=="gh_oauth_error")return;
+    window.removeEventListener("message",onMessage);
+    if(e.data.type==="gh_oauth_error"){
+      showToast("GitHub OAuth failed: "+(e.data.error||"unknown error"));
+      return;
+    }
+    ghSaveOauthToken(e.data.access_token,e.data.expires_in,e.data.refresh_token);
+    updateGithubStatus();
+    showToast("GitHub OAuth connected!");
+  }
+  window.addEventListener("message",onMessage);
 }
 /* Small "recently connected" list so switching which repo the AI points
    at (e.g. starting a new app in a new repo) doesn't mean retyping
@@ -863,7 +947,10 @@ function disconnectGithub(){
      repo already connected before. It's still fully clearable on purpose:
      blanking the field in Settings > GitHub repository and hitting Save
      removes it (see githubSaveBtn's handler). */
+  localStorage.removeItem(pk("gh_oauth_token"));
+  localStorage.removeItem(pk("gh_oauth_refresh_token"));
   ghToken=null;ghRepoOwner=null;ghRepoName=null;
+  ghOauthToken=null;ghOauthTokenExpiry=0;ghOauthRefreshToken=null;
   updateGithubStatus();
 }
 /* Per-write confirmation gate - resolves to the branch name to write to on
@@ -2474,26 +2561,30 @@ async function switchModelFromTool(modelId){
 }
 async function executeRepoTool(toolName,toolInput){
   if(!ghToken||!ghRepoOwner||!ghRepoName){return{error:"GitHub not connected"};}
-  /* github-ops-worker requires this secret on every op now, including
-     read_file/list_files - repo contents (possibly private) shouldn't be
-     reachable with just the semi-public APP_SECRET. See loadGithubConnection's
-     comment on ghWriteSecret. */
-  if(!ghWriteSecret){return{error:"GitHub secret not set - add it under Settings > GitHub repository before using repo tools."};}
+  /* Auth: prefer a locally-stored OAuth access_token (obtained via GitHub
+     OAuth flow) so no server-side GITHUB_TOKEN PAT is required.  If there's
+     no OAuth token, fall back to the legacy WRITE_SECRET path which relies on
+     the server-side PAT.  Both paths still send X-Write-Secret because the
+     ops worker uses it as a second auth layer before touching any repo. */
+  var oauthToken=await getGhAccessToken();
+  if(!oauthToken&&!ghWriteSecret){return{error:"GitHub not authenticated - connect via GitHub OAuth in Settings, or enter the write secret."};}
+  var headers={"Content-Type":"application/json","X-App-Secret":APP_SECRET,"X-Write-Secret":ghWriteSecret||""};
+  if(oauthToken)headers["Authorization"]="Bearer "+oauthToken;
   try{
     if(toolName==="read_file"){
-      var res=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"X-Write-Secret":ghWriteSecret},body:JSON.stringify({op:"read_file",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path})});
+      var res=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"read_file",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path})});
       var data=await res.json();
       return data.success?{success:true,content:data.content}:{error:data.error};
     }else if(toolName==="write_file"){
-      var wres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"X-Write-Secret":ghWriteSecret},body:JSON.stringify({op:"write_file",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path,content:toolInput.content,message:toolInput.message,branch:toolInput.branch})});
+      var wres=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"write_file",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path,content:toolInput.content,message:toolInput.message,branch:toolInput.branch})});
       var wdata=await wres.json();
       return wdata.success?{success:true,commit:wdata.commit,branch:wdata.branch}:{error:wdata.error};
     }else if(toolName==="list_files"){
-      var lres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"X-Write-Secret":ghWriteSecret},body:JSON.stringify({op:"list_files",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path})});
+      var lres=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"list_files",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path})});
       var ldata=await lres.json();
       return ldata.success?{success:true,files:ldata.files}:{error:ldata.error};
     }else if(toolName==="merge_branch"){
-      var mres=await fetch(GH_OPS_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET,"X-Write-Secret":ghWriteSecret},body:JSON.stringify({op:"merge_branch",owner:ghRepoOwner,repo:ghRepoName,branch:toolInput.branch,title:toolInput.title,message:toolInput.message,merge_method:toolInput.merge_method})});
+      var mres=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"merge_branch",owner:ghRepoOwner,repo:ghRepoName,branch:toolInput.branch,title:toolInput.title,message:toolInput.message,merge_method:toolInput.merge_method})});
       var mdata=await mres.json();
       return mdata.success?{success:true,prNumber:mdata.prNumber,prUrl:mdata.prUrl,sha:mdata.sha}:{error:mdata.error};
     }
@@ -4431,6 +4522,9 @@ document.getElementById("githubConnectBtn").addEventListener("click",function(){
   renderRecentRepos();
   openModal("githubModal");
 });
+document.getElementById("ghOauthConnectBtn").addEventListener("click",function(){
+  ghOAuthConnect();
+});
 document.getElementById("githubSaveBtn").addEventListener("click",function(){
   var owner=document.getElementById("ghOwnerInput").value.trim();
   var repo=document.getElementById("ghRepoInput").value.trim();
@@ -4477,6 +4571,7 @@ document.getElementById("workerTestBtn").addEventListener("click",async function
     {name:"openai-router-chat",url:DI_URL},
     {name:"openrouter-worker",url:OR_URL},
     {name:"github-ops-worker",url:GH_OPS_URL},
+    {name:"github-oauth-worker",url:GH_OAUTH_URL},
     {name:"ai-router-drive",url:DRIVE_AUTH_URL}
   ];
   var results=await Promise.all(workers.map(async function(w){
