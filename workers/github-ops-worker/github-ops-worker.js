@@ -87,11 +87,14 @@ async function ensureBranchExists(owner, repo, branch, headers, knownDefaultBran
   if (!createRes.ok) throw new Error(`Failed to create branch ${branch}: ${await describeError(createRes)}`);
 }
 
-async function handleGitHubOp(body, env) {
+async function handleGitHubOp(body, env, oauthToken) {
   const { op, owner, repo, path, content, message, branch, title, merge_method } = body;
-  const token = env.GITHUB_TOKEN;
+  // Prefer a user-supplied OAuth access_token (passed as Authorization: ****** from the frontend after GitHub OAuth) so the server-side GITHUB_TOKEN PAT
+  // is no longer required for the app to work.  Fall back to GITHUB_TOKEN for
+  // backwards compatibility when the frontend hasn't completed OAuth yet.
+  const token = oauthToken || env.GITHUB_TOKEN;
 
-  if (!token) return { error: "GitHub token not configured" };
+  if (!token) return { error: "GitHub token not configured - connect via GitHub OAuth in Settings, or set GITHUB_TOKEN on the worker." };
   if (!owner || !repo) return { error: "Missing owner or repo" };
 
   // Restrict writes to a caller-supplied owner/repo to a fixed allowlist -
@@ -315,7 +318,13 @@ export default {
       });
     }
 
-    const result = await handleGitHubOp(body, env);
+    // Extract a user OAuth token if the frontend sent one.
+    // Authorization header format: "******"
+    // This takes precedence over the server-side GITHUB_TOKEN PAT.
+    const authHeader = request.headers.get("Authorization") || "";
+    const oauthToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
+
+    const result = await handleGitHubOp(body, env, oauthToken);
     return new Response(JSON.stringify(result), {
       status: result.error ? 400 : 200,
       headers: { "Content-Type": "application/json", ...CORS }
