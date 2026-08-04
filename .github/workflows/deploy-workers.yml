@@ -21,8 +21,11 @@ name: Deploy Cloudflare Workers
 #                             GITHUB_TOKEN, GitHub reserves that name for the
 #                             token Actions injects automatically)
 #   GOOGLE_CLIENT_SECRET    - drive-auth-worker
-#   GITHUB_CLIENT_ID        - github-oauth-worker (OAuth App Client ID)
-#   GITHUB_CLIENT_SECRET    - github-oauth-worker (OAuth App Client Secret)
+#
+# github-oauth-worker's GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET are deliberately
+# NOT synced here - they're set directly on the Worker (Cloudflare dashboard
+# or `wrangler secret put`) and were never added as repo Actions secrets, so
+# this job only re-syncs APP_SECRET/WRITE_SECRET like the others.
 #
 # wranglerVersion is pinned because wrangler-action's own auto-install falls
 # back to an old cached Wrangler (3.90.0 as of writing) whenever the latest
@@ -205,8 +208,6 @@ jobs:
           secrets: |
             APP_SECRET
             WRITE_SECRET
-            GITHUB_CLIENT_ID
-            GITHUB_CLIENT_SECRET
         env:
           APP_SECRET: ${{ secrets.APP_SECRET }}
           WRITE_SECRET: ${{ secrets.WRITE_SECRET }}
