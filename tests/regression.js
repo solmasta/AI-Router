@@ -447,14 +447,16 @@ function assert(cond, label) {
   assert(recentReposVisible, 'the repo just cleared shows up as a recent-repo quick pick');
   const recentRepoLabel = await page.evaluate(() => document.getElementById('ghRecentReposList').textContent);
   assert(recentRepoLabel.indexOf('solmasta/openai-router') >= 0, `the recent-repo list includes the repo that was just disconnected (got "${recentRepoLabel}")`);
+  // disconnectGithub (the Clear button above) used to also wipe the stored
+  // write secret, forcing it to be retyped on every single reconnect - it's
+  // a per-device credential, not tied to a given repo connection, so it
+  // should still be sitting here without retyping it.
+  const writeSecretPersistedAfterClear = await page.inputValue('#ghWriteSecretInput');
+  assert(writeSecretPersistedAfterClear === 'regtest-write-secret', `the write secret survives Clear/reconnect instead of being wiped (got "${writeSecretPersistedAfterClear}")`);
   await page.click('#ghRecentReposList button:has-text("solmasta/openai-router")');
   const ownerFilledFromRecent = await page.inputValue('#ghOwnerInput');
   const repoFilledFromRecent = await page.inputValue('#ghRepoInput');
   assert(ownerFilledFromRecent === 'solmasta' && repoFilledFromRecent === 'openai-router', `tapping a recent-repo chip fills the owner/repo inputs (got "${ownerFilledFromRecent}/${repoFilledFromRecent}")`);
-  // The Clear button above (disconnectGithub) also wipes the stored write
-  // secret, and a recent-repo chip only fills owner/repo - re-enter it here
-  // too, same reason as the first connect above.
-  await page.fill('#ghWriteSecretInput', 'regtest-write-secret');
   await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
   const ghStatusAfterRecentReconnect = await page.textContent('#githubStatus');
   assert(ghStatusAfterRecentReconnect === 'solmasta/openai-router', `reconnecting via the recent-repo chip actually reconnects (got "${ghStatusAfterRecentReconnect}")`);
