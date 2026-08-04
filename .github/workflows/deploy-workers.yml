@@ -1,6 +1,6 @@
 name: Deploy Cloudflare Workers
 
-# Deploys all 5 Workers and syncs their secrets from GitHub Actions secrets
+# Deploys all 6 Workers and syncs their secrets from GitHub Actions secrets
 # on every push that touches workers/**, or on demand via workflow_dispatch.
 # Deploying all 5 every run (instead of only the one that changed) is
 # deliberate - it's what keeps every Worker's APP_SECRET in lockstep. The
@@ -21,6 +21,8 @@ name: Deploy Cloudflare Workers
 #                             GITHUB_TOKEN, GitHub reserves that name for the
 #                             token Actions injects automatically)
 #   GOOGLE_CLIENT_SECRET    - drive-auth-worker
+#   GITHUB_CLIENT_ID        - github-oauth-worker (OAuth App Client ID)
+#   GITHUB_CLIENT_SECRET    - github-oauth-worker (OAuth App Client Secret)
 #
 # wranglerVersion is pinned because wrangler-action's own auto-install falls
 # back to an old cached Wrangler (3.90.0 as of writing) whenever the latest
@@ -181,3 +183,32 @@ jobs:
         env:
           APP_SECRET: ${{ secrets.APP_SECRET }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+
+  github-oauth-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy Worker code
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
+          workingDirectory: workers/github-oauth-worker
+      - name: Sync secrets
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: '4'
+          workingDirectory: workers/github-oauth-worker
+          secrets: |
+            APP_SECRET
+            WRITE_SECRET
+            GITHUB_CLIENT_ID
+            GITHUB_CLIENT_SECRET
+        env:
+          APP_SECRET: ${{ secrets.APP_SECRET }}
+          WRITE_SECRET: ${{ secrets.WRITE_SECRET }}
+          GITHUB_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID }}
+          GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET }}
