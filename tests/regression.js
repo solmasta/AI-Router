@@ -108,6 +108,10 @@
      corrective nudge, and never renders the pseudo-code as the final
      answer; if the retry also comes back fake, it's shown as-is rather
      than retrying forever (no fallback model exists for this agent)
+   - 3+ rounds of tapping the auto-generated "Continue with the next
+     step: X" prompt in a row keep routing to the dedicated coding agent
+     instead of falling back to the plain chat model once those generic
+     continuation messages fill up the recent-turns lookback window
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -645,6 +649,41 @@ function assert(cond, label) {
   const chatTextAfterCodingAgent = await page.evaluate(() => document.getElementById('chat').textContent);
   assert(chatTextAfterCodingAgent.indexOf('Assistant') >= 0, "repo work renders as a normal assistant reply");
   assert(chatTextAfterCodingAgent.indexOf('README describes this project') >= 0, "the coding agent's final answer actually renders");
+
+  console.log('\n-- 3+ rounds of "Continue with the next step" in a row still keep routing to the dedicated coding agent --');
+  // Each auto-generated "Continue with the next step: X" message (from the
+  // step-completed notice and the persistent Overseer bar) scores zero on
+  // every analyzeTask keyword category on its own - a real bug had
+  // recentTurnsWereRepoRelevant only looking at the last 3 prior user
+  // turns, so after 3+ of these generic continuation messages in a row,
+  // the original repo-establishing message fell out of that window and
+  // the gate silently dropped back to the plain chat model, which has no
+  // real repo tools and hallucinates fake tool-call syntax instead.
+  let continuationRoundCodingAgentHits = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        continuationRoundCodingAgentHits++;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest continuation round ' + continuationRoundCodingAgentHits } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please check the repo and tell me what it does');
+  assert(continuationRoundCodingAgentHits === 1, 'test setup: the seed repo message reaches the coding agent');
+  await sendMsg('Continue with the next step: Verify results');
+  await sendMsg('Continue with the next step: Verify results');
+  await sendMsg('Continue with the next step: Verify results');
+  await page.unroute('**/*');
+  assert(continuationRoundCodingAgentHits === 4, `4 consecutive rounds (1 seed message + 3 "Continue with the next step" follow-ups) all reached the dedicated coding agent, not just the first couple (got ${continuationRoundCodingAgentHits})`);
 
   await page.evaluate(() => {
     document.getElementById('ghwPath').textContent = 'test';
