@@ -265,7 +265,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.106</span></span>
+      <span class="wm">ai-router <span>v5.107</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -555,7 +555,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.106</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.107</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1539,11 +1539,18 @@ function analyzeTask(text){
    said "repo"/"github"/etc., not this one. Without this, doSendRequest's
    coding-agent routing gate sees zero signal and silently drops back to
    the plain chat model, which has no real repo tools and just says it
-   can't browse anything. Bounded to the last 3 user turns before the
-   current one (not the full conversation, and deliberately smaller than
-   analyzeConversationTasks' 8-turn decay window) so a genuine topic
-   change still clears it within a couple of messages instead of "repo
-   mode" sticking around indefinitely. Main chat only, deliberately NOT
+   can't browse anything. Scans the full conversation backward, not a
+   fixed recent window - an earlier version capped this at the last 3
+   user turns, but the app's own auto-generated "Continue with the next
+   step: X" messages (from the step-completed notice and the persistent
+   Overseer bar) are themselves empty-scored, so 3+ rounds of tapping
+   Continue filled the entire window with them and pushed the original
+   repo-establishing message out of range - silently dropping a mid-task
+   conversation back to the plain chat model, which hallucinates fake
+   tool-call syntax instead of actually having repo tools. No cap is
+   needed: a genuine topic change already clears it via the
+   first-non-empty-turn check below, regardless of how far back it is.
+   Main chat only, deliberately NOT
    applied to the Overseer's own strategy chat - see overseerRepoRelevant's
    comment for why that one stays strictly per-message.
 
@@ -1575,7 +1582,7 @@ function looksLikeContinuationRequest(text){
   return /\b(review|continue|proceed|go ahead|keep going)\b/i.test(t)||/\b(check|look (at|through)|go through)\s+(it|this|that|them|these|those)\b/i.test(t);
 }
 function recentTurnsWereRepoRelevant(history){
-  var priorUserTurns=history.slice(0,-1).filter(function(m){return m.role==="user";}).slice(-3).reverse();
+  var priorUserTurns=history.slice(0,-1).filter(function(m){return m.role==="user";}).reverse();
   for(var i=0;i<priorUserTurns.length;i++){
     var t=analyzeTask(priorUserTurns[i].content);
     if(t.github>0||t.code>0)return true;
