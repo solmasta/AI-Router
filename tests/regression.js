@@ -102,6 +102,12 @@
      accepting actually creates one from a model-generated name/summary
    - an explicit topic-change phrase in a message prompts before starting
      a new tab, rather than silently switching or staying put
+   - a coding-agent reply that writes out a fake tool call as plain text
+     (tool_code, print(read_file(...)), <tool_call>) instead of a real
+     tool_calls entry triggers exactly one automatic retry with a
+     corrective nudge, and never renders the pseudo-code as the final
+     answer; if the retry also comes back fake, it's shown as-is rather
+     than retrying forever (no fallback model exists for this agent)
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -1230,6 +1236,91 @@ function assert(cond, label) {
   await page.unroute('**/*');
   assert(codingRoundCount === 3, `exactly 3 coding-agent rounds ran, one per Continue click plus the initial send (got ${codingRoundCount})`);
   assert(chatTextAfterCodingRounds.indexOf('regtest coding agent done') >= 0, "the final round's plain-text answer renders once the agent stops calling tools");
+
+  console.log('\n-- a coding-agent reply that writes out a fake tool call as plain text gets one automatic retry instead of being shown as-is --');
+  // The dedicated coding agent model sometimes comes back with
+  // finish_reason "stop" and content that's pseudo-code narrating a tool
+  // call (tool_code / print(read_file(...)) / <tool_call>) instead of a
+  // real tool_calls entry - nothing actually ran, so showing that text as
+  // the final answer is how "I only have read-only access" reports happen
+  // even though the tool would have worked. Round 1 returns fake
+  // pseudo-code; confirm it does NOT render as the final answer and a
+  // round 2 fires automatically with a corrective nudge in its messages;
+  // round 2 returns a real answer, which should render normally.
+  let fakeToolCallRoundCount = 0;
+  let secondRoundSawCorrectiveNudge = false;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        fakeToolCallRoundCount++;
+        if (fakeToolCallRoundCount === 1) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'tool_code\nprint(read_file(path="README.md"))' } }] }),
+          });
+          return;
+        }
+        secondRoundSawCorrectiveNudge = (parsed.messages || []).some(m => m.role === 'user' && typeof m.content === 'string' && m.content.indexOf("wasn't a real tool call") >= 0);
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest real answer after retry' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please check the repo and tell me what it does');
+  let chatTextAfterFakeToolCallRetry = '';
+  for (let i = 0; i < 60; i++) {
+    chatTextAfterFakeToolCallRetry = await page.evaluate(() => document.getElementById('chat').textContent);
+    if (chatTextAfterFakeToolCallRetry.indexOf('regtest real answer after retry') >= 0) break;
+    await page.waitForTimeout(200);
+  }
+  await page.unroute('**/*');
+  assert(fakeToolCallRoundCount === 2, `fake pseudo-code triggers exactly one automatic retry round (got ${fakeToolCallRoundCount} rounds)`);
+  assert(secondRoundSawCorrectiveNudge, 'the retry round includes a corrective nudge telling the model to make a real tool call instead of writing it as text');
+  assert(chatTextAfterFakeToolCallRetry.indexOf('tool_code') === -1, 'the fake pseudo-code from round 1 never renders as the final answer');
+  assert(chatTextAfterFakeToolCallRetry.indexOf('regtest real answer after retry') >= 0, 'the real answer from the retry round renders once it comes back');
+
+  console.log('\n-- a coding-agent reply that keeps writing fake tool calls even after the retry nudge is shown as-is instead of retrying forever --');
+  // Capped at exactly one retry per round - no fallback model exists for
+  // the coding agent to switch to, so a model that just won't emit a real
+  // tool call for this input should degrade to showing its text rather
+  // than looping.
+  let stubbornFakeToolCallRoundCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        stubbornFakeToolCallRoundCount++;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'tool_code\nprint(list_files())' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please check the repo again');
+  let chatTextAfterStubbornFakeToolCall = '';
+  for (let i = 0; i < 60; i++) {
+    chatTextAfterStubbornFakeToolCall = await page.evaluate(() => document.getElementById('chat').textContent);
+    if (stubbornFakeToolCallRoundCount >= 2 && chatTextAfterStubbornFakeToolCall.indexOf('tool_code') >= 0) break;
+    await page.waitForTimeout(200);
+  }
+  await page.unroute('**/*');
+  assert(stubbornFakeToolCallRoundCount === 2, `still capped at exactly one retry even when the retry also comes back fake (got ${stubbornFakeToolCallRoundCount} rounds)`);
+  assert(chatTextAfterStubbornFakeToolCall.indexOf('tool_code') >= 0, 'after the single retry is exhausted, the fake text is shown as-is instead of retrying again');
 
   console.log('\n-- an abandoned coding-agent step (no Continue click) still leaves its findings in real conversation history --');
   // Without this, moving on to an unrelated message after a pending
