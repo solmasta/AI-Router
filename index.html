@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.102</span></span>
+      <span class="wm">ai-router <span>v5.103</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -553,7 +553,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.102</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.103</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -2054,7 +2054,11 @@ function showStepUpdate(prevStep,nextStep){
   if(!nextStep)return;
   var notice=document.createElement("div");
   notice.style.cssText="padding:8px 12px;margin:8px 0;background:rgba(34,197,94,0.1);border-left:3px solid #22c55e;border-radius:4px;font-size:12px;color:var(--tx)";
-  notice.innerHTML="✓ <strong>Step completed:</strong> "+esc(prevStep)+"<br>→ <strong>Next:</strong> "+esc(nextStep);
+  /* insertPrompt (not an auto-send) so the user can review/edit the
+     continuation before it actually goes out - same pattern the Overseer
+     suggestion chips already use, rather than a silent immediate send. */
+  notice.innerHTML="✓ <strong>Step completed:</strong> "+esc(prevStep)+"<br>→ <strong>Next:</strong> "+esc(nextStep)+
+    ' <button style="margin-left:6px;padding:3px 8px;background:rgba(34,197,94,0.2);border:1px solid #22c55e;color:var(--tx);border-radius:4px;font-size:11px;cursor:pointer" onclick="insertPrompt(\'Continue with the next step: '+esc(nextStep).replace(/\\/g,"\\\\").replace(/'/g,"\\'")+'\')">Continue &#8594;</button>';
   document.getElementById("chat").appendChild(notice);
 }
 /* Each condition below stays true across many 15s monitoring ticks (e.g.
