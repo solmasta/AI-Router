@@ -7,6 +7,9 @@
    - basic send + Overseer status bar
    - a send error keeping the message in history (Regen stays usable,
      tabs/storage don't silently lose the message)
+   - a send that fails while the tab was hidden auto-retries once on its
+     own the moment the tab becomes visible again, instead of leaving the
+     user to notice the error and tap Regen themselves
    - a next-step suggestion prompt always appears after a send ends, no
      matter how - success, error, or an aborted stream - and regardless of
      the separate brainstorming-mode toggle
@@ -268,6 +271,58 @@ function assert(cond, label) {
   const tabsRaw = await page.evaluate(() => localStorage.getItem('ai_tabs'));
   const tabsHasMsg = !!tabsRaw && tabsRaw.indexOf('quick test') >= 0;
   assert(tabsHasMsg, 'tab storage still contains the message after a send error (not silently dropped)');
+
+  console.log('\n-- a send that fails while the tab is hidden auto-retries once the tab is visible again --');
+  // Mobile browsers throttle/drop network on a backgrounded PWA, so a send
+  // dying mid-flight while the user is away is expected - the fix isn't
+  // preventing that (not possible from JS), it's not making the user notice
+  // the error and tap Regen themselves once they come back. The sandbox's
+  // real rejection latency varies (sometimes near-instant, sometimes not -
+  // see waitForSendDone's comment above), so racing a live request to catch
+  // it still "in flight" is flaky. Instead hold the first matching POST open
+  // with route (never calling continue/abort until the test says so), so
+  // "hidden" is guaranteed to fire while sending is still genuinely true.
+  let hiddenRetryPostCount = 0;
+  let releaseFirstRequest;
+  const firstRequestHeld = new Promise((resolve) => { releaseFirstRequest = resolve; });
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    let isChatReq = false;
+    if (req.method() === 'POST' && req.postData()) {
+      try { isChatReq = !!JSON.parse(req.postData()).messages; } catch (e) {}
+    }
+    if (isChatReq) {
+      hiddenRetryPostCount++;
+      if (hiddenRetryPostCount === 1) await firstRequestHeld;
+    }
+    await route.abort();
+  });
+  await page.fill('#prompt', 'regtest hidden send');
+  await page.click('#sendBtn');
+  // Wait for the held request to actually land - at that point sending is
+  // definitely true and won't flip back until releaseFirstRequest() lets
+  // the route fail, so there's no race left simulating "hidden" next.
+  for (let i = 0; i < 40 && hiddenRetryPostCount < 1; i++) await page.waitForTimeout(50);
+  assert(hiddenRetryPostCount === 1, 'test setup: the first send is held in flight before simulating hidden');
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  releaseFirstRequest();
+  await waitForSendDone();
+  const postCountAfterHiddenFailure = hiddenRetryPostCount;
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  // regenLast()/doSendRequest never set the `sending` flag the way send()
+  // does (only send() itself does), so waitForSendDone's sendBtn-label poll
+  // can't detect a regen in flight - it returns instantly since the label
+  // never left "Send" for a fire-and-forget regenLast() call. Poll the
+  // request counter itself instead.
+  for (let i = 0; i < 40 && hiddenRetryPostCount <= postCountAfterHiddenFailure; i++) await page.waitForTimeout(50);
+  await page.unroute('**/*');
+  assert(hiddenRetryPostCount > postCountAfterHiddenFailure, 'coming back to the foreground after a hidden-tab send failure automatically retries once, with no tap needed');
 
   console.log('\n-- a next-step prompt always appears, even after a send error, even with brainstorming mode off --');
   // Used to only appear after a clean successful reply, gated behind the
