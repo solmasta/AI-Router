@@ -265,7 +265,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.107</span></span>
+      <span class="wm">ai-router <span>v5.108</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -555,7 +555,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.107</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.108</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1592,6 +1592,20 @@ function recentTurnsWereRepoRelevant(history){
 }
 function isTaskAnalysisEmpty(t){
   return t.github===0&&t.code===0&&t.write===0&&t.reason===0&&t.analyze===0&&t.search===0;
+}
+/* The coding agent normally stops after every tool round and waits for an
+   explicit Continue click - a real user report found this tedious for a
+   read-heavy task ("check everything... without doing one by one"), since
+   the model has no way to honor that request itself when the app forces a
+   click between every single file. Detecting this phrase on the message
+   that starts a coding-agent turn lets that turn auto-chain rounds instead
+   of stopping after each one - safe to do because write_file/merge_branch
+   still always pause on their own dedicated approval dialog inside the
+   round regardless of this flag; only the friction between successive
+   read-only rounds is removed. */
+function looksLikeAutoContinueRequest(text){
+  var t=typeof text==="string"?text:((text&&text.find&&text.find(function(c){return c.type==="text";}))||{}).text||"";
+  return /\b(on your own|by yourself|without (asking|stopping|checking( in| with me)?|me)|all at once|automatically|keep going (until|without)|don'?t (ask|stop)|no need to (ask|confirm|check)|not one by one|do(ing)? (it|them|everything) all\b)/i.test(t)||/without.*one by one/i.test(t);
 }
 /* Weighs the WHOLE conversation, not just the message that was just sent -
    scoring only the latest message meant a short reply like "yeah, do that"
@@ -2769,6 +2783,11 @@ async function executeToolCall(toolName,toolArgs,renderStatus,logTarget){
    MAIN conversation model just to keep tool access felt random and broke
    continuity with whatever the user was actually talking to. */
 var CODING_AGENT_MODEL_ID="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo";
+/* Caps an auto-continuing session (see looksLikeAutoContinueRequest) so a
+   model that never stops calling tools on a huge repo can't run away
+   unattended forever - it pauses and asks for an explicit Continue past
+   this many automatic rounds, same as the normal per-round default. */
+var CODING_AGENT_MAX_AUTO_ROUNDS=25;
 var codingAgentActive=null;
 var codingAgentSeq=0;
 function codingAgentSystemPrompt(){
@@ -2832,10 +2851,10 @@ function summarizeCodingRound(plainLines,roundCommentary){
   if(plainLines.length>1)return plainLines.join(" ");
   return "I finished the next repo step. Continue if you want me to keep going.";
 }
-async function runCodingAgentTurn(assembledMessages){
+async function runCodingAgentTurn(assembledMessages,autoContinue){
   var msgs=assembledMessages.slice();
   msgs.unshift({role:"system",content:codingAgentSystemPrompt()});
-  codingAgentActive={messages:msgs,id:++codingAgentSeq};
+  codingAgentActive={messages:msgs,id:++codingAgentSeq,autoContinue:!!autoContinue};
   await runCodingAgentRound();
 }
 /* sessionId ties a Continue click to the exact session it was rendered
@@ -2924,11 +2943,25 @@ async function runCodingAgentRound(sessionId){
          just found (e.g. claiming it can't see the repo at all). */
       chatHistory.push({role:"assistant",content:roundSummary});
       autoSave();
-      var contBtn=document.createElement("button");
-      contBtn.className="ba";contBtn.textContent="Continue";
-      contBtn.style.cssText="margin-top:8px";
-      contBtn.onclick=function(){contBtn.disabled=true;contBtn.textContent="…";runCodingAgentRound(mySession.id);};
-      con.wrap.appendChild(contBtn);
+      if(mySession.autoContinue&&(mySession.autoRoundCount||0)<CODING_AGENT_MAX_AUTO_ROUNDS){
+        mySession.autoRoundCount=(mySession.autoRoundCount||0)+1;
+        var stopBtn=document.createElement("button");
+        stopBtn.className="ba";stopBtn.textContent="Stop";
+        stopBtn.style.cssText="margin-top:8px";
+        stopBtn.onclick=function(){mySession.autoContinue=false;stopBtn.disabled=true;stopBtn.textContent="Stopped";};
+        con.wrap.appendChild(stopBtn);
+        runCodingAgentRound(mySession.id);
+      }else{
+        /* Either auto-continue was never requested, or a runaway task hit
+           CODING_AGENT_MAX_AUTO_ROUNDS - either way, fall back to the
+           normal one-tap-per-round behavior instead of chaining further
+           unattended. */
+        var contBtn=document.createElement("button");
+        contBtn.className="ba";contBtn.textContent="Continue";
+        contBtn.style.cssText="margin-top:8px";
+        contBtn.onclick=function(){contBtn.disabled=true;contBtn.textContent="…";runCodingAgentRound(mySession.id);};
+        con.wrap.appendChild(contBtn);
+      }
     }else{
       var finalText=(msg.content||"(no response)").replace(/<think>[\s\S]*?<\/think>\s*/g,"").trim();
       /* Capped at one retry per session (mySession.fakeToolRetried) since
@@ -5428,7 +5461,7 @@ async function doSendRequest(userContent,isRegen,ap){
   var hasImgInContent=Array.isArray(userContent)&&userContent.some(function(p){return p.type==="image_url";});
   if(!hasImgInContent&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&(ghWriteSecret||ghOauthToken||ghOauthRefreshToken)&&(searchGateTasks.github>0||searchGateTasks.code>0||(looksLikeContinuationRequest(qtext)&&recentTurnsWereRepoRelevant(chatHistory)))){
     try{
-      await runCodingAgentTurn(messages);
+      await runCodingAgentTurn(messages,looksLikeAutoContinueRequest(qtext));
     }finally{
       /* The normal reply path's own finally (below) resets sendBtn/sending
          once doSendRequest's try block runs to completion - this early
