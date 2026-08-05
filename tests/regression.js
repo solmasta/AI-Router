@@ -116,6 +116,12 @@
      by one" auto-chains its tool-call rounds instead of requiring a
      manual Continue tap after every single file, offering a Stop
      control instead and still stopping once it gives a final answer
+   - a model-capability error (e.g. "tool calling is not supported for
+     model: X") also triggers the automatic fallback-to-a-different-model
+     retry, instead of rendering the provider's raw error text as the
+     final answer - narrow on purpose, a plain network/timeout error
+     still shows as before instead of silently switching models on a
+     transient hiccup
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -1525,6 +1531,62 @@ function assert(cond, label) {
     return bubbles.length ? bubbles[bubbles.length - 1].textContent : '';
   });
   assert(replyBubbleLabel.indexOf('Llama 3.1 8B Turbo') >= 0, `the reply bubble's own model label updates to the fallback model instead of staying on the original failed model (got "${replyBubbleLabel}")`);
+
+  console.log('\n-- a hard error from the model also auto-switches to a fallback model and retries, not just an empty response --');
+  // The empty-response fallback above only covers a request that came back
+  // 200 with nothing in it. A genuine error (rate limit, a provider
+  // rejecting something about the request) used to skip straight to a raw
+  // "Error: ..." bubble with no retry at all - a real user report showed
+  // "Error: Tool calling is not supported for model: ..." rendered
+  // directly as the answer to an ordinary question. Mock the final
+  // streaming call as a hard HTTP error and confirm the app switches to a
+  // different tool-capable model and retries once, same as the empty-
+  // response case.
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  await page.locator('.mc:has-text("Mistral Small")').first().click();
+  await page.waitForTimeout(150);
+  let errorFallbackStreamModels = [];
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.stream === false) {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '' } }] }),
+        });
+        return;
+      }
+      if (parsed && parsed.stream === true) {
+        errorFallbackStreamModels.push(parsed.model);
+        if (errorFallbackStreamModels.length === 1) {
+          await route.fulfill({
+            status: 400,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: { message: 'Tool calling is not supported for model: ' + parsed.model } }),
+          });
+        } else {
+          await route.fulfill({
+            status: 200,
+            contentType: 'text/event-stream',
+            body: 'data: {"choices":[{"delta":{"content":"regtest error-fallback reply"}}]}\n\ndata: [DONE]\n\n',
+          });
+        }
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please give me some tips for staying focused today');
+  await page.unroute('**/*');
+  assert(errorFallbackStreamModels.length === 2, `a hard error on the first streaming call triggers exactly one fallback retry (got ${errorFallbackStreamModels.length} streaming calls: ${JSON.stringify(errorFallbackStreamModels)})`);
+  assert(errorFallbackStreamModels[0] !== errorFallbackStreamModels[1], `the retry actually uses a different model than the one that just errored (got "${errorFallbackStreamModels[0]}" then "${errorFallbackStreamModels[1]}")`);
+  const chatTextAfterErrorFallback = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(chatTextAfterErrorFallback.indexOf('regtest error-fallback reply') >= 0, `the fallback model's actual reply is what ends up rendered, not the raw error text (chat text: ${chatTextAfterErrorFallback.slice(-300)})`);
+  assert(chatTextAfterErrorFallback.indexOf('Tool calling is not supported') === -1, 'the raw provider error text never renders as the final answer once the fallback retry succeeds');
+  assert(chatTextAfterErrorFallback.indexOf('hit an error') >= 0, 'a notice explaining the automatic error-triggered model switch is shown in the chat');
 
   console.log('\n-- a repo-flavored message no longer needs to switch the main chat model at all --');
   // Repo work now always runs on the dedicated coding agent, independent

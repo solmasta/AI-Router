@@ -265,7 +265,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.108</span></span>
+      <span class="wm">ai-router <span>v5.109</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -555,7 +555,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.108</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.109</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -5631,6 +5631,54 @@ async function doSendRequest(userContent,isRegen,ap){
          chat that stopped moving. */
       showNextStepPrompt();
     }else{
+      /* A model-capability error (the provider rejecting tools/tool_choice
+         a specific model doesn't support) used to go straight to a raw
+         "Error: ..." bubble showing the provider's own wording verbatim -
+         the automatic fallback-and-retry below only ever covered a request
+         that came back 200 with nothing in it, not one that threw
+         outright. Give this specific class of error the same one-shot
+         treatment: try a different tool-capable model instead of showing
+         the user an error for what's really just one model's limitation.
+         Deliberately narrow - NOT applied to every thrown error. A plain
+         network failure/timeout/rate-limit isn't something a different
+         model fixes, and retrying blind on every error also means a
+         transient hiccup silently switches the user's active model as a
+         side effect, which is its own kind of confusing. */
+      var looksLikeModelCapabilityError=/tool[\s_-]?call(ing)?.*(not support|unsupported)|does\s?n[o']?t support (tool|function)|function[\s_-]?calling.*(not support|unsupported)/i.test(e.message||"");
+      var errorFallback=(looksLikeModelCapabilityError&&!triedFallback)?pickFallbackModel(currentModel.id):null;
+      if(errorFallback){
+        var erroredLabel=currentModel.label;
+        triedFallback=true;
+        full="";
+        try{
+          if(errorFallback.backend!==activeBackend){activeBackend=errorFallback.backend;await loadBackend();}
+          setModel(errorFallback.model);renderModelList();
+          showModelSwitchNotice("🤖 <strong>"+esc(erroredLabel)+"</strong> hit an error – switched to <strong>"+esc(errorFallback.model.label)+"</strong> and retrying");
+          asstMsg.label.lastChild.textContent=errorFallback.model.label;
+          asstMsg.body.className="body";
+          asstMsg.body.innerHTML='<span class="cur">▇</span>';
+          reqBody.model=errorFallback.model.id;
+          await streamFrom(reqBody);
+          full=full.replace(/<think>[\s\S]*?<\/think>\s*/g,"");
+          var memSuggestionsAfterErrorFallback=extractMemorySuggestions(full);
+          full=stripMemoryTags(full);
+          speakText(full);
+          asstMsg.wrap.classList.remove("ma2");
+          asstMsg.body.innerHTML=renderMd(full||"(empty response)");
+          chatHistory.push({role:"assistant",content:full});
+          showNextStepPrompt();
+          memSuggestionsAfterErrorFallback.forEach(function(t){showMemorySuggestion(t);});
+          autoSave();responseCount++;if(responseCount%5===0)autoSnap();saveChatToActiveWproj();updTokenBar();
+          return;
+        }catch(fe){
+          console.error("Error-triggered fallback retry also failed:",fe);
+          asstMsg.body.className="body err";asstMsg.body.innerHTML="Error: "+esc(fe.message);
+          autoSave();
+          showNextStepPrompt();
+          if(goneHiddenMidSend)pendingAutoRetryAfterHidden=true;
+          return;
+        }
+      }
       /* Keep the user's message in history on a plain send error (rate
          limit, timeout, dropped connection, etc.) instead of popping it -
          the message bubble stays visible either way, so popping it here
