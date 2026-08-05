@@ -9,18 +9,24 @@ function checkAuth(request, env) {
   return !!env.APP_SECRET && provided === env.APP_SECRET;
 }
 
-// Every op here - including read_file/list_files - needs a second, separate
-// secret on top of APP_SECRET. APP_SECRET is deliberately semi-public - the
-// frontend bootstraps it from an unauthenticated-by-design endpoint on the
-// openai-router-chat worker, so anyone who can reach that worker can obtain
-// it. That's an acceptable bar for spending the chat/search API budget, but
-// not for reading or writing repo contents: with ALLOWED_REPOS set to
-// something like "owner/*", APP_SECRET alone would let anyone on the
-// internet read (and previously, only for writes, commit to) every repo
-// that owner's GITHUB_TOKEN can see, private ones included. WRITE_SECRET is
-// never served by any endpoint; it's entered once by hand in the app's
-// Settings and stored only in the browser's localStorage, so holding
-// APP_SECRET alone is no longer enough to reach any op here.
+// Every op here - including read_file/list_files - needs either a valid
+// per-user OAuth token or a second, separate secret on top of APP_SECRET.
+// APP_SECRET is deliberately semi-public - the frontend bootstraps it from
+// an unauthenticated-by-design endpoint on the openai-router-chat worker,
+// so anyone who can reach that worker can obtain it. That's an acceptable
+// bar for spending the chat/search API budget, but not for reading or
+// writing repo contents: with ALLOWED_REPOS set to something like
+// "owner/*", APP_SECRET alone would let anyone on the internet read (and
+// previously, only for writes, commit to) every repo that owner's
+// GITHUB_TOKEN can see, private ones included. A caller presenting a valid
+// GitHub OAuth access_token clears this bar on its own - it's scoped to
+// whatever that specific GitHub user can actually do, which is a stronger
+// guarantee than a shared secret, and GitHub itself is the one validating
+// it (an invalid/expired token 401s downstream in handleGitHubOp). Without
+// one, WRITE_SECRET is still required - it's never served by any endpoint;
+// it's entered once by hand in the app's Settings and stored only in the
+// browser's localStorage, so holding APP_SECRET alone is no longer enough
+// to reach any op here.
 function checkWriteAuth(request, env) {
   const provided = request.headers.get("X-Write-Secret");
   return !!env.WRITE_SECRET && provided === env.WRITE_SECRET;
@@ -309,20 +315,23 @@ export default {
       });
     }
 
-    // Gates every op, not just write_file/merge_branch - read_file and
-    // list_files hand back repo contents, which APP_SECRET's semi-public
-    // exposure (see checkWriteAuth's comment) isn't a safe enough bar for.
-    if (!checkWriteAuth(request, env)) {
-      return new Response(JSON.stringify({ error: "Write secret missing or incorrect - set it under Settings > GitHub repository before reading, writing, or merging." }), {
-        status: 401, headers: { "Content-Type": "application/json", ...CORS }
-      });
-    }
-
     // Extract a user OAuth token if the frontend sent one.
-    // Authorization header format: "******"
+    // Authorization header format: "Bearer <token>"
     // This takes precedence over the server-side GITHUB_TOKEN PAT.
     const authHeader = request.headers.get("Authorization") || "";
     const oauthToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : null;
+
+    // Gates every op, not just write_file/merge_branch - read_file and
+    // list_files hand back repo contents, which APP_SECRET's semi-public
+    // exposure (see checkWriteAuth's comment) isn't a safe enough bar for.
+    // A caller-supplied OAuth token clears this on its own (see
+    // checkWriteAuth's comment) - only fall back to requiring WRITE_SECRET
+    // when there isn't one.
+    if (!oauthToken && !checkWriteAuth(request, env)) {
+      return new Response(JSON.stringify({ error: "Not authenticated - connect via GitHub OAuth in Settings, or set a write secret before reading, writing, or merging." }), {
+        status: 401, headers: { "Content-Type": "application/json", ...CORS }
+      });
+    }
 
     const result = await handleGitHubOp(body, env, oauthToken);
     return new Response(JSON.stringify(result), {

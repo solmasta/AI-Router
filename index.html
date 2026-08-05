@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.100</span></span>
+      <span class="wm">ai-router <span>v5.101</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -553,7 +553,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.100</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.101</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -2578,10 +2578,12 @@ async function switchModelFromTool(modelId){
 async function executeRepoTool(toolName,toolInput){
   if(!ghToken||!ghRepoOwner||!ghRepoName){return{error:"GitHub not connected"};}
   /* Auth: prefer a locally-stored OAuth access_token (obtained via GitHub
-     OAuth flow) so no server-side GITHUB_TOKEN PAT is required.  If there's
-     no OAuth token, fall back to the legacy WRITE_SECRET path which relies on
-     the server-side PAT.  Both paths still send X-Write-Secret because the
-     ops worker uses it as a second auth layer before touching any repo. */
+     OAuth flow) so no server-side GITHUB_TOKEN PAT is required - the ops
+     worker accepts a valid OAuth token on its own, no write secret needed.
+     If there's no OAuth token, fall back to the legacy WRITE_SECRET path
+     which relies on the server-side PAT instead. X-Write-Secret is sent
+     either way (harmless/ignored when an OAuth token is also present) so
+     a stored value doesn't need to be cleared when OAuth is what's active. */
   var oauthToken=await getGhAccessToken();
   if(!oauthToken&&!ghWriteSecret){return{error:"GitHub not authenticated - connect via GitHub OAuth in Settings, or enter the write secret."};}
   var headers={"Content-Type":"application/json","X-App-Secret":APP_SECRET,"X-Write-Secret":ghWriteSecret||""};
@@ -4838,7 +4840,7 @@ async function sendOverseerChatMsg(){
      or some unrelated life topic could still reach for the wrong repo. */
   var overseerTaskSignals=analyzeTask(text);
   var overseerRepoRelevant=overseerTaskSignals.github>0||overseerTaskSignals.code>0;
-  var overseerHasRepoTools=overseerHasTools&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&ghWriteSecret&&overseerRepoRelevant;
+  var overseerHasRepoTools=overseerHasTools&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&(ghWriteSecret||ghOauthToken||ghOauthRefreshToken)&&overseerRepoRelevant;
   var sys="You are the Overseer, a strategic advisor built into this app. The user has stepped out of their main conversation with the AI model to talk strategy with you directly - about approach, what to try next, or whether they're stuck. Be direct and concise. Base advice on the actual context below, not generic platitudes.\n\n"+
     (overseerPersonality?("Personality: "+overseerPersonality+" - let this come through naturally in your tone and word choice, without announcing or explaining it.\n\n"):"")+
     "Goal: "+(overseerState.goalType||"not yet detected")+"\n"+
@@ -5308,7 +5310,7 @@ async function doSendRequest(userContent,isRegen,ap){
      tool access doesn't disappear just because the auto-router picked a
      non-tool-capable model for the main chat. */
   var hasImgInContent=Array.isArray(userContent)&&userContent.some(function(p){return p.type==="image_url";});
-  if(!hasImgInContent&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&ghWriteSecret&&(searchGateTasks.github>0||searchGateTasks.code>0)){
+  if(!hasImgInContent&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&(ghWriteSecret||ghOauthToken||ghOauthRefreshToken)&&(searchGateTasks.github>0||searchGateTasks.code>0)){
     try{
       await runCodingAgentTurn(messages);
     }finally{
