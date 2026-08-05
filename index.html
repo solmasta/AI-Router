@@ -104,6 +104,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:cal
 .ba:hover{color:var(--tx);background:var(--up)}
 .ct{font-size:10.5px;color:var(--mu);font-family:var(--mn);margin-left:auto;opacity:.7}
 .srch{font-size:10.5px;color:var(--ac);background:rgba(139,140,247,.1);border-radius:20px;padding:2px 9px;white-space:nowrap;font-weight:500}
+.modelTag{font-size:10.5px;color:var(--mu);font-family:var(--mn);opacity:.7;font-weight:400;white-space:nowrap}
 .msw{display:flex;align-items:center;gap:8px;color:var(--mu);font-size:11px;opacity:.6;font-weight:500}
 .msw::before,.msw::after{content:'';flex:1;height:1px;background:var(--br)}
 .cb{margin:10px 0;border-radius:12px;overflow:hidden;border:1px solid var(--br)}
@@ -265,7 +266,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.109</span></span>
+      <span class="wm">ai-router <span>v5.110</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -555,7 +556,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.109</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.110</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -738,7 +739,7 @@ function defaultOverseerState(){
     stuck:false,stuckSince:null,recommendations:[],
     attemptedApproaches:[],successProbability:0,efficiencyScore:100,
     qualityScore:0,steps:[],currentStep:0,contextHistory:[],
-    lastResponseLength:0,conversationQuality:"good",
+    lastResponseLength:0,conversationQuality:"good",lastAssistantConcern:false,
     activeProject:null,activeProjectInstructions:null,
     strategyChat:[]
   };
@@ -2020,6 +2021,19 @@ function planTaskSteps(){
 function trackApproach(approach){
   overseerState.attemptedApproaches.push({approach:approach,time:Date.now(),success:null});
 }
+/* Length alone said nothing about whether the model was actually on
+   track - a long, fluent refusal ("I don't have access to that
+   repository...") scored "excellent" purely for being wordy, while a
+   short, correct one-line answer scored "poor" for being brief. This is
+   the real "relay the model's own feedback and analyze it" loop: the
+   Overseer should notice when the underlying model's actual words say
+   it's stuck, refusing, or unsure - not just track how many characters
+   came back. */
+var ASSISTANT_CONCERN_PATTERNS=[/\bi (don'?t|do not) have access\b/i,/\bi can'?t\b/i,/\bi cannot\b/i,/\bi'?m not able to\b/i,/\bi am not able to\b/i,/\bi'?m not sure\b/i,/\bi don'?t know\b/i,/\bunable to (help|assist|complete|do that)\b/i,/^error:/i,/\(empty response\)/i,/no response from/i];
+function detectAssistantConcern(text){
+  var t=(typeof text==="string"?text:"").toLowerCase();
+  return ASSISTANT_CONCERN_PATTERNS.some(function(p){return p.test(t);});
+}
 function analyzeConversationFlow(){
   if(chatHistory.length<2)return;
   /* overseerState round-trips through JSON (tab save/restore), which turns
@@ -2037,8 +2051,10 @@ function analyzeConversationFlow(){
 
   var avgResponseLength=assistantMsgs.length>0?assistantMsgs.reduce(function(sum,m){return sum+(m.content||"").length;},0)/assistantMsgs.length:0;
   overseerState.lastResponseLength=avgResponseLength;
+  var lastAssistantMsg=assistantMsgs.length?assistantMsgs[assistantMsgs.length-1]:null;
+  overseerState.lastAssistantConcern=lastAssistantMsg?detectAssistantConcern(lastAssistantMsg.content):false;
 
-  var isStuck=avgResponseLength<100&&userMsgs.length>=2;
+  var isStuck=(avgResponseLength<100&&userMsgs.length>=2)||overseerState.lastAssistantConcern;
   if(isStuck&&!overseerState.stuck){overseerState.stuck=true;overseerState.stuckSince=now;makeBetterRecommendation();}
   if(!isStuck){overseerState.stuck=false;overseerState.stuckSince=null;}
 
@@ -2057,6 +2073,10 @@ function calculateQualityScore(){
   else if(overseerState.lastResponseLength<200)overseerState.qualityScore=60;
   else if(overseerState.lastResponseLength<500)overseerState.qualityScore=85;
   else overseerState.qualityScore=95;
+  /* A confident-sounding refusal is still wordy - length alone would
+     score it "excellent". Cap it down when the model's own words say
+     it's stuck/refusing/unsure, regardless of how long that text is. */
+  if(overseerState.lastAssistantConcern)overseerState.qualityScore=Math.min(overseerState.qualityScore,40);
   if(overseerState.qualityScore<70)overseerState.conversationQuality="poor";
   else if(overseerState.qualityScore<85)overseerState.conversationQuality="good";
   else overseerState.conversationQuality="excellent";
@@ -5203,8 +5223,20 @@ function appendMsg(role,content,streaming){
     var av=document.createElement("span");av.className="av";av.textContent="✦";
     label.appendChild(av);
   }
-  var lspan=document.createElement("span");lspan.textContent=role==="user"?"You":currentModel.label;
+  /* The main chat's single point of contact is the Overseer, not whichever
+     model happens to be answering right now (the model's own system prompt
+     already frames it this way too - see getModelSystemPrompt) - the actual
+     model name still shows, just as a secondary indicator (.modelTag,
+     always the label's last child) rather than the primary identity. The
+     fallback-retry paths below rely on it staying the last child - they
+     update it in place via label.lastChild.textContent when a mid-turn
+     model switch happens, without touching the "Overseer" text itself. */
+  var lspan=document.createElement("span");lspan.textContent=role==="user"?"You":"Overseer";
   label.appendChild(lspan);
+  if(role==="assistant"){
+    var mtag=document.createElement("span");mtag.className="modelTag";mtag.textContent=currentModel.label;
+    label.appendChild(mtag);
+  }
   var body=document.createElement("div");body.className="body";
   if(streaming){body.innerHTML='<span class="cur">\u2587</span>';wrap.classList.add("ma2");}
   else if(Array.isArray(content)){

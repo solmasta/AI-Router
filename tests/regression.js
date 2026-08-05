@@ -122,6 +122,13 @@
      final answer - narrow on purpose, a plain network/timeout error
      still shows as before instead of silently switching models on a
      transient hiccup
+   - the main chat's single point of contact is "the Overseer" (the
+     primary reply label), with the model that actually answered shown
+     as a secondary indicator rather than the primary identity
+   - the Overseer's quality/stuck tracking reacts to what the model's
+     reply actually says (refusing, unsure, no access), not just its
+     character length - a long, fluent refusal no longer scores
+     "excellent" purely for being wordy
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -2106,6 +2113,78 @@ function assert(cond, label) {
   const usedVoiceName = await page.evaluate(() => window.__speakVoiceCalls[window.__speakVoiceCalls.length - 1]);
   assert(usedVoiceName === 'regtest-voice', `the picked voice is actually set on the utterance (got "${usedVoiceName}")`);
   await page.click('#speakBtn'); await page.waitForTimeout(150);
+
+  console.log('\n-- the main chat labels replies "Overseer" with the actual model shown as a secondary indicator --');
+  // The main chat's single point of contact is the Overseer, not whichever
+  // model happens to answer - the model name should still be visible, just
+  // as a secondary indicator rather than the primary label.
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.stream === true) {
+        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"choices":[{"delta":{"content":"regtest overseer-label reply"}}]}\n\ndata: [DONE]\n\n' });
+        return;
+      }
+      if (parsed && parsed.stream === false) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '' } }] }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('regtest message to check the overseer label');
+  await page.unroute('**/*');
+  const overseerLabelInfo = await page.evaluate(() => {
+    const labels = document.querySelectorAll('#chat .msg.ma3 .ml');
+    const last = labels[labels.length - 1];
+    const primary = last ? last.querySelector('span:not(.av):not(.modelTag)').textContent : '';
+    const modelTag = last ? last.querySelector('.modelTag') : null;
+    return { primary, modelTagText: modelTag ? modelTag.textContent : null, currentModelLabel: document.getElementById('modelBtnLabel').textContent };
+  });
+  assert(overseerLabelInfo.primary === 'Overseer', `the reply bubble's primary label reads "Overseer" (got "${overseerLabelInfo.primary}")`);
+  assert(!!overseerLabelInfo.modelTagText, 'a secondary model-name indicator is present on the reply bubble');
+  assert(overseerLabelInfo.modelTagText === overseerLabelInfo.currentModelLabel, `the model-name indicator matches the model that actually answered (got "${overseerLabelInfo.modelTagText}" vs active "${overseerLabelInfo.currentModelLabel}")`);
+
+  console.log('\n-- the Overseer\'s quality/stuck tracking reacts to what the model actually said, not just reply length --');
+  // A long, fluent refusal used to score "excellent" purely for being
+  // wordy, since quality was based only on character count. The Overseer
+  // should notice when the model's own words say it's stuck or refusing,
+  // regardless of length.
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.stream === true) {
+        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"choices":[{"delta":{"content":"I don\'t have access to that repository, so I am not able to check it directly, and honestly I am not sure what else to try here since nothing seems to be working out for this particular request no matter how I approach it."}}]}\n\ndata: [DONE]\n\n' });
+        return;
+      }
+      if (parsed && parsed.stream === false) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '' } }] }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('regtest message that gets a long-but-stuck reply');
+  await page.unroute('**/*');
+  let overseerStatusTextAfterConcern = '';
+  for (let i = 0; i < 20; i++) {
+    overseerStatusTextAfterConcern = await page.evaluate(() => { const el = document.getElementById('overseerStatus'); return el ? el.textContent : ''; });
+    if (overseerStatusTextAfterConcern.indexOf('Stuck') >= 0) break;
+    await page.waitForTimeout(300);
+  }
+  const qualityMatch = overseerStatusTextAfterConcern.match(/Quality:\s*(\d+)%/);
+  const qualityPct = qualityMatch ? parseInt(qualityMatch[1], 10) : -1;
+  // A 220-char reply on length alone would score 85% ("excellent") - the
+  // concern cap (<=40) only kicks in because of what the text actually
+  // says. Exact value depends on the averaging window (shared chat
+  // history across the whole suite), so assert the cap held, not a
+  // precise number.
+  assert(qualityPct >= 0 && qualityPct <= 40, `a reply that actually says it's stuck/refusing is capped at 40% quality or lower instead of scoring high purely for length (got Quality: ${qualityPct}%, full status: ${overseerStatusTextAfterConcern})`);
+  assert(overseerStatusTextAfterConcern.indexOf('Stuck') >= 0, `the stuck indicator reacts to the reply's actual content, not just its length (got: ${overseerStatusTextAfterConcern})`);
 
   console.log('\n-- Overseer personality is persisted and shapes the system prompt --');
   await page.click('#settingsBtn'); await page.waitForTimeout(150);
