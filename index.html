@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.98</span></span>
+      <span class="wm">ai-router <span>v5.99</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -553,7 +553,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.98</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.99</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -698,6 +698,22 @@ var docLibrary=[];
 var undoTimer=null,undoData=null;
 var activeBackend="deepinfra",workerUrl="",allModels=[],currentModel={id:"",label:""};
 var chatHistory=[],sending=false,attachedFiles=[];
+/* Auto-retry a send that died because the tab was backgrounded mid-request
+   (mobile browsers throttle/drop network on a hidden PWA - there's no way
+   to keep the connection alive while hidden, so the best we can do is
+   retry automatically the moment the user comes back instead of making
+   them notice the error bubble and tap Regen themselves). goneHiddenMidSend
+   is reset at the start of every send/regen and only flips true if the tab
+   was actually hidden while that specific request was in flight, so a
+   plain foreground error (rate limit, bad request, etc.) never auto-retries. */
+var goneHiddenMidSend=false,pendingAutoRetryAfterHidden=false;
+document.addEventListener("visibilitychange",function(){
+  if(document.visibilityState==="hidden"){
+    if(sending)goneHiddenMidSend=true;
+  }else if(document.visibilityState==="visible"){
+    if(pendingAutoRetryAfterHidden&&!sending){pendingAutoRetryAfterHidden=false;regenLast();}
+  }
+});
 /* Exposed so the auto-update logic in the second script block (a plain
    top-level block, not this IIFE) can tell whether a request is actively
    in flight before reloading, without mirroring sending/codingAgentActive
@@ -5202,6 +5218,7 @@ async function send(){
 }
 
 async function doSendRequest(userContent,isRegen,ap){
+  goneHiddenMidSend=false;
   if(!ap)ap=getAP();
   var messages=[];
   var modelSysPrompt=getModelSystemPrompt(ap);
@@ -5455,6 +5472,7 @@ async function doSendRequest(userContent,isRegen,ap){
          bubble itself; this adds the same next-step options a successful
          reply gets. */
       showNextStepPrompt();
+      if(goneHiddenMidSend)pendingAutoRetryAfterHidden=true;
     }
   }finally{
     sending=false;abortController=null;document.getElementById("sendBtn").disabled=false;document.getElementById("sendBtn").textContent="Send";document.getElementById("sendBtn").style.background="";
