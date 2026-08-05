@@ -21,6 +21,7 @@ Everything the browser needs — markup, CSS, and JS — lives inline in `index.
 | `workers/claude-worker/claude-worker.js` + `wrangler.jsonc` | Cloudflare Worker — proxies Claude API, converts OpenAI format to Claude format |
 | `workers/drive-auth/drive-auth-worker.js` + `wrangler.jsonc` | Cloudflare Worker — holds the Google OAuth client secret; exchanges/refreshes Drive access tokens so the app never needs to re-prompt sign-in |
 | `workers/github-ops-worker/github-ops-worker.js` + `wrangler.jsonc` | Cloudflare Worker — proxies GitHub API operations (read/write/list files, merge branches) used by the app's repo tools |
+| `workers/github-oauth-worker/github-oauth-worker.js` + `wrangler.jsonc` | Cloudflare Worker — handles the GitHub OAuth handshake (authorize/callback/refresh) so a user can connect a repo via GitHub login instead of a personal access token |
 
 Each Worker lives in its own `workers/<name>/` folder with its script and `wrangler.jsonc`/`.toml` side by side. This isn't just tidiness — if you connect Cloudflare's Git integration (auto-deploy on push) for more than one of these Workers to this repo, **each project's "Root directory" build setting must point at that Worker's own subfolder**, not the repo root. Two projects both watching the repo root previously fought over a single shared `wrangler.jsonc`, each auto-committing the `name` field back to match itself on every push. One config file per folder means each Cloudflare project only ever sees its own file.
 | `import-prompts.html` | Standalone page to bulk-import the default system prompts into `localStorage`. Optional — `index.html` already has an "Import Defaults" button that does the same thing from within the app. |
@@ -76,7 +77,19 @@ This Worker is what lets the app read files, write commits, list directories, an
 5. In `workers/github-ops-worker/wrangler.jsonc`, set `ALLOWED_REPOS` to a comma-separated allowlist. Supported entries: exact `owner/repo`, `owner/*` for all repos under one owner, or `*` for all repos the token can reach. The default is `solmasta/*`.
 6. Deploy and copy the Worker URL.
 
-### 7. Point the frontend at your Workers
+### 7. Deploy the GitHub OAuth Worker (optional — lets users connect a repo via GitHub login instead of a personal access token)
+
+This Worker handles the OAuth handshake with GitHub: it redirects the user to GitHub's consent page, exchanges the resulting code for an access token, and hands that token back to the app. It's a separate, simpler alternative to typing a personal access token into the GitHub Ops Worker's write secret.
+
+1. On GitHub, go to **Settings → Developer settings → OAuth Apps** (not "GitHub Apps" — a GitHub App uses a different authorization flow and won't work here) → **New OAuth App**. Set the **Authorization callback URL** to `https://github-oauth-worker.<your-subdomain>.workers.dev/callback` (must match exactly, including no trailing slash — this Worker always uses its own `/callback` path regardless of where the app itself is hosted).
+2. Create a new Worker and deploy `workers/github-oauth-worker/github-oauth-worker.js` to it - or run `npx wrangler deploy --config workers/github-oauth-worker/wrangler.jsonc` from this repo. If you use Cloudflare's Git integration instead of manual `wrangler deploy`, set that project's **Root directory** to `workers/github-oauth-worker`.
+3. Add a secret named `GITHUB_CLIENT_ID` with the OAuth App's Client ID from step 1. Copy it directly from GitHub's page rather than retyping it — `l` (lowercase L), `1` (digit one), `I` (capital I), and `O`/`0` are easy to mix up by eye.
+4. Add a secret named `GITHUB_CLIENT_SECRET` with the OAuth App's Client Secret (generate one on the same page — shown only once).
+5. Add a secret named `APP_SECRET` with the **same** string from step 1 of Setup.
+6. Add a secret named `WRITE_SECRET` with the **same** value used for the GitHub Ops Worker (step 6.4 above) - this Worker's `/refresh` endpoint is gated behind it the same way.
+7. Confirm its URL under Settings → Domains and set `GH_OAUTH_URL` in `index.html` to match.
+
+### 8. Point the frontend at your Workers
 
 In `index.html`, find these lines near the top of the `<script>` block:
 
@@ -86,12 +99,13 @@ var OR_URL="https://openrouter-worker.lukedorsett.workers.dev";
 var CLAUDE_URL="https://claude-worker.lukedorsett.workers.dev";
 var DRIVE_AUTH_URL="https://drive-auth-worker.lukedorsett.workers.dev";
 var GH_OPS_URL="https://github-ops-worker.lukedorsett.workers.dev";
+var GH_OAUTH_URL="https://github-oauth-worker.lukedorsett.workers.dev";
 var APP_SECRET="CHANGE_ME_APP_SECRET";
 ```
 
-Replace `DI_URL`, `OR_URL`, `CLAUDE_URL`, `DRIVE_AUTH_URL`, and `GH_OPS_URL` with your own Worker URLs from steps 2–6, and `APP_SECRET` with the exact string you set as the `APP_SECRET` secret on all Workers.
+Replace `DI_URL`, `OR_URL`, `CLAUDE_URL`, `DRIVE_AUTH_URL`, `GH_OPS_URL`, and `GH_OAUTH_URL` with your own Worker URLs from steps 2–7, and `APP_SECRET` with the exact string you set as the `APP_SECRET` secret on all Workers.
 
-### 8. Deploy to GitHub Pages
+### 9. Deploy to GitHub Pages
 
 1. Push `index.html`, `manifest.json`, `sw.js`, and the icon files to the root of a repo.
 2. Enable GitHub Pages: **Settings → Pages → Deploy from branch → main → / (root)**.
