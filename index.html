@@ -265,7 +265,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.105</span></span>
+      <span class="wm">ai-router <span>v5.106</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -555,7 +555,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.105</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.106</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -2835,6 +2835,17 @@ async function runCodingAgentTurn(assembledMessages){
    for - without it, a stale Continue button left over from an earlier
    turn (ignored in favor of starting a new one) would resume whatever
    session happens to be active now instead of quietly doing nothing. */
+/* Some coding-agent replies that land on the plain-text path
+   (finish_reason !== "tool_calls") aren't really a final answer - the
+   model narrated a tool call as text instead of emitting a real one
+   (a tool_code block, print(read_file(...)), a <tool_call> or
+   <function=...> tag). Showing that to the user as if it were the
+   answer is how "read-only, can't write anything" reports happen even
+   though the tool genuinely would have worked. Retrying once with an
+   explicit nudge fixes this far more often than displaying it as-is. */
+function looksLikeFakeToolCallText(text){
+  return /<tool_call>|<function[=:]|```tool_code|tool_code\b|print\s*\(\s*(read_file|write_file|list_files|get_files|merge_branch)\s*\(/i.test(text||"");
+}
 async function runCodingAgentRound(sessionId){
   if(!codingAgentActive||(sessionId!==undefined&&sessionId!==codingAgentActive.id))return;
   var mySession=codingAgentActive;
@@ -2913,6 +2924,20 @@ async function runCodingAgentRound(sessionId){
       con.wrap.appendChild(contBtn);
     }else{
       var finalText=(msg.content||"(no response)").replace(/<think>[\s\S]*?<\/think>\s*/g,"").trim();
+      /* Capped at one retry per session (mySession.fakeToolRetried) since
+         there's no fallback model to switch to here (unlike the main
+         chat's pickFallbackModel) - a model that just doesn't have real
+         tool-calling for this input would otherwise hang instead of
+         degrading gracefully. codingAgentActive is deliberately left set
+         (not nulled) so the recursive call passes the same-session check
+         at the top of this function. */
+      if(looksLikeFakeToolCallText(finalText)&&!mySession.fakeToolRetried){
+        mySession.fakeToolRetried=true;
+        con.body.innerHTML=renderMd("Let me try that again using the actual tool.");
+        msgs.push(msg);
+        msgs.push({role:"user",content:"That wasn't a real tool call - it was tool-call syntax written out as plain text, so nothing actually ran. Use the real function-calling mechanism now: emit an actual tool_calls entry for the tool you need instead of writing tool_code, print(read_file(...)), <tool_call>, or similar as text."});
+        return runCodingAgentRound(mySession.id);
+      }
       con.body.innerHTML=renderMd(finalText||"(no response)");
       chatHistory.push({role:"assistant",content:finalText});
       autoSave();
