@@ -112,6 +112,10 @@
      step: X" prompt in a row keep routing to the dedicated coding agent
      instead of falling back to the plain chat model once those generic
      continuation messages fill up the recent-turns lookback window
+   - asking the coding agent to work "on your own" / "without doing one
+     by one" auto-chains its tool-call rounds instead of requiring a
+     manual Continue tap after every single file, offering a Stop
+     control instead and still stopping once it gives a final answer
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -1275,6 +1279,61 @@ function assert(cond, label) {
   await page.unroute('**/*');
   assert(codingRoundCount === 3, `exactly 3 coding-agent rounds ran, one per Continue click plus the initial send (got ${codingRoundCount})`);
   assert(chatTextAfterCodingRounds.indexOf('regtest coding agent done') >= 0, "the final round's plain-text answer renders once the agent stops calling tools");
+
+  console.log('\n-- asking the coding agent to go "on your own" auto-chains rounds instead of requiring a Continue click each time --');
+  // A real user report: the agent kept asking for a manual Continue tap
+  // between every single file even after being told "check everything on
+  // your own without doing one by one" - the model has no way to honor
+  // that itself since the app was the one forcing a click between rounds.
+  // looksLikeAutoContinueRequest should catch this phrasing on the
+  // message that starts the coding-agent turn and auto-chain the
+  // tool-call rounds with no clicks needed, stopping once the agent
+  // returns a final plain-text answer.
+  let autoContinueRoundCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        autoContinueRoundCount++;
+        if (autoContinueRoundCount === 1) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', tool_calls: [{ id: 'regtest_auto1', type: 'function', function: { name: 'list_files', arguments: JSON.stringify({}) } }] } }] }),
+          });
+          return;
+        }
+        if (autoContinueRoundCount === 2) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', tool_calls: [{ id: 'regtest_auto2', type: 'function', function: { name: 'read_file', arguments: JSON.stringify({ path: 'index.html' }) } }] } }] }),
+          });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest auto-continue done' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please go through every file in the repo on your own without doing one by one, and let me know when you are done');
+  let chatTextAfterAutoContinue = '';
+  for (let i = 0; i < 60; i++) {
+    chatTextAfterAutoContinue = await page.evaluate(() => document.getElementById('chat').textContent);
+    if (chatTextAfterAutoContinue.indexOf('regtest auto-continue done') >= 0) break;
+    await page.waitForTimeout(200);
+  }
+  await page.unroute('**/*');
+  assert(autoContinueRoundCount === 3, `all 3 rounds fired automatically with no Continue click (got ${autoContinueRoundCount} rounds)`);
+  assert(chatTextAfterAutoContinue.indexOf('regtest auto-continue done') >= 0, "the final round's plain-text answer renders once the agent stops calling tools on its own");
+  assert(chatTextAfterAutoContinue.indexOf('Stop') >= 0, 'a Stop control is offered while auto-continuing, in case the user wants to interrupt it');
 
   console.log('\n-- a coding-agent reply that writes out a fake tool call as plain text gets one automatic retry instead of being shown as-is --');
   // The dedicated coding agent model sometimes comes back with
