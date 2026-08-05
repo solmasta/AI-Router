@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.99</span></span>
+      <span class="wm">ai-router <span>v5.100</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -553,7 +553,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.99</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.100</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -2842,7 +2842,28 @@ async function runCodingAgentRound(sessionId){
       con.body.innerHTML=renderMd(finalText||"(no response)");
       chatHistory.push({role:"assistant",content:finalText});
       autoSave();
+      /* Whether the model happens to call a tool or just replies in plain
+         text this round isn't a reliable "I'm truly done" signal - it's
+         often just which way the model felt like responding. Offering
+         Continue here too keeps the option consistent either way; the user
+         decides if there's really nothing left, not the model's
+         unpredictable finish_reason. codingAgentActive is still cleared
+         (unlike the tool_calls branch above) so isAppBusyForUpdate() sees
+         this as idle - a dormant Continue button isn't in-flight work, and
+         a deferred background update shouldn't wait forever on a click
+         that may never come. Clicking Continue re-creates the session on
+         demand instead of relying on the now-cleared one. */
+      msgs.push(msg);
       codingAgentActive=null;
+      var contBtn2=document.createElement("button");
+      contBtn2.className="ba";contBtn2.textContent="Continue";
+      contBtn2.style.cssText="margin-top:8px";
+      contBtn2.onclick=function(){
+        contBtn2.disabled=true;contBtn2.textContent="…";
+        codingAgentActive={messages:msgs,id:++codingAgentSeq};
+        runCodingAgentRound(codingAgentActive.id);
+      };
+      con.wrap.appendChild(contBtn2);
     }
   }catch(e){
     con.body.innerHTML='I hit an error and could not continue: '+esc(e.message);
