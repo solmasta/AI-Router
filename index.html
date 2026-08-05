@@ -264,7 +264,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.103</span></span>
+      <span class="wm">ai-router <span>v5.104</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -553,7 +553,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.103</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.104</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1529,6 +1529,60 @@ function analyzeTask(text){
   searchKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.search+=1;});
   if(lower.indexOf("```")>=0)tasks.code+=2;
   return tasks;
+}
+/* A short natural follow-up in an already-established repo conversation
+   ("please review", "check it", "go ahead") often carries none of
+   analyzeTask's keyword triggers on its own, even though the thread is
+   obviously still about the connected repo - the previous turn is what
+   said "repo"/"github"/etc., not this one. Without this, doSendRequest's
+   coding-agent routing gate sees zero signal and silently drops back to
+   the plain chat model, which has no real repo tools and just says it
+   can't browse anything. Bounded to the last 3 user turns before the
+   current one (not the full conversation, and deliberately smaller than
+   analyzeConversationTasks' 8-turn decay window) so a genuine topic
+   change still clears it within a couple of messages instead of "repo
+   mode" sticking around indefinitely. Main chat only, deliberately NOT
+   applied to the Overseer's own strategy chat - see overseerRepoRelevant's
+   comment for why that one stays strictly per-message.
+
+   The caller must also confirm the CURRENT message actually looks like a
+   continuation (via looksLikeContinuationRequest), not just that it scores
+   zero on analyzeTask - "zero signal" and "still talking about the same
+   thing" turned out NOT to be the same claim. "what is the capital of
+   France" (scores on search's "what is"), "please help me get organized",
+   and "make this a project, remember something, and switch models" are
+   all *also* zero-signal-or-otherwise-unrelated messages that happened to
+   follow a repo turn in testing, and none of them are a repo continuation
+   - an earlier version of this fix that only checked "current message is
+   ambiguous" wrongly hijacked all three to the coding agent. Requiring an
+   explicit continuation phrase is the actual fix; the emptiness check
+   alone was never a safe enough signal on its own.
+
+   Walks backward and stops at the FIRST turn with any signal at all,
+   rather than checking "was any of the last 3 turns repo-relevant" -
+   the difference matters once more than one ambiguous turn is chained
+   ("what repo" -> "please review" -> "go ahead"): a plain .some() over
+   the whole window would still find the repo turn two messages back even
+   if something in between changed topics. Stopping at the first
+   non-empty turn (repo-relevant or not) means an intervening turn that
+   actually changed topics - even one with no repo signal of its own -
+   correctly breaks the chain instead of letting stale repo context leak
+   past it. */
+function looksLikeContinuationRequest(text){
+  var t=typeof text==="string"?text:((text&&text.find&&text.find(function(c){return c.type==="text";}))||{}).text||"";
+  return /\b(review|continue|proceed|go ahead|keep going)\b/i.test(t)||/\b(check|look (at|through)|go through)\s+(it|this|that|them|these|those)\b/i.test(t);
+}
+function recentTurnsWereRepoRelevant(history){
+  var priorUserTurns=history.slice(0,-1).filter(function(m){return m.role==="user";}).slice(-3).reverse();
+  for(var i=0;i<priorUserTurns.length;i++){
+    var t=analyzeTask(priorUserTurns[i].content);
+    if(t.github>0||t.code>0)return true;
+    if(!isTaskAnalysisEmpty(t))return false;
+  }
+  return false;
+}
+function isTaskAnalysisEmpty(t){
+  return t.github===0&&t.code===0&&t.write===0&&t.reason===0&&t.analyze===0&&t.search===0;
 }
 /* Weighs the WHOLE conversation, not just the message that was just sent -
    scoring only the latest message meant a short reply like "yeah, do that"
@@ -4845,6 +4899,13 @@ async function sendOverseerChatMsg(){
      merge_branch offered regardless of topic, so a model discussing crypto
      or some unrelated life topic could still reach for the wrong repo. */
   var overseerTaskSignals=analyzeTask(text);
+  /* Deliberately NOT using recentTurnsWereRepoRelevant here like the main
+     chat gate below - the Overseer is a quick, topic-switching strategy
+     side-panel (by design: "what to try next", "am I stuck"), not a
+     sustained thread. A repo-relevant question immediately followed by an
+     unrelated one ("please write a file" -> "brand new app idea, thoughts?")
+     is a normal, expected pattern here, not a continuation - a sticky
+     window would hand out repo tools for the wrong question. */
   var overseerRepoRelevant=overseerTaskSignals.github>0||overseerTaskSignals.code>0;
   var overseerHasRepoTools=overseerHasTools&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&(ghWriteSecret||ghOauthToken||ghOauthRefreshToken)&&overseerRepoRelevant;
   var sys="You are the Overseer, a strategic advisor built into this app. The user has stepped out of their main conversation with the AI model to talk strategy with you directly - about approach, what to try next, or whether they're stuck. Be direct and concise. Base advice on the actual context below, not generic platitudes.\n\n"+
@@ -5316,7 +5377,7 @@ async function doSendRequest(userContent,isRegen,ap){
      tool access doesn't disappear just because the auto-router picked a
      non-tool-capable model for the main chat. */
   var hasImgInContent=Array.isArray(userContent)&&userContent.some(function(p){return p.type==="image_url";});
-  if(!hasImgInContent&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&(ghWriteSecret||ghOauthToken||ghOauthRefreshToken)&&(searchGateTasks.github>0||searchGateTasks.code>0)){
+  if(!hasImgInContent&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&(ghWriteSecret||ghOauthToken||ghOauthRefreshToken)&&(searchGateTasks.github>0||searchGateTasks.code>0||(looksLikeContinuationRequest(qtext)&&recentTurnsWereRepoRelevant(chatHistory)))){
     try{
       await runCodingAgentTurn(messages);
     }finally{
