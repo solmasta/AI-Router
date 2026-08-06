@@ -134,6 +134,11 @@
      actual next step to continue - right after the first message, with
      nothing pending, it reads as a plain status instead of implying
      work is silently in progress
+   - the main chat (and the Overseer's own side-chat) also gets one
+     automatic retry when the model writes fake tool-call syntax as
+     plain text (e.g. an invented <function=some_tool>{...}</function>)
+     instead of an actual answer - the same fix already covering the
+     dedicated coding agent, now applied to the ordinary chat path too
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -1610,6 +1615,42 @@ function assert(cond, label) {
   assert(chatTextAfterErrorFallback.indexOf('regtest error-fallback reply') >= 0, `the fallback model's actual reply is what ends up rendered, not the raw error text (chat text: ${chatTextAfterErrorFallback.slice(-300)})`);
   assert(chatTextAfterErrorFallback.indexOf('Tool calling is not supported') === -1, 'the raw provider error text never renders as the final answer once the fallback retry succeeds');
   assert(chatTextAfterErrorFallback.indexOf('hit an error') >= 0, 'a notice explaining the automatic error-triggered model switch is shown in the chat');
+
+  console.log('\n-- the main chat also retries once when the model writes fake tool-call syntax as plain text --');
+  // The final render call is locked to tool_choice:"none" specifically so
+  // the model answers in plain text, but a real user report showed a
+  // model ignoring that and writing an invented tool call out as the text
+  // itself (<function=identify_patterns>{...}</function>) instead of an
+  // actual answer - the same failure mode already fixed for the dedicated
+  // coding agent, but this is the ordinary main chat path.
+  let mainChatFakeToolCallStreamCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.stream === false) {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '' } }] }) });
+        return;
+      }
+      if (parsed && parsed.stream === true) {
+        mainChatFakeToolCallStreamCount++;
+        if (mainChatFakeToolCallStreamCount === 1) {
+          await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"choices":[{"delta":{"content":"<function=identify_patterns>{\\"repo_name\\": \\"solmasta/Test\\"}</function>"}}]}\n\ndata: [DONE]\n\n' });
+        } else {
+          await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"choices":[{"delta":{"content":"regtest real main-chat answer after retry"}}]}\n\ndata: [DONE]\n\n' });
+        }
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please give me a quick summary of my day');
+  await page.unroute('**/*');
+  assert(mainChatFakeToolCallStreamCount === 2, `fake tool-call text triggers exactly one automatic retry in the main chat too (got ${mainChatFakeToolCallStreamCount} streaming calls)`);
+  const chatTextAfterMainChatFakeToolCall = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(chatTextAfterMainChatFakeToolCall.indexOf('<function=') === -1, 'the fake tool-call text never renders as the final answer in the main chat');
+  assert(chatTextAfterMainChatFakeToolCall.indexOf('regtest real main-chat answer after retry') >= 0, 'the real answer from the retry renders once it comes back');
 
   console.log('\n-- a repo-flavored message no longer needs to switch the main chat model at all --');
   // Repo work now always runs on the dedicated coding agent, independent

@@ -266,7 +266,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.111</span></span>
+      <span class="wm">ai-router <span>v5.112</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -556,7 +556,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.111</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.112</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -2032,6 +2032,11 @@ function trackApproach(approach){
 var ASSISTANT_CONCERN_PATTERNS=[/\bi (don'?t|do not) have access\b/i,/\bi can'?t\b/i,/\bi cannot\b/i,/\bi'?m not able to\b/i,/\bi am not able to\b/i,/\bi'?m not sure\b/i,/\bi don'?t know\b/i,/\bunable to (help|assist|complete|do that)\b/i,/^error:/i,/\(empty response\)/i,/no response from/i];
 function detectAssistantConcern(text){
   var t=(typeof text==="string"?text:"").toLowerCase();
+  /* Also a concern if this got shown as-is after the fake-tool-call retry
+     in doSendRequest already gave it one shot (looksLikeFakeToolCallText,
+     defined below) - the Overseer's own tracking should reflect that the
+     "answer" the user actually saw was pseudo-code, not real content. */
+  if(looksLikeFakeToolCallText(text))return true;
   return ASSISTANT_CONCERN_PATTERNS.some(function(p){return p.test(t);});
 }
 function analyzeConversationFlow(){
@@ -5092,6 +5097,17 @@ async function sendOverseerChatMsg(){
       }
     };
     await streamFrom(reqBody);
+    /* Same fake-tool-call retry as the main chat (doSendRequest) - this
+       final render call is also locked to tool_choice:"none", and a model
+       can still write tool-call syntax out as the text itself instead of
+       an actual answer. One retry with a corrective nudge. */
+    if(full.trim()&&looksLikeFakeToolCallText(full)){
+      msgs.push({role:"assistant",content:full});
+      msgs.push({role:"user",content:"That wasn't a real tool call - it was tool-call syntax written out as plain text, so nothing actually ran. Answer directly in plain text instead of writing tool_code, <function=...>, <tool_call>, or similar as text."});
+      full="";
+      body.innerHTML='<span class="cur">▇</span>';
+      try{await streamFrom(reqBody);}catch(fte){console.error("Fake-tool-call retry error:",fte);}
+    }
     /* Same auto-fallback as the main chat: an empty completion here most
        often means the model spent its turn on tool_calls and had nothing
        left once locked to tool_choice:"none" for the final render - retry
@@ -5605,6 +5621,28 @@ async function doSendRequest(userContent,isRegen,ap){
     var thinkMatch=full.match(/<think>([\s\S]*?)<\/think>/);
     if(thinkMatch){displayThinkingProcess(thinkMatch[1]);}
     full=full.replace(/<think>[\s\S]*?<\/think>\s*/g,"");
+
+    /* This streaming pass is locked to tool_choice:"none" specifically so
+       the model answers in plain text - but a model can still ignore that
+       and write tool-call syntax out AS the text (tool_code, print(...),
+       <function=some_invented_tool>{...}</function>) instead of an actual
+       answer, often inventing a tool name that was never defined at all.
+       Same fake-tool-call detector the dedicated coding agent already
+       uses (looksLikeFakeToolCallText) - a real user report showed this
+       literal function-call text rendered as the "answer" in the main
+       chat, with nothing to do about it. One retry with a corrective
+       nudge, same one-shot cap as the empty-response/error fallbacks
+       below since there's no guarantee a second attempt fixes it either. */
+    var triedFakeToolRetry=false;
+    if(full.trim()&&looksLikeFakeToolCallText(full)){
+      triedFakeToolRetry=true;
+      messages.push({role:"assistant",content:full});
+      messages.push({role:"user",content:"That wasn't a real tool call - it was tool-call syntax written out as plain text, so nothing actually ran. Answer directly in plain text instead of writing tool_code, <function=...>, <tool_call>, or similar as text."});
+      full="";
+      asstMsg.body.innerHTML='<span class="cur">▇</span>';
+      try{await streamFrom(reqBody);}catch(fte){console.error("Fake-tool-call retry error:",fte);}
+      full=full.replace(/<think>[\s\S]*?<\/think>\s*/g,"");
+    }
 
     var triedFallback=false;
     if(!full.trim()){
