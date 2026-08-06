@@ -266,7 +266,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.110</span></span>
+      <span class="wm">ai-router <span>v5.111</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -556,7 +556,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.110</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.111</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -2261,10 +2261,22 @@ function updateOverseerBar(){
   bar.classList.remove("hidden");
   var dot=document.getElementById("overseerBarDot");
   dot.className="obd"+(overseerState.stuck?" stuck":(overseerState.progress<40?" warn":""));
+  /* hasNextStep decides BOTH the text and the Continue button below - it
+     used to be two separately-written conditions that drifted apart: the
+     text branch said "Working on the next step" (sounds like something is
+     actively in flight right now) whenever currentStep>0, but the button
+     only actually appears when there's a REAL next step left
+     (currentStep<steps.length) and nothing's stuck. That mismatch showed
+     "Working on X" with no Continue button and nothing actually
+     happening - the bar just sitting there with an amber dot looking like
+     a stuck spinner when the app was fully idle, waiting on the user's
+     next message. Computing hasNextStep once and using it for both keeps
+     them in sync by construction. */
+  var hasNextStep=!overseerState.stuck&&overseerState.currentStep>0&&overseerState.currentStep<overseerState.steps.length;
   var text="🤖 ";
   if(overseerState.stuck)text+="Waiting on the next detail";
-  else if(overseerState.currentStep>0&&overseerState.steps.length>0)text+="Working on the next step";
-  else if(overseerState.goalType)text+="Working on "+overseerState.goalType.toLowerCase();
+  else if(hasNextStep)text+="Working on the next step";
+  else if(overseerState.goalType)text+="Tracking: "+overseerState.goalType.toLowerCase();
   else text+="Tracking the conversation";
   if(overseerState.activeProject)text+=" • "+overseerState.activeProject;
   document.getElementById("overseerBarText").textContent=text;
@@ -2275,7 +2287,6 @@ function updateOverseerBar(){
      next step" was just ambient text with nothing to actually act on
      unless you scrolled back to find the original notice. */
   var continueBtn=document.getElementById("overseerBarContinueBtn");
-  var hasNextStep=!overseerState.stuck&&overseerState.currentStep>0&&overseerState.currentStep<overseerState.steps.length;
   continueBtn.classList.toggle("hidden",!hasNextStep);
   if(hasNextStep)continueBtn.dataset.nextStep=overseerState.steps[overseerState.currentStep];
 }

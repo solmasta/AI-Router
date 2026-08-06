@@ -129,6 +129,11 @@
      reply actually says (refusing, unsure, no access), not just its
      character length - a long, fluent refusal no longer scores
      "excellent" purely for being wordy
+   - the persistent Overseer bar never claims to be "working on the
+     next step" (amber dot, no visible reason why) unless there's an
+     actual next step to continue - right after the first message, with
+     nothing pending, it reads as a plain status instead of implying
+     work is silently in progress
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -246,6 +251,17 @@ function assert(cond, label) {
     return el ? el.textContent : null;
   });
   assert(!!barText && barText.length > 0, 'Overseer bar populated after first message');
+  // Right after the very first message, no step has been marked complete
+  // yet (currentStep is still 0) and there's nothing pending - a real user
+  // report found the bar saying "Working on X" with an amber dot and no
+  // Continue button in exactly this state, reading like something was
+  // actively in progress when the app was fully idle.
+  const barStateAfterFirstMsg = await page.evaluate(() => ({
+    text: document.getElementById('overseerBarText').textContent,
+    continueHidden: document.getElementById('overseerBarContinueBtn').classList.contains('hidden'),
+  }));
+  assert(barStateAfterFirstMsg.text.indexOf('Working on the next step') === -1, `the bar doesn't claim to be "working on the next step" when no step has actually advanced and there's nothing to continue (got "${barStateAfterFirstMsg.text}")`);
+  assert(barStateAfterFirstMsg.continueHidden, 'the Continue control stays hidden when there is no real next step, matching the bar text');
 
   console.log('\n-- Overseer suggestion buttons (inline onclick="insertPrompt(...)") actually work --');
   // displayGeneratedPrompts/displayBrainstormingSuggestions build raw HTML
