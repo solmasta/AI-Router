@@ -151,6 +151,12 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 #prompt::placeholder{color:var(--mu)}
 #prompt:focus{outline:none}
 .ia{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:0 2px}
+/* Eight distinct icons (attach/mic/speak/voice/overseer/brainstorm/
+   newtab/newcodetab) sat in one undifferentiated row with no visual
+   grouping at all - a thin divider before the first "session" control
+   (as opposed to "compose this message") at least gives the row some
+   structure without moving or renaming anything already wired up. */
+#overseerBtn{margin-left:6px;padding-left:10px;border-left:1px solid var(--br)}
 .ir{display:flex;gap:6px;margin-left:auto;align-items:center}
 .bp{padding:9px 20px;font-size:14.5px;font-weight:600;color:#fff;background:var(--ac);border:none;border-radius:20px;cursor:pointer;transition:background .15s,transform .1s,box-shadow .15s;box-shadow:0 2px 8px rgba(139,140,247,.3)}
 .bp:hover:not(:disabled){background:var(--ad);box-shadow:0 4px 14px rgba(139,140,247,.4);transform:translateY(-1px)}
@@ -274,7 +280,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.118</span></span>
+      <span class="wm">ai-router <span>v5.119</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -565,7 +571,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.118</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.119</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -2475,7 +2481,11 @@ function displayGeneratedPrompts(force){
   var prompts=generateContextualPrompts();
   if(prompts.length===0)return;
 
-  var promptsHtml='<div style="padding:10px 12px;margin:8px 0;background:rgba(168,85,247,0.08);border-left:3px solid #a855f7;border-radius:4px;font-size:12px;color:var(--tx)">';
+  /* var(--ac), matching the memory/project/model-switch notices - was an
+     off-brand violet (#a855f7, not the app's actual accent) that existed
+     nowhere else, for what's functionally the same "Overseer suggestion
+     box" as those three. */
+  var promptsHtml='<div style="padding:10px 12px;margin:8px 0;background:rgba(139,140,247,0.08);border-left:3px solid var(--ac);border-radius:4px;font-size:12px;color:var(--tx)">';
   promptsHtml+='<strong style="display:block;margin-bottom:8px">💭 Overseer Suggestions</strong>';
   promptsHtml+='<div style="display:flex;flex-direction:column;gap:6px">';
 
@@ -2514,7 +2524,9 @@ function displayBrainstormingSuggestions(){
   var suggestions=generateBrainstormingPrompts();
   if(suggestions.length===0)return;
 
-  var brainstormHtml='<div style="padding:10px 12px;margin:8px 0;background:rgba(236,72,153,0.08);border-left:3px solid #ec4899;border-radius:4px;font-size:12px;color:var(--tx)">';
+  /* var(--ac), same reasoning as displayGeneratedPrompts above - was an
+     unrelated pink (#ec4899) that matched nothing else in the app. */
+  var brainstormHtml='<div style="padding:10px 12px;margin:8px 0;background:rgba(139,140,247,0.08);border-left:3px solid var(--ac);border-radius:4px;font-size:12px;color:var(--tx)">';
   brainstormHtml+='<strong style="display:block;margin-bottom:8px">🧠 Brainstorming Ideas</strong>';
   brainstormHtml+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
 
@@ -2691,8 +2703,16 @@ function displayThinkingProcess(thinkText){
 }
 function displayToolExecution(toolName,input,result,containerId){
   var toolEl=document.createElement("div");
-  toolEl.style.cssText="padding:8px 12px;margin:8px 0;background:rgba(59,130,246,0.08);border-left:3px solid #3b82f6;border-radius:4px;font-size:11px;color:var(--tx)";
-  var status=result.error?"⚠️ Error":"✓ Success";
+  /* Border/background color used to be a fixed blue regardless of
+     result.error - an actual tool failure still rendered with the exact
+     same visual treatment as a success, just with different text next
+     to a checkmark-shaped icon. Match the green/red success/error
+     language already used everywhere else in the app (step-completed
+     notices, .body.err) instead of a third, unrelated color that
+     doesn't track the actual outcome. */
+  var toolFailed=!!result.error;
+  toolEl.style.cssText="padding:8px 12px;margin:8px 0;background:"+(toolFailed?"rgba(248,113,113,0.08)":"rgba(34,197,94,0.08)")+";border-left:3px solid "+(toolFailed?"var(--er)":"#22c55e")+";border-radius:4px;font-size:11px;color:var(--tx)";
+  var status=toolFailed?"⚠️ Error":"✓ Success";
   toolEl.innerHTML="<strong>"+status+" Tool: "+esc(toolName)+"</strong>";
   if(toolName==="read_file"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Reading: "+esc(input.path)+"</div>";}
   else if(toolName==="write_file"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Writing: "+esc(input.path)+" (branch: "+esc(input.branch||"?")+")</div><div style='font-size:10px;color:var(--mu)'>"+esc(input.message)+"</div>";}
