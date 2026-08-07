@@ -105,9 +105,6 @@ header{display:flex;align-items:center;justify-content:space-between;padding:cal
 .ct{font-size:10.5px;color:var(--mu);font-family:var(--mn);margin-left:auto;opacity:.7}
 .srch{font-size:10.5px;color:var(--ac);background:rgba(139,140,247,.1);border-radius:20px;padding:2px 9px;white-space:nowrap;font-weight:500}
 .modelTag{font-size:10.5px;color:var(--mu);font-family:var(--mn);opacity:.7;font-weight:400;white-space:nowrap}
-.cmb{font-size:12px;color:var(--ac);background:rgba(139,140,247,.12);border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
-.msw{display:flex;align-items:center;gap:8px;color:var(--mu);font-size:11px;opacity:.6;font-weight:500}
-.msw::before,.msw::after{content:'';flex:1;height:1px;background:var(--br)}
 .cb{margin:10px 0;border-radius:12px;overflow:hidden;border:1px solid var(--br)}
 .ch{display:flex;justify-content:space-between;align-items:center;background:#0d1117;padding:7px 13px;font-family:var(--mn);font-size:11px;color:var(--mu)}
 .cc{background:none;border:none;color:var(--mu);font-size:11px;padding:2px 8px;border-radius:6px;cursor:pointer}
@@ -124,7 +121,17 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 .obd.stuck{background:#ef4444}
 .obd.off{background:var(--mu)}
 #overseerBarText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ob-continue{flex-shrink:0;margin-left:auto;padding:2px 8px;background:rgba(34,197,94,0.15);border:1px solid #22c55e;color:var(--tx);border-radius:4px;font-size:11px;cursor:pointer}
+.ob-continue{flex-shrink:0;margin-left:auto}
+/* Every "Continue" surface (the persistent bar, the one-time step notice,
+   the coding agent's own round-to-round prompts) used to each pick its
+   own color - green here, plain gray there - for what's the exact same
+   action. Green also collided with .obd's existing meaning (a status
+   dot, not a button), so a "Continue" pill next to it read as two
+   unrelated signals. One consistent accent-purple treatment, matching
+   the rest of the app's actual call-to-action color (Send, active
+   states) instead of introducing a second one. */
+.cta{padding:4px 11px;background:rgba(139,140,247,.15);border:1px solid var(--ac);color:var(--ac);border-radius:20px;font-size:11.5px;font-weight:600;cursor:pointer;transition:background .15s}
+.cta:hover{background:rgba(139,140,247,.28)}
 .tt{flex:1;height:3px;background:var(--up);border-radius:2px;overflow:hidden}
 .tf{height:100%;background:var(--ac);border-radius:2px;transition:width .3s}
 .tf.warn{background:#f59e0b}
@@ -144,6 +151,12 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 #prompt::placeholder{color:var(--mu)}
 #prompt:focus{outline:none}
 .ia{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:0 2px}
+/* Eight distinct icons (attach/mic/speak/voice/overseer/brainstorm/
+   newtab/newcodetab) sat in one undifferentiated row with no visual
+   grouping at all - a thin divider before the first "session" control
+   (as opposed to "compose this message") at least gives the row some
+   structure without moving or renaming anything already wired up. */
+#overseerBtn{margin-left:6px;padding-left:10px;border-left:1px solid var(--br)}
 .ir{display:flex;gap:6px;margin-left:auto;align-items:center}
 .bp{padding:9px 20px;font-size:14.5px;font-weight:600;color:#fff;background:var(--ac);border:none;border-radius:20px;cursor:pointer;transition:background .15s,transform .1s,box-shadow .15s;box-shadow:0 2px 8px rgba(139,140,247,.3)}
 .bp:hover:not(:disabled){background:var(--ad);box-shadow:0 4px 14px rgba(139,140,247,.4);transform:translateY(-1px)}
@@ -267,10 +280,9 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.115</span></span>
+      <span class="wm">ai-router <span>v5.119</span></span>
     </div>
     <div class="hr">
-      <span class="cmb hidden" id="codingModeBadge" title="Coding tab - every message here goes straight to your connected repo">&#128187;</span>
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
       <button class="ib" id="settingsBtn" style="color:var(--ac)" title="Settings">&#9881;</button>
       <button class="ib" id="wprojBtn" title="Projects">&#128204;</button>
@@ -287,7 +299,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <div class="ob hidden" id="overseerBar">
     <span class="obd" id="overseerBarDot"></span>
     <span id="overseerBarText">Overseer monitoring</span>
-    <button class="ob-continue hidden" id="overseerBarContinueBtn">Continue &#8594;</button>
+    <button class="cta ob-continue hidden" id="overseerBarContinueBtn">Continue &#8594;</button>
   </div>
   <div class="tb hidden" id="tokenBar">
     <span id="tokenCount">0 tokens</span>
@@ -559,7 +571,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.115</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.119</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -738,7 +750,7 @@ window.isAppBusyForUpdate=function(){return sending||!!codingAgentActive;};
 var activePromptId=null,editingId=null,editingProjId=null,viewingProjId=null;
 var prompts=[],projects=[];
 var wproj=[],activeWProjId=null,editingWProjId=null,viewingWProjId=null;
-var sessionId=Date.now().toString(),responseCount=0,lastUsedModelId="";
+var sessionId=Date.now().toString(),responseCount=0;
 var temperature=0.7,favorites={},isDark=true;
 var summarizing=false;
 var abortController=null;
@@ -2178,7 +2190,7 @@ function showStepUpdate(prevStep,nextStep){
      continuation before it actually goes out - same pattern the Overseer
      suggestion chips already use, rather than a silent immediate send. */
   notice.innerHTML="✓ <strong>Step completed:</strong> "+esc(prevStep)+"<br>→ <strong>Next:</strong> "+esc(nextStep)+
-    ' <button style="margin-left:6px;padding:3px 8px;background:rgba(34,197,94,0.2);border:1px solid #22c55e;color:var(--tx);border-radius:4px;font-size:11px;cursor:pointer" onclick="insertPrompt(\'Continue with the next step: '+esc(nextStep).replace(/\\/g,"\\\\").replace(/'/g,"\\'")+'\')">Continue &#8594;</button>';
+    ' <button class="cta" style="margin-left:6px" onclick="insertPrompt(\'Continue with the next step: '+esc(nextStep).replace(/\\/g,"\\\\").replace(/'/g,"\\'")+'\')">Continue &#8594;</button>';
   document.getElementById("chat").appendChild(notice);
 }
 /* Each condition below stays true across many 15s monitoring ticks (e.g.
@@ -2469,7 +2481,11 @@ function displayGeneratedPrompts(force){
   var prompts=generateContextualPrompts();
   if(prompts.length===0)return;
 
-  var promptsHtml='<div style="padding:10px 12px;margin:8px 0;background:rgba(168,85,247,0.08);border-left:3px solid #a855f7;border-radius:4px;font-size:12px;color:var(--tx)">';
+  /* var(--ac), matching the memory/project/model-switch notices - was an
+     off-brand violet (#a855f7, not the app's actual accent) that existed
+     nowhere else, for what's functionally the same "Overseer suggestion
+     box" as those three. */
+  var promptsHtml='<div style="padding:10px 12px;margin:8px 0;background:rgba(139,140,247,0.08);border-left:3px solid var(--ac);border-radius:4px;font-size:12px;color:var(--tx)">';
   promptsHtml+='<strong style="display:block;margin-bottom:8px">💭 Overseer Suggestions</strong>';
   promptsHtml+='<div style="display:flex;flex-direction:column;gap:6px">';
 
@@ -2508,7 +2524,9 @@ function displayBrainstormingSuggestions(){
   var suggestions=generateBrainstormingPrompts();
   if(suggestions.length===0)return;
 
-  var brainstormHtml='<div style="padding:10px 12px;margin:8px 0;background:rgba(236,72,153,0.08);border-left:3px solid #ec4899;border-radius:4px;font-size:12px;color:var(--tx)">';
+  /* var(--ac), same reasoning as displayGeneratedPrompts above - was an
+     unrelated pink (#ec4899) that matched nothing else in the app. */
+  var brainstormHtml='<div style="padding:10px 12px;margin:8px 0;background:rgba(139,140,247,0.08);border-left:3px solid var(--ac);border-radius:4px;font-size:12px;color:var(--tx)">';
   brainstormHtml+='<strong style="display:block;margin-bottom:8px">🧠 Brainstorming Ideas</strong>';
   brainstormHtml+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
 
@@ -2685,8 +2703,16 @@ function displayThinkingProcess(thinkText){
 }
 function displayToolExecution(toolName,input,result,containerId){
   var toolEl=document.createElement("div");
-  toolEl.style.cssText="padding:8px 12px;margin:8px 0;background:rgba(59,130,246,0.08);border-left:3px solid #3b82f6;border-radius:4px;font-size:11px;color:var(--tx)";
-  var status=result.error?"⚠️ Error":"✓ Success";
+  /* Border/background color used to be a fixed blue regardless of
+     result.error - an actual tool failure still rendered with the exact
+     same visual treatment as a success, just with different text next
+     to a checkmark-shaped icon. Match the green/red success/error
+     language already used everywhere else in the app (step-completed
+     notices, .body.err) instead of a third, unrelated color that
+     doesn't track the actual outcome. */
+  var toolFailed=!!result.error;
+  toolEl.style.cssText="padding:8px 12px;margin:8px 0;background:"+(toolFailed?"rgba(248,113,113,0.08)":"rgba(34,197,94,0.08)")+";border-left:3px solid "+(toolFailed?"var(--er)":"#22c55e")+";border-radius:4px;font-size:11px;color:var(--tx)";
+  var status=toolFailed?"⚠️ Error":"✓ Success";
   toolEl.innerHTML="<strong>"+status+" Tool: "+esc(toolName)+"</strong>";
   if(toolName==="read_file"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Reading: "+esc(input.path)+"</div>";}
   else if(toolName==="write_file"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Writing: "+esc(input.path)+" (branch: "+esc(input.branch||"?")+")</div><div style='font-size:10px;color:var(--mu)'>"+esc(input.message)+"</div>";}
@@ -2837,6 +2863,7 @@ async function executeToolCall(toolName,toolArgs,renderStatus,logTarget){
    MAIN conversation model just to keep tool access felt random and broke
    continuity with whatever the user was actually talking to. */
 var CODING_AGENT_MODEL_ID="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo";
+var CODING_AGENT_MODEL_LABEL="Qwen3 Coder 480B";
 /* Caps an auto-continuing session (see looksLikeAutoContinueRequest) so a
    model that never stops calling tools on a huge repo can't run away
    unattended forever - it pauses and asks for an explicit Continue past
@@ -2885,7 +2912,13 @@ function renderCodingConsole(){
   wrap.className="msg ma3";
   var label=document.createElement("div");label.className="ml";
   var av=document.createElement("span");av.className="av";av.textContent="✦";label.appendChild(av);
-  var lspan=document.createElement("span");lspan.textContent="Assistant";label.appendChild(lspan);
+  /* "Overseer", matching the main chat's own relabeling - the coding
+     agent is a different underlying model, but it's still the same
+     single point of contact from the user's perspective, not a
+     separate persona. Model shown as the same secondary .modelTag
+     indicator the main chat uses. */
+  var lspan=document.createElement("span");lspan.textContent="Overseer";label.appendChild(lspan);
+  var mtag=document.createElement("span");mtag.className="modelTag";mtag.textContent=CODING_AGENT_MODEL_LABEL;label.appendChild(mtag);
   var body=document.createElement("div");body.className="body";body.innerHTML='<span class="cur">▇</span> working on the next step&#8230;';
   wrap.appendChild(label);wrap.appendChild(body);
   document.getElementById("chat").appendChild(wrap);
@@ -3012,7 +3045,7 @@ async function runCodingAgentRound(sessionId){
            normal one-tap-per-round behavior instead of chaining further
            unattended. */
         var contBtn=document.createElement("button");
-        contBtn.className="ba";contBtn.textContent="Continue";
+        contBtn.className="cta";contBtn.textContent="Continue";
         contBtn.style.cssText="margin-top:8px";
         contBtn.onclick=function(){contBtn.disabled=true;contBtn.textContent="…";runCodingAgentRound(mySession.id);};
         con.wrap.appendChild(contBtn);
@@ -3066,7 +3099,7 @@ async function runCodingAgentRound(sessionId){
       msgs.push(msg);
       codingAgentActive=null;
       var contBtn2=document.createElement("button");
-      contBtn2.className="ba";contBtn2.textContent="Continue";
+      contBtn2.className="cta";contBtn2.textContent="Continue";
       contBtn2.style.cssText="margin-top:8px";
       contBtn2.onclick=function(){
         contBtn2.disabled=true;contBtn2.textContent="…";
@@ -3298,7 +3331,7 @@ function resolveApById(id){
 }
 function refreshPL(){
   var a=getAP();
-  document.getElementById("activePromptName").textContent=a?a.name:"System prompt";
+  document.getElementById("activePromptName").textContent=(codingModeActive?"💻 Coding · ":"")+(a?a.name:"System prompt");
   document.getElementById("systemDot").classList.toggle("on",!!a);
 }
 var promptCatFilter=null;
@@ -3482,7 +3515,7 @@ function loadConv(conv){
   if(chatHistory.length&&!confirm("Load this chat? Current chat will be cleared."))return;
   saveToRecent();
   chatHistory=conv.messages.map(function(m){return{role:m.role,content:m.content};});
-  document.getElementById("chat").innerHTML="";lastUsedModelId="";
+  document.getElementById("chat").innerHTML="";
   var def=allModels.find(function(m){return m.id===conv.modelId;});if(def)setModel(def);
   chatHistory.forEach(function(m){appendMsg(m.role,m.content);});
   closeModal("convsModal");updTokenBar();
@@ -3598,7 +3631,7 @@ function loadWprojConv(conv,p){
   if(chatHistory.length&&!confirm("Load this chat? Current chat will be cleared."))return;
   saveToRecent();
   chatHistory=conv.messages.map(function(m){return{role:m.role,content:m.content};});
-  document.getElementById("chat").innerHTML="";lastUsedModelId="";
+  document.getElementById("chat").innerHTML="";
   sessionId=conv.sessionId||Date.now().toString();
   var def=allModels.find(function(m){return m.id===conv.modelId;});if(def)setModel(def);
   chatHistory.forEach(function(m){appendMsg(m.role,m.content);});
@@ -3612,7 +3645,7 @@ function startWprojChat(){
   if(chatHistory.length&&!confirm("Start a new chat in this project? Current chat will be cleared."))return;
   saveToRecent();
   chatHistory=[];document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">🤖</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';
-  lastUsedModelId="";sessionId=Date.now().toString();responseCount=0;
+  sessionId=Date.now().toString();responseCount=0;
   document.getElementById("tokenBar").classList.add("hidden");
   activeWProjId=p.id;
   setWprojPromptBadge(p);
@@ -3621,7 +3654,7 @@ function startWprojChat(){
 }
 function setWprojPromptBadge(p){
   activePromptId=null;
-  document.getElementById("activePromptName").textContent="\uD83D\uDCCC "+p.title;
+  document.getElementById("activePromptName").textContent=(codingModeActive?"\uD83D\uDCBB Coding \u00B7 ":"")+"\uD83D\uDCCC "+p.title;
   document.getElementById("systemDot").classList.add("on");
 }
 function clearActiveWproj(){
@@ -3779,9 +3812,19 @@ function applyTabAsLiveState(t){
   codingModeActive=!!t.codingMode;
   updateCodingModeUI();
 }
+/* The systemToggle bar right under the header already shows contextual
+   status text (active project/prompt name) - that's the right place for
+   "you're in a Coding tab" too, rather than fighting the cramped header
+   icon row for space (a real user report found the version number
+   getting covered up there once a badge was added to it). Re-applies
+   whichever of refreshPL/setWprojPromptBadge is actually current, since
+   both now prepend the Coding prefix themselves. */
 function updateCodingModeUI(){
-  var badge=document.getElementById("codingModeBadge");
-  if(badge)badge.classList.toggle("hidden",!codingModeActive);
+  if(activeWProjId){
+    var p=wproj.find(function(x){return x.id===activeWProjId;});
+    if(p){setWprojPromptBadge(p);return;}
+  }
+  refreshPL();
 }
 function renderTabBar(){
   var bar=document.getElementById("tabBar");
@@ -5295,10 +5338,6 @@ function scrollBot(){var c=document.getElementById("chat");if(c.scrollHeight-c.s
 function appendMsg(role,content,streaming){
   hideEmpty();
   var chat=document.getElementById("chat");
-  if(role==="assistant"&&lastUsedModelId&&lastUsedModelId!==currentModel.id){
-    var sw=document.createElement("div");sw.className="msw";sw.textContent=currentModel.label;chat.appendChild(sw);
-  }
-  if(role==="assistant")lastUsedModelId=currentModel.id;
   var wrap=document.createElement("div");wrap.className="msg "+(role==="user"?"mu":"ma3");
   var label=document.createElement("div");label.className="ml";
   if(role==="assistant"){
@@ -5365,7 +5404,6 @@ function editMsg(wrap){
   document.getElementById("prompt").value=text;document.getElementById("prompt").focus();
   chatHistory=chatHistory.slice(0,hIdx);
   for(var m2=wIdx;m2<msgs.length;m2++)msgs[m2].remove();
-  lastUsedModelId="";
 }
 
 /* ---- Regen ---- */
@@ -5861,7 +5899,7 @@ document.getElementById("clearBtn").addEventListener("click",function(){
   saveToRecent();
   undoData={messages:chatHistory.slice(),backend:activeBackend,modelId:currentModel.id,modelLabel:currentModel.label};
   chatHistory=[];clearAttach();localStorage.removeItem(pk(AUTOSAVE_KEY));localStorage.removeItem(pk("ai_draft"));
-  sessionId=Date.now().toString();responseCount=0;lastUsedModelId="";summarizing=false;
+  sessionId=Date.now().toString();responseCount=0;summarizing=false;
   clearActiveWproj();stopOverseerMonitoring();overseerState=defaultOverseerState();
   preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">🤖</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';
