@@ -148,9 +148,9 @@
      now that a Coding tab sends it plain conversational messages too)
      gets one automatic retry with a corrective nudge, instead of
      rendering "(no response)" as the final answer
-   - the header's version number actually shrinks/truncates instead of
-     overflowing underneath the Coding badge on a narrow phone, once
-     both need to fit in the same row
+   - the Coding indicator lives in the systemToggle status bar (with the
+     active project/prompt name) rather than the header's icon row, so
+     the version number stays fully visible instead of getting squeezed
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -809,8 +809,8 @@ function assert(cond, label) {
   // the coding agent without needing to sound repo-flavored at all - the
   // whole point is to skip analyzeTask's keyword guessing entirely.
   await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
-  const codingBadgeVisibleNoRepo = await page.evaluate(() => !document.getElementById('codingModeBadge').classList.contains('hidden'));
-  assert(codingBadgeVisibleNoRepo, 'the Coding badge shows in the header once a Coding tab is active');
+  const codingIndicatorVisibleNoRepo = await page.evaluate(() => document.getElementById('activePromptName').textContent.indexOf('Coding') >= 0);
+  assert(codingIndicatorVisibleNoRepo, 'the system-status bar shows a Coding indicator once a Coding tab is active');
   await sendMsg('hello there');
   const chatTextNoRepoGuard = await page.evaluate(() => document.getElementById('chat').textContent);
   assert(chatTextNoRepoGuard.indexOf('needs a connected repo') >= 0, `sending in a Coding tab with no repo connected shows a clear guard message instead of silently falling back to the plain chat model (got: ${chatTextNoRepoGuard.slice(-300)})`);
@@ -843,8 +843,8 @@ function assert(cond, label) {
   assert(chatTextInCodingTab.indexOf('regtest coding tab reply') >= 0, "the coding agent's reply actually renders in the Coding tab");
   await page.locator('#tabBar .tabpill').first().click();
   await page.waitForTimeout(400);
-  const codingBadgeHiddenAfterSwitch = await page.evaluate(() => document.getElementById('codingModeBadge').classList.contains('hidden'));
-  assert(codingBadgeHiddenAfterSwitch, 'switching to a non-Coding tab hides the Coding badge again');
+  const codingIndicatorGoneAfterSwitch = await page.evaluate(() => document.getElementById('activePromptName').textContent.indexOf('Coding') === -1);
+  assert(codingIndicatorGoneAfterSwitch, 'switching to a non-Coding tab clears the Coding indicator again');
 
   console.log('\n-- profile: create, isolate --');
   await page.click('#settingsBtn'); await page.waitForTimeout(150);
@@ -2389,20 +2389,28 @@ function assert(cond, label) {
   if (defaultViewport) await page.setViewportSize(defaultViewport);
   await page.waitForTimeout(150);
 
-  console.log('\n-- the version number stays visible instead of being overlapped by the Coding badge on a narrow phone --');
-  // The Coding badge sits in the same header row as "ai-router vX.X" -
-  // a real user report showed the version number getting covered up once
-  // the badge was visible. The version text needs to actually shrink
-  // (not just overflow underneath the header's right-side icons) when
-  // there isn't room for both.
+  console.log('\n-- the Coding indicator lives in the status bar, not the cramped header row, so the version number stays fully visible --');
+  // A real user report showed the version number getting covered up once
+  // a Coding badge was added to the same header row as "ai-router vX.X".
+  // Rather than keep shrinking things to fight for space there, the
+  // indicator now lives in the systemToggle status bar below the header,
+  // which already exists for this kind of contextual text.
   await page.click('#newCodeTabBtn'); await page.waitForTimeout(300);
-  const narrowViewportForBadge = page.viewportSize();
-  await page.setViewportSize({ width: 320, height: 812 });
+  const narrowViewportForCoding = page.viewportSize();
+  // 375px, matching this suite's own established "narrow phone" baseline
+  // (see the compose-bar test above) - an even narrower width like 320px
+  // truncates the version number regardless of the Coding indicator, so
+  // it isn't a meaningful width to assert full visibility at.
+  await page.setViewportSize({ width: 375, height: 812 });
   await page.waitForTimeout(150);
-  const versionBox = await page.locator('.wm').boundingBox();
-  const codingBadgeBox = await page.locator('#codingModeBadge').boundingBox();
-  assert(versionBox && codingBadgeBox && (versionBox.x + versionBox.width) <= codingBadgeBox.x + 1, `the version number's right edge stays clear of the Coding badge instead of being overlapped (version right edge ${versionBox ? (versionBox.x + versionBox.width).toFixed(0) : 'N/A'}px, badge left edge ${codingBadgeBox ? codingBadgeBox.x.toFixed(0) : 'N/A'}px)`);
-  if (narrowViewportForBadge) await page.setViewportSize(narrowViewportForBadge);
+  const versionNotTruncated = await page.evaluate(() => {
+    var el = document.querySelector('.wm');
+    return el.scrollWidth <= el.clientWidth + 1;
+  });
+  assert(versionNotTruncated, 'the version number renders in full instead of being truncated, now that the Coding indicator no longer competes for header space');
+  const codingIndicatorInStatusBar = await page.evaluate(() => document.getElementById('activePromptName').textContent.indexOf('Coding') >= 0);
+  assert(codingIndicatorInStatusBar, 'the Coding indicator shows in the status bar below the header instead');
+  if (narrowViewportForCoding) await page.setViewportSize(narrowViewportForCoding);
   await page.waitForTimeout(150);
   // Switch away from the Coding tab this test created - leaving it active
   // would route every later test's message straight to the coding agent
