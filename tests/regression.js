@@ -647,7 +647,7 @@ function assert(cond, label) {
     const req = route.request();
     if (req.method() === 'POST' && req.postData()) {
       let parsed = null;
-      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      try { parsed = JSON.parse(req.postData()); } catch {}
       if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
         lastGenericCodeBody = parsed;
         await route.fulfill({
