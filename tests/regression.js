@@ -154,6 +154,9 @@
    - the dedicated coding agent's own console is labeled "Overseer" too
      (with its fixed model as a secondary indicator), consistent with
      the main chat's relabeling instead of a leftover "Assistant"
+   - an OAuth-only GitHub connection with an expired token can refresh and
+     keep repo/coding access alive without also requiring the legacy write
+     secret path
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -844,6 +847,87 @@ function assert(cond, label) {
   assert(codingTabAgentHit, 'a completely generic message with zero repo/code keywords still reaches the dedicated coding agent inside a Coding tab');
   const chatTextInCodingTab = await page.evaluate(() => document.getElementById('chat').textContent);
   assert(chatTextInCodingTab.indexOf('regtest coding tab reply') >= 0, "the coding agent's reply actually renders in the Coding tab");
+
+  console.log('\n-- OAuth-only GitHub refresh keeps Coding-tab repo access alive without a legacy write secret --');
+  await page.evaluate(() => {
+    localStorage.setItem('gh_repo_owner', 'solmasta');
+    localStorage.setItem('gh_repo_name', 'openai-router');
+    localStorage.removeItem('gh_write_secret');
+    localStorage.setItem('gh_oauth_refresh_token', 'regtest-refresh-token');
+    localStorage.setItem('gh_oauth_token', JSON.stringify({ token: 'expired-regtest-token', expiry: Date.now() - 60000 }));
+  });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(700);
+  const codingStillActiveAfterReload = await page.evaluate(() => document.getElementById('activePromptName').textContent.indexOf('Coding') >= 0);
+  if (!codingStillActiveAfterReload) {
+    await page.click('#newCodeTabBtn');
+    await page.waitForTimeout(400);
+  }
+  let oauthRefreshHit = false;
+  let refreshWriteSecretHeader = '__unset__';
+  let repoOpAuthHeader = '';
+  let repoOpWriteSecretHeader = '__unset__';
+  let oauthRepoOpHit = false;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    const url = req.url();
+    if (url.indexOf('github-oauth-worker') >= 0 && url.indexOf('/refresh') >= 0) {
+      oauthRefreshHit = true;
+      const headers = req.headers();
+      refreshWriteSecretHeader = Object.prototype.hasOwnProperty.call(headers, 'x-write-secret') ? headers['x-write-secret'] : '__missing__';
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ access_token: 'fresh-regtest-token', expires_in: 3600 })
+      });
+      return;
+    }
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            choices: [{
+              finish_reason: 'tool_calls',
+              message: {
+                role: 'assistant',
+                content: '',
+                tool_calls: [{
+                  id: 'call_regtest_list',
+                  type: 'function',
+                  function: { name: 'list_files', arguments: '{}' }
+                }]
+              }
+            }]
+          })
+        });
+        return;
+      }
+      if (url.indexOf('github-ops-worker') >= 0 && parsed && parsed.op === 'list_files') {
+        oauthRepoOpHit = true;
+        const headers = req.headers();
+        repoOpAuthHeader = headers.authorization || '';
+        repoOpWriteSecretHeader = Object.prototype.hasOwnProperty.call(headers, 'x-write-secret') ? headers['x-write-secret'] : '__missing__';
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, files: [{ name: 'index.html', type: 'file', path: 'index.html' }] })
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('good morning again');
+  await page.unroute('**/*');
+  assert(oauthRefreshHit, 'an expired OAuth-only repo connection refreshes its token before the Coding tab uses repo tools');
+  assert(refreshWriteSecretHeader === '__missing__', `OAuth token refresh omits the legacy write-secret header when none is configured (got "${refreshWriteSecretHeader}")`);
+  assert(oauthRepoOpHit, 'after refresh, the Coding tab still reaches the repo worker');
+  assert(repoOpAuthHeader === '******', `repo ops use the freshly refreshed OAuth bearer token (got "${repoOpAuthHeader}")`);
+  assert(repoOpWriteSecretHeader === '__missing__', `repo ops omit the legacy write-secret header when using OAuth-only auth (got "${repoOpWriteSecretHeader}")`);
   await page.locator('#tabBar .tabpill').first().click();
   await page.waitForTimeout(400);
   const codingIndicatorGoneAfterSwitch = await page.evaluate(() => document.getElementById('activePromptName').textContent.indexOf('Coding') === -1);

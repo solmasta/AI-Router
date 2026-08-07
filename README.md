@@ -73,7 +73,7 @@ This Worker is what lets the app read files, write commits, list directories, an
 1. Create another Worker and deploy `workers/github-ops-worker/github-ops-worker.js` to it - or run `npx wrangler deploy --config workers/github-ops-worker/wrangler.jsonc` from this repo. If you use Cloudflare's Git integration instead of manual `wrangler deploy`, set that project's **Root directory** to `workers/github-ops-worker`.
 2. Add a secret named `GITHUB_TOKEN` containing a GitHub personal access token with the repo permissions you want this app to use.
 3. Add a secret named `APP_SECRET` with the **same** string from step 1 of Setup.
-4. Add a secret named `WRITE_SECRET` with a **second, different** random string (e.g. `openssl rand -hex 32` again - don't reuse `APP_SECRET`). This gates `write_file`/`merge_branch` specifically: `APP_SECRET` alone is enough to read/list files, but committing or merging requires this separate value too, entered once in the app under Settings → GitHub repository → write secret. `APP_SECRET` bootstraps automatically from a public endpoint, so keeping write access behind a second, never-auto-served secret means holding `APP_SECRET` alone isn't enough to write to your repos.
+4. Add a secret named `WRITE_SECRET` with a **second, different** random string (e.g. `openssl rand -hex 32` again - don't reuse `APP_SECRET`). This is the legacy non-OAuth path: if a user doesn't connect via GitHub OAuth, they can still read/list/write/merge through this separate value, entered once in the app under Settings → GitHub repository → write secret, while the Worker uses its server-side `GITHUB_TOKEN`. `APP_SECRET` bootstraps automatically from a public endpoint, so keeping repo access behind a second, never-auto-served secret means holding `APP_SECRET` alone isn't enough to operate on your repos.
 5. In `workers/github-ops-worker/wrangler.jsonc`, set `ALLOWED_REPOS` to a comma-separated allowlist. Supported entries: exact `owner/repo`, `owner/*` for all repos under one owner, or `*` for all repos the token can reach. The default is `solmasta/*`.
 6. Deploy and copy the Worker URL.
 
@@ -86,7 +86,7 @@ This Worker handles the OAuth handshake with GitHub: it redirects the user to Gi
 3. Add a secret named `GITHUB_CLIENT_ID` with the OAuth App's Client ID from step 1. Copy it directly from GitHub's page rather than retyping it — `l` (lowercase L), `1` (digit one), `I` (capital I), and `O`/`0` are easy to mix up by eye.
 4. Add a secret named `GITHUB_CLIENT_SECRET` with the OAuth App's Client Secret (generate one on the same page — shown only once).
 5. Add a secret named `APP_SECRET` with the **same** string from step 1 of Setup.
-6. Add a secret named `WRITE_SECRET` with the **same** value used for the GitHub Ops Worker (step 6.4 above) - this Worker's `/refresh` endpoint is gated behind it the same way.
+6. No `WRITE_SECRET` is needed on this Worker - `/refresh` is gated by `APP_SECRET` plus the user's own GitHub `refresh_token`, so OAuth-only repo connections keep working when an expiring token renews.
 7. Confirm its URL under Settings → Domains and set `GH_OAUTH_URL` in `index.html` to match.
 
 ### 8. Point the frontend at your Workers
