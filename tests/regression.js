@@ -148,6 +148,9 @@
      now that a Coding tab sends it plain conversational messages too)
      gets one automatic retry with a corrective nudge, instead of
      rendering "(no response)" as the final answer
+   - the header's version number actually shrinks/truncates instead of
+     overflowing underneath the Coding badge on a narrow phone, once
+     both need to fit in the same row
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -2385,6 +2388,27 @@ function assert(cond, label) {
   assert(sendBoxNarrow && (sendBoxNarrow.x + sendBoxNarrow.width) <= 375, `Send stays fully on-screen at a 375px phone width instead of overflowing (right edge at ${sendBoxNarrow ? (sendBoxNarrow.x + sendBoxNarrow.width).toFixed(0) : 'N/A'}px)`);
   if (defaultViewport) await page.setViewportSize(defaultViewport);
   await page.waitForTimeout(150);
+
+  console.log('\n-- the version number stays visible instead of being overlapped by the Coding badge on a narrow phone --');
+  // The Coding badge sits in the same header row as "ai-router vX.X" -
+  // a real user report showed the version number getting covered up once
+  // the badge was visible. The version text needs to actually shrink
+  // (not just overflow underneath the header's right-side icons) when
+  // there isn't room for both.
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(300);
+  const narrowViewportForBadge = page.viewportSize();
+  await page.setViewportSize({ width: 320, height: 812 });
+  await page.waitForTimeout(150);
+  const versionBox = await page.locator('.wm').boundingBox();
+  const codingBadgeBox = await page.locator('#codingModeBadge').boundingBox();
+  assert(versionBox && codingBadgeBox && (versionBox.x + versionBox.width) <= codingBadgeBox.x + 1, `the version number's right edge stays clear of the Coding badge instead of being overlapped (version right edge ${versionBox ? (versionBox.x + versionBox.width).toFixed(0) : 'N/A'}px, badge left edge ${codingBadgeBox ? codingBadgeBox.x.toFixed(0) : 'N/A'}px)`);
+  if (narrowViewportForBadge) await page.setViewportSize(narrowViewportForBadge);
+  await page.waitForTimeout(150);
+  // Switch away from the Coding tab this test created - leaving it active
+  // would route every later test's message straight to the coding agent
+  // instead of the plain chat flow those tests actually mean to exercise.
+  await page.locator('#tabBar .tabpill').first().click();
+  await page.waitForTimeout(400);
 
   console.log('\n-- a fresh deploy applies itself automatically instead of waiting for a tap --');
   // Field techs on iPhone struggle even with clearing a cache, so the app

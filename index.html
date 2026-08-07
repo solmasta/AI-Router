@@ -31,7 +31,7 @@ body{background:var(--bg);color:var(--tx);font-family:-apple-system,system-ui,sa
 .app{display:flex;flex-direction:column;height:100vh;height:100dvh;height:100svh;max-width:820px;width:100%;margin:0 auto;padding:0 16px}
 header{display:flex;align-items:center;justify-content:space-between;padding:calc(13px + env(safe-area-inset-top,0px)) 0 12px;flex-shrink:0;gap:8px}
 .hl{display:flex;align-items:center;gap:8px;min-width:0}
-.wm{font-size:15px;color:var(--tx);flex-shrink:0;font-weight:700;letter-spacing:-.01em}
+.wm{font-size:15px;color:var(--tx);flex-shrink:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;letter-spacing:-.01em}
 .wm span{font-size:10px;opacity:.28;font-weight:400;margin-left:3px}
 .btabs{display:flex;gap:0;padding:10px 16px 0;flex-shrink:0}
 .btab{flex:1;background:var(--up);border:none;padding:9px 0;font-size:13px;color:var(--mu);cursor:pointer;font-weight:500;transition:background .15s,color .15s}
@@ -105,7 +105,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:cal
 .ct{font-size:10.5px;color:var(--mu);font-family:var(--mn);margin-left:auto;opacity:.7}
 .srch{font-size:10.5px;color:var(--ac);background:rgba(139,140,247,.1);border-radius:20px;padding:2px 9px;white-space:nowrap;font-weight:500}
 .modelTag{font-size:10.5px;color:var(--mu);font-family:var(--mn);opacity:.7;font-weight:400;white-space:nowrap}
-.cmb{font-size:11px;color:var(--ac);background:rgba(139,140,247,.12);border-radius:20px;padding:4px 10px;white-space:nowrap;font-weight:500}
+.cmb{font-size:12px;color:var(--ac);background:rgba(139,140,247,.12);border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
 .msw{display:flex;align-items:center;gap:8px;color:var(--mu);font-size:11px;opacity:.6;font-weight:500}
 .msw::before,.msw::after{content:'';flex:1;height:1px;background:var(--br)}
 .cb{margin:10px 0;border-radius:12px;overflow:hidden;border:1px solid var(--br)}
@@ -267,10 +267,10 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.114</span></span>
+      <span class="wm">ai-router <span>v5.115</span></span>
     </div>
     <div class="hr">
-      <span class="cmb hidden" id="codingModeBadge" title="Coding tab - every message here goes straight to your connected repo">&#128187; Coding</span>
+      <span class="cmb hidden" id="codingModeBadge" title="Coding tab - every message here goes straight to your connected repo">&#128187;</span>
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
       <button class="ib" id="settingsBtn" style="color:var(--ac)" title="Settings">&#9881;</button>
       <button class="ib" id="wprojBtn" title="Projects">&#128204;</button>
@@ -559,7 +559,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.114</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.115</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
