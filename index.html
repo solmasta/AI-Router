@@ -280,7 +280,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.121</span></span>
+      <span class="wm">ai-router <span>v5.122</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -571,7 +571,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.121</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.122</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -922,7 +922,18 @@ function updateGithubStatus(){
   if(ob)ob.textContent=oauthConnected?"Reconnect GitHub OAuth":"Connect via GitHub OAuth";
   var ost=document.getElementById("ghOauthStatus");
   if(ost)ost.textContent=oauthConnected?"✓ OAuth token stored":"No OAuth token - connect above or enter write secret below";
-  if(codingModeActive&&!chatHistory.length)applyCodingEmptyStateText();
+  updateGithubSaveBtnLabel();
+  if(codingModeActive&&document.getElementById("emptyState"))applyCodingEmptyStateText();
+}
+function updateGithubSaveBtnLabel(){
+  var btn=document.getElementById("githubSaveBtn");
+  if(!btn)return;
+  var ownerEl=document.getElementById("ghOwnerInput");
+  var repoEl=document.getElementById("ghRepoInput");
+  var secretEl=document.getElementById("ghWriteSecretInput");
+  var hasRepoInput=!!((ownerEl&&ownerEl.value.trim())&&(repoEl&&repoEl.value.trim()));
+  var hasAuthInput=!!((secretEl&&secretEl.value.trim())||ghOauthToken||ghOauthRefreshToken);
+  btn.textContent=hasRepoInput&&hasAuthInput?"Save & Connect":"Save repo";
 }
 function ghSaveOauthToken(token,expiresInSec,refreshToken){
   ghOauthToken=token;
@@ -4871,6 +4882,9 @@ document.getElementById("githubConnectBtn").addEventListener("click",function(){
   renderRecentRepos();
   openModal("githubModal");
 });
+["ghOwnerInput","ghRepoInput","ghWriteSecretInput"].forEach(function(id){
+  document.getElementById(id).addEventListener("input",updateGithubSaveBtnLabel);
+});
 document.getElementById("ghOauthConnectBtn").addEventListener("click",function(){
   ghOAuthConnect();
 });
@@ -6031,8 +6045,19 @@ loadFavs();
   if(t==="light"){isDark=false;document.body.classList.add("light");document.getElementById("themeBtn").textContent="\u2600 Dark";}
   syncThemeColor();
 })();
-loadBackend();loadPrompts();loadProjects();loadWProjects();loadAutoSave();loadDraft();initTabs();loadMemories();renderMemoryList();loadDocLibrary();renderDocLibraryList();
-loadGithubConnection();updateGithubStatus();
+loadBackend();
+loadPrompts();
+loadProjects();
+loadWProjects();
+loadAutoSave();
+loadDraft();
+loadGithubConnection();
+initTabs();
+loadMemories();
+renderMemoryList();
+loadDocLibrary();
+renderDocLibraryList();
+updateGithubStatus();
 document.getElementById("activeProfileLabel").textContent=activeProfile==="default"?"default":activeProfile;
 
 /* If previously connected, silently renew the access_token from the
