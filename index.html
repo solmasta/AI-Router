@@ -105,6 +105,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:cal
 .ct{font-size:10.5px;color:var(--mu);font-family:var(--mn);margin-left:auto;opacity:.7}
 .srch{font-size:10.5px;color:var(--ac);background:rgba(139,140,247,.1);border-radius:20px;padding:2px 9px;white-space:nowrap;font-weight:500}
 .modelTag{font-size:10.5px;color:var(--mu);font-family:var(--mn);opacity:.7;font-weight:400;white-space:nowrap}
+.cmb{font-size:11px;color:var(--ac);background:rgba(139,140,247,.12);border-radius:20px;padding:4px 10px;white-space:nowrap;font-weight:500}
 .msw{display:flex;align-items:center;gap:8px;color:var(--mu);font-size:11px;opacity:.6;font-weight:500}
 .msw::before,.msw::after{content:'';flex:1;height:1px;background:var(--br)}
 .cb{margin:10px 0;border-radius:12px;overflow:hidden;border:1px solid var(--br)}
@@ -266,9 +267,10 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.112</span></span>
+      <span class="wm">ai-router <span>v5.113</span></span>
     </div>
     <div class="hr">
+      <span class="cmb hidden" id="codingModeBadge" title="Coding tab - every message here goes straight to your connected repo">&#128187; Coding</span>
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
       <button class="ib" id="settingsBtn" style="color:var(--ac)" title="Settings">&#9881;</button>
       <button class="ib" id="wprojBtn" title="Projects">&#128204;</button>
@@ -305,6 +307,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
         <button class="ws" id="overseerBtn" title="Overseer status (long-press to chat)">🤖</button>
         <button class="ws" id="brainstormBtn" title="Brainstorming suggestions">💭</button>
         <button class="ws" id="newTabBtn" title="New conversation tab" style="color:var(--ac);font-size:17px;font-weight:400">&#43;</button>
+        <button class="ws" id="newCodeTabBtn" title="New Coding tab - every message goes straight to your connected repo" style="color:var(--ac);font-size:15px;font-weight:400">&#128187;</button>
         <div class="ir">
           <button id="clearBtn" class="bg">Clear</button>
           <button id="sendBtn" class="bp">Send</button>
@@ -556,7 +559,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.112</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.113</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -694,6 +697,14 @@ var AUTOSAVE_KEY="ai_autosave";
 var RECENT_KEY="ai_recent";
 var TABS_KEY="ai_tabs";
 var openTabs=[],activeTabIndex=0;
+/* A Coding tab always routes every message straight to the dedicated
+   coding agent (see doSendRequest's gate below) instead of relying on
+   analyzeTask/looksLikeContinuationRequest to guess whether a given
+   message is repo-relevant - the whole point of a dedicated tab is to
+   not need that guess. Mirrors the active tab's own flag the same way
+   activeBackend/currentModel already do, persisted per-tab so switching
+   tabs doesn't leak coding mode into an unrelated conversation. */
+var codingModeActive=false;
 var MK="ai_memories";
 var memories=[];
 var DLK="ai_doclibrary";
@@ -814,6 +825,13 @@ var DEFAULT_PROMPTS=[{id:"1000000001",name:"HVAC Field Tech",content:"You are an
 var VISION_MODELS=["Qwen/Qwen3-VL-30B-A3B-Instruct","google/gemma-3-27b-it","meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8"];
 var TOOL_MODELS=["mistralai/Mistral-Small-3.2-24B-Instruct-2506","meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo","meta-llama/Llama-3.3-70B-Instruct-Turbo","meta-llama/Llama-4-Scout-17B-16E-Instruct","Qwen/Qwen2.5-72B-Instruct","Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo","deepseek-ai/DeepSeek-V3.2","moonshotai/Kimi-K2-Instruct","zai-org/GLM-4.6","MiniMaxAI/MiniMax-M2","openai/gpt-oss-120b"];
 var modelCanCodeAndControl=true;
+/* Single source of truth for "can the dedicated coding agent actually do
+   anything right now" - shared by doSendRequest's routing gate and the
+   Coding tab's own empty-state/guard messaging, so the two can't drift
+   out of sync about what counts as connected. */
+function hasCodingAgentAccess(){
+  return !!(modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&(ghWriteSecret||ghOauthToken||ghOauthRefreshToken));
+}
 /* GitHub connection state.  Two auth paths:
    1. OAuth (preferred): user completes GitHub OAuth flow; access_token is
       stored locally and passed as Authorization: ****** to github-ops-worker.
@@ -3701,7 +3719,7 @@ function tabTitleFor(hist){
 }
 function currentTabSnapshot(){
   var ov=Object.assign({},overseerState,{modelsUsed:Array.from(overseerState.modelsUsed)});
-  return{title:tabTitleFor(chatHistory),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov};
+  return{title:tabTitleFor(chatHistory),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive};
 }
 function syncActiveTabFromLiveState(){
   if(!openTabs.length)return;
@@ -3727,6 +3745,7 @@ function applyTabAsLiveState(t){
   var def=allModels.find(function(m){return m.id===t.modelId;});
   if(def){setModel(def);}else if(t.modelId){currentModel={id:t.modelId,label:t.modelLabel||t.modelId};document.getElementById("modelBtnLabel").textContent=currentModel.label;document.getElementById("modelBtn").disabled=false;}
   renderChatFromHistory(t.chatHistory||[]);
+  if(t.codingMode&&!(t.chatHistory&&t.chatHistory.length))applyCodingEmptyStateText();
   /* Each tab keeps its own Overseer progress - switching tabs must not
      leak stale goal/progress/project from whichever tab was last active,
      especially now that the status bar makes it visible at a glance. */
@@ -3740,6 +3759,12 @@ function applyTabAsLiveState(t){
   updateOverseerBar();
   preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;
   declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
+  codingModeActive=!!t.codingMode;
+  updateCodingModeUI();
+}
+function updateCodingModeUI(){
+  var badge=document.getElementById("codingModeBadge");
+  if(badge)badge.classList.toggle("hidden",!codingModeActive);
 }
 function renderTabBar(){
   var bar=document.getElementById("tabBar");
@@ -3751,7 +3776,7 @@ function renderTabBar(){
     pill.className="tabpill"+(i===activeTabIndex?" act":"");
     var span=document.createElement("span");
     span.className="tpt";
-    span.textContent=t.title||"New chat";
+    span.textContent=(t.codingMode?"💻 ":"")+(t.title||"New chat");
     pill.appendChild(span);
     var x=document.createElement("span");
     x.className="tpx";x.textContent="✕";
@@ -3770,7 +3795,7 @@ function switchToTab(index){
   renderTabBar();
   saveTabsToStorage();
 }
-function createNewTab(){
+function createNewTab(isCoding){
   if(sending)return;
   syncActiveTabFromLiveState();
   saveTabsToStorage();
@@ -3779,11 +3804,14 @@ function createNewTab(){
      model, not whatever the previous tab's conversation had auto-switched
      to - the Overseer only has real signal to route on once a conversation
      has actually started, so a brand-new tab shouldn't open already
-     steered toward whatever the last chat happened to need. */
+     steered toward whatever the last chat happened to need. A Coding tab
+     still starts here too - the model shown/used for plain replies is
+     independent of the dedicated coding agent, which runs on its own
+     fixed model regardless (see runCodingAgentTurn). */
   var B=BACKENDS[activeBackend];
   var defModel=B.models.find(function(m){return m.id===B.def;})||B.models[0];
   setModel(defModel);
-  openTabs.push({title:"New chat",chatHistory:[],modelId:defModel.id,modelLabel:defModel.label,backend:activeBackend,sessionId:newSessionId});
+  openTabs.push({title:isCoding?"Coding":"New chat",chatHistory:[],modelId:defModel.id,modelLabel:defModel.label,backend:activeBackend,sessionId:newSessionId,codingMode:!!isCoding});
   activeTabIndex=openTabs.length-1;
   sessionId=newSessionId;
   renderChatFromHistory([]);
@@ -3793,8 +3821,17 @@ function createNewTab(){
   updateOverseerBar();
   preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;
   declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
+  codingModeActive=!!isCoding;
+  updateCodingModeUI();
+  if(isCoding)applyCodingEmptyStateText();
   renderTabBar();
   saveTabsToStorage();
+}
+function applyCodingEmptyStateText(){
+  var esTitle=document.querySelector("#emptyState .es-title");
+  var esSub=document.querySelector("#emptyState .es-sub");
+  if(esTitle)esTitle.textContent="Coding mode";
+  if(esSub)esSub.textContent=hasCodingAgentAccess()?("Connected to "+ghRepoOwner+"/"+ghRepoName+" - every message here goes straight to the repo, no need to mention GitHub or code explicitly."):"Open Settings → GitHub to connect a repository, then everything you send here goes straight to it.";
 }
 function closeTab(index){
   if(openTabs.length<=1||sending)return;
@@ -4827,6 +4864,7 @@ document.getElementById("openrouterBtn").addEventListener("click",function(){if(
 document.getElementById("modelBtn").addEventListener("click",function(){renderModelList();openModal("modelModal");});
 document.getElementById("settingsBtn").addEventListener("click",function(){openModal("settingsModal");});
 document.getElementById("newTabBtn").addEventListener("click",function(){createNewTab();});
+document.getElementById("newCodeTabBtn").addEventListener("click",function(){createNewTab(true);});
 document.getElementById("systemToggle").addEventListener("click",function(){renderPromptList();openModal("promptModal");});
 document.getElementById("newPromptBtn").addEventListener("click",function(){closeModal("promptModal");openPE(null);});
 document.getElementById("importDefaultsBtn").addEventListener("click",importDefaults);
@@ -5025,7 +5063,7 @@ async function sendOverseerChatMsg(){
      is a normal, expected pattern here, not a continuation - a sticky
      window would hand out repo tools for the wrong question. */
   var overseerRepoRelevant=overseerTaskSignals.github>0||overseerTaskSignals.code>0;
-  var overseerHasRepoTools=overseerHasTools&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&(ghWriteSecret||ghOauthToken||ghOauthRefreshToken)&&overseerRepoRelevant;
+  var overseerHasRepoTools=overseerHasTools&&hasCodingAgentAccess()&&overseerRepoRelevant;
   var sys="You are the Overseer, a strategic advisor built into this app. The user has stepped out of their main conversation with the AI model to talk strategy with you directly - about approach, what to try next, or whether they're stuck. Be direct and concise. Base advice on the actual context below, not generic platitudes.\n\n"+
     (overseerPersonality?("Personality: "+overseerPersonality+" - let this come through naturally in your tone and word choice, without announcing or explaining it.\n\n"):"")+
     "Goal: "+(overseerState.goalType||"not yet detected")+"\n"+
@@ -5518,7 +5556,22 @@ async function doSendRequest(userContent,isRegen,ap){
      tool access doesn't disappear just because the auto-router picked a
      non-tool-capable model for the main chat. */
   var hasImgInContent=Array.isArray(userContent)&&userContent.some(function(p){return p.type==="image_url";});
-  if(!hasImgInContent&&modelCanCodeAndControl&&ghToken&&ghRepoOwner&&ghRepoName&&(ghWriteSecret||ghOauthToken||ghOauthRefreshToken)&&(searchGateTasks.github>0||searchGateTasks.code>0||(looksLikeContinuationRequest(qtext)&&recentTurnsWereRepoRelevant(chatHistory)))){
+  /* A Coding tab exists precisely so the user doesn't have to phrase every
+     message in a way that trips analyzeTask's keyword gate - every
+     message there goes straight to the coding agent, no guessing. If the
+     tab's repo access isn't actually set up, say so plainly instead of
+     silently falling through to the plain chat model, which would make
+     the dedicated tab feel like it does nothing. */
+  if(!hasImgInContent&&codingModeActive&&!hasCodingAgentAccess()){
+    var codingGuardText="This Coding tab needs a connected repo first - open Settings → GitHub to connect one, then send this again.";
+    appendMsg("assistant",codingGuardText);
+    chatHistory.push({role:"assistant",content:codingGuardText});
+    autoSave();
+    showNextStepPrompt();
+    sending=false;document.getElementById("sendBtn").disabled=false;document.getElementById("sendBtn").textContent="Send";document.getElementById("sendBtn").style.background="";
+    return;
+  }
+  if(!hasImgInContent&&hasCodingAgentAccess()&&(codingModeActive||searchGateTasks.github>0||searchGateTasks.code>0||(looksLikeContinuationRequest(qtext)&&recentTurnsWereRepoRelevant(chatHistory)))){
     try{
       await runCodingAgentTurn(messages,looksLikeAutoContinueRequest(qtext));
     }finally{

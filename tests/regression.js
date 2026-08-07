@@ -139,6 +139,11 @@
      plain text (e.g. an invented <function=some_tool>{...}</function>)
      instead of an actual answer - the same fix already covering the
      dedicated coding agent, now applied to the ordinary chat path too
+   - a dedicated Coding tab routes every message straight to the coding
+     agent regardless of keyword content, showing a clear guard message
+     if no repo is connected yet instead of silently using the plain
+     chat model; the Coding badge shows while it's active and clears
+     when switching to a different tab
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -791,6 +796,48 @@ function assert(cond, label) {
   await page.waitForTimeout(600);
   const backOnTabA = await page.evaluate(() => document.getElementById('chat').textContent.indexOf('quick test') >= 0);
   assert(backOnTabA, 'switching back to tab A shows its original content');
+
+  console.log('\n-- Coding tab always routes to the coding agent, with a clear guard when no repo is connected --');
+  // A dedicated Coding tab exists so every message there goes straight to
+  // the coding agent without needing to sound repo-flavored at all - the
+  // whole point is to skip analyzeTask's keyword guessing entirely.
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  const codingBadgeVisibleNoRepo = await page.evaluate(() => !document.getElementById('codingModeBadge').classList.contains('hidden'));
+  assert(codingBadgeVisibleNoRepo, 'the Coding badge shows in the header once a Coding tab is active');
+  await sendMsg('hello there');
+  const chatTextNoRepoGuard = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(chatTextNoRepoGuard.indexOf('needs a connected repo') >= 0, `sending in a Coding tab with no repo connected shows a clear guard message instead of silently falling back to the plain chat model (got: ${chatTextNoRepoGuard.slice(-300)})`);
+
+  console.log('\n-- Coding tab reaches the dedicated coding agent for a completely generic, keyword-free message once a repo is connected --');
+  await page.click('#settingsBtn'); await page.waitForTimeout(150);
+  await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
+  await page.fill('#ghOwnerInput', 'solmasta');
+  await page.fill('#ghRepoInput', 'Test');
+  await page.fill('#ghWriteSecretInput', 'regtest-write-secret');
+  await page.click('#githubSaveBtn'); await page.waitForTimeout(300);
+  let codingTabAgentHit = false;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        codingTabAgentHit = true;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest coding tab reply' } }] }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('good morning, how is it going');
+  await page.unroute('**/*');
+  assert(codingTabAgentHit, 'a completely generic message with zero repo/code keywords still reaches the dedicated coding agent inside a Coding tab');
+  const chatTextInCodingTab = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(chatTextInCodingTab.indexOf('regtest coding tab reply') >= 0, "the coding agent's reply actually renders in the Coding tab");
+  await page.locator('#tabBar .tabpill').first().click();
+  await page.waitForTimeout(400);
+  const codingBadgeHiddenAfterSwitch = await page.evaluate(() => document.getElementById('codingModeBadge').classList.contains('hidden'));
+  assert(codingBadgeHiddenAfterSwitch, 'switching to a non-Coding tab hides the Coding badge again');
 
   console.log('\n-- profile: create, isolate --');
   await page.click('#settingsBtn'); await page.waitForTimeout(150);
