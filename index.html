@@ -105,8 +105,6 @@ header{display:flex;align-items:center;justify-content:space-between;padding:cal
 .ct{font-size:10.5px;color:var(--mu);font-family:var(--mn);margin-left:auto;opacity:.7}
 .srch{font-size:10.5px;color:var(--ac);background:rgba(139,140,247,.1);border-radius:20px;padding:2px 9px;white-space:nowrap;font-weight:500}
 .modelTag{font-size:10.5px;color:var(--mu);font-family:var(--mn);opacity:.7;font-weight:400;white-space:nowrap}
-.msw{display:flex;align-items:center;gap:8px;color:var(--mu);font-size:11px;opacity:.6;font-weight:500}
-.msw::before,.msw::after{content:'';flex:1;height:1px;background:var(--br)}
 .cb{margin:10px 0;border-radius:12px;overflow:hidden;border:1px solid var(--br)}
 .ch{display:flex;justify-content:space-between;align-items:center;background:#0d1117;padding:7px 13px;font-family:var(--mn);font-size:11px;color:var(--mu)}
 .cc{background:none;border:none;color:var(--mu);font-size:11px;padding:2px 8px;border-radius:6px;cursor:pointer}
@@ -123,7 +121,17 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 .obd.stuck{background:#ef4444}
 .obd.off{background:var(--mu)}
 #overseerBarText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ob-continue{flex-shrink:0;margin-left:auto;padding:2px 8px;background:rgba(34,197,94,0.15);border:1px solid #22c55e;color:var(--tx);border-radius:4px;font-size:11px;cursor:pointer}
+.ob-continue{flex-shrink:0;margin-left:auto}
+/* Every "Continue" surface (the persistent bar, the one-time step notice,
+   the coding agent's own round-to-round prompts) used to each pick its
+   own color - green here, plain gray there - for what's the exact same
+   action. Green also collided with .obd's existing meaning (a status
+   dot, not a button), so a "Continue" pill next to it read as two
+   unrelated signals. One consistent accent-purple treatment, matching
+   the rest of the app's actual call-to-action color (Send, active
+   states) instead of introducing a second one. */
+.cta{padding:4px 11px;background:rgba(139,140,247,.15);border:1px solid var(--ac);color:var(--ac);border-radius:20px;font-size:11.5px;font-weight:600;cursor:pointer;transition:background .15s}
+.cta:hover{background:rgba(139,140,247,.28)}
 .tt{flex:1;height:3px;background:var(--up);border-radius:2px;overflow:hidden}
 .tf{height:100%;background:var(--ac);border-radius:2px;transition:width .3s}
 .tf.warn{background:#f59e0b}
@@ -266,7 +274,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.116</span></span>
+      <span class="wm">ai-router <span>v5.118</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -285,7 +293,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <div class="ob hidden" id="overseerBar">
     <span class="obd" id="overseerBarDot"></span>
     <span id="overseerBarText">Overseer monitoring</span>
-    <button class="ob-continue hidden" id="overseerBarContinueBtn">Continue &#8594;</button>
+    <button class="cta ob-continue hidden" id="overseerBarContinueBtn">Continue &#8594;</button>
   </div>
   <div class="tb hidden" id="tokenBar">
     <span id="tokenCount">0 tokens</span>
@@ -557,7 +565,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.116</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.118</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -736,7 +744,7 @@ window.isAppBusyForUpdate=function(){return sending||!!codingAgentActive;};
 var activePromptId=null,editingId=null,editingProjId=null,viewingProjId=null;
 var prompts=[],projects=[];
 var wproj=[],activeWProjId=null,editingWProjId=null,viewingWProjId=null;
-var sessionId=Date.now().toString(),responseCount=0,lastUsedModelId="";
+var sessionId=Date.now().toString(),responseCount=0;
 var temperature=0.7,favorites={},isDark=true;
 var summarizing=false;
 var abortController=null;
@@ -2176,7 +2184,7 @@ function showStepUpdate(prevStep,nextStep){
      continuation before it actually goes out - same pattern the Overseer
      suggestion chips already use, rather than a silent immediate send. */
   notice.innerHTML="✓ <strong>Step completed:</strong> "+esc(prevStep)+"<br>→ <strong>Next:</strong> "+esc(nextStep)+
-    ' <button style="margin-left:6px;padding:3px 8px;background:rgba(34,197,94,0.2);border:1px solid #22c55e;color:var(--tx);border-radius:4px;font-size:11px;cursor:pointer" onclick="insertPrompt(\'Continue with the next step: '+esc(nextStep).replace(/\\/g,"\\\\").replace(/'/g,"\\'")+'\')">Continue &#8594;</button>';
+    ' <button class="cta" style="margin-left:6px" onclick="insertPrompt(\'Continue with the next step: '+esc(nextStep).replace(/\\/g,"\\\\").replace(/'/g,"\\'")+'\')">Continue &#8594;</button>';
   document.getElementById("chat").appendChild(notice);
 }
 /* Each condition below stays true across many 15s monitoring ticks (e.g.
@@ -2835,6 +2843,7 @@ async function executeToolCall(toolName,toolArgs,renderStatus,logTarget){
    MAIN conversation model just to keep tool access felt random and broke
    continuity with whatever the user was actually talking to. */
 var CODING_AGENT_MODEL_ID="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo";
+var CODING_AGENT_MODEL_LABEL="Qwen3 Coder 480B";
 /* Caps an auto-continuing session (see looksLikeAutoContinueRequest) so a
    model that never stops calling tools on a huge repo can't run away
    unattended forever - it pauses and asks for an explicit Continue past
@@ -2883,7 +2892,13 @@ function renderCodingConsole(){
   wrap.className="msg ma3";
   var label=document.createElement("div");label.className="ml";
   var av=document.createElement("span");av.className="av";av.textContent="✦";label.appendChild(av);
-  var lspan=document.createElement("span");lspan.textContent="Assistant";label.appendChild(lspan);
+  /* "Overseer", matching the main chat's own relabeling - the coding
+     agent is a different underlying model, but it's still the same
+     single point of contact from the user's perspective, not a
+     separate persona. Model shown as the same secondary .modelTag
+     indicator the main chat uses. */
+  var lspan=document.createElement("span");lspan.textContent="Overseer";label.appendChild(lspan);
+  var mtag=document.createElement("span");mtag.className="modelTag";mtag.textContent=CODING_AGENT_MODEL_LABEL;label.appendChild(mtag);
   var body=document.createElement("div");body.className="body";body.innerHTML='<span class="cur">▇</span> working on the next step&#8230;';
   wrap.appendChild(label);wrap.appendChild(body);
   document.getElementById("chat").appendChild(wrap);
@@ -3010,7 +3025,7 @@ async function runCodingAgentRound(sessionId){
            normal one-tap-per-round behavior instead of chaining further
            unattended. */
         var contBtn=document.createElement("button");
-        contBtn.className="ba";contBtn.textContent="Continue";
+        contBtn.className="cta";contBtn.textContent="Continue";
         contBtn.style.cssText="margin-top:8px";
         contBtn.onclick=function(){contBtn.disabled=true;contBtn.textContent="…";runCodingAgentRound(mySession.id);};
         con.wrap.appendChild(contBtn);
@@ -3064,7 +3079,7 @@ async function runCodingAgentRound(sessionId){
       msgs.push(msg);
       codingAgentActive=null;
       var contBtn2=document.createElement("button");
-      contBtn2.className="ba";contBtn2.textContent="Continue";
+      contBtn2.className="cta";contBtn2.textContent="Continue";
       contBtn2.style.cssText="margin-top:8px";
       contBtn2.onclick=function(){
         contBtn2.disabled=true;contBtn2.textContent="…";
@@ -3480,7 +3495,7 @@ function loadConv(conv){
   if(chatHistory.length&&!confirm("Load this chat? Current chat will be cleared."))return;
   saveToRecent();
   chatHistory=conv.messages.map(function(m){return{role:m.role,content:m.content};});
-  document.getElementById("chat").innerHTML="";lastUsedModelId="";
+  document.getElementById("chat").innerHTML="";
   var def=allModels.find(function(m){return m.id===conv.modelId;});if(def)setModel(def);
   chatHistory.forEach(function(m){appendMsg(m.role,m.content);});
   closeModal("convsModal");updTokenBar();
@@ -3596,7 +3611,7 @@ function loadWprojConv(conv,p){
   if(chatHistory.length&&!confirm("Load this chat? Current chat will be cleared."))return;
   saveToRecent();
   chatHistory=conv.messages.map(function(m){return{role:m.role,content:m.content};});
-  document.getElementById("chat").innerHTML="";lastUsedModelId="";
+  document.getElementById("chat").innerHTML="";
   sessionId=conv.sessionId||Date.now().toString();
   var def=allModels.find(function(m){return m.id===conv.modelId;});if(def)setModel(def);
   chatHistory.forEach(function(m){appendMsg(m.role,m.content);});
@@ -3610,7 +3625,7 @@ function startWprojChat(){
   if(chatHistory.length&&!confirm("Start a new chat in this project? Current chat will be cleared."))return;
   saveToRecent();
   chatHistory=[];document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">🤖</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';
-  lastUsedModelId="";sessionId=Date.now().toString();responseCount=0;
+  sessionId=Date.now().toString();responseCount=0;
   document.getElementById("tokenBar").classList.add("hidden");
   activeWProjId=p.id;
   setWprojPromptBadge(p);
@@ -5303,10 +5318,6 @@ function scrollBot(){var c=document.getElementById("chat");if(c.scrollHeight-c.s
 function appendMsg(role,content,streaming){
   hideEmpty();
   var chat=document.getElementById("chat");
-  if(role==="assistant"&&lastUsedModelId&&lastUsedModelId!==currentModel.id){
-    var sw=document.createElement("div");sw.className="msw";sw.textContent=currentModel.label;chat.appendChild(sw);
-  }
-  if(role==="assistant")lastUsedModelId=currentModel.id;
   var wrap=document.createElement("div");wrap.className="msg "+(role==="user"?"mu":"ma3");
   var label=document.createElement("div");label.className="ml";
   if(role==="assistant"){
@@ -5373,7 +5384,6 @@ function editMsg(wrap){
   document.getElementById("prompt").value=text;document.getElementById("prompt").focus();
   chatHistory=chatHistory.slice(0,hIdx);
   for(var m2=wIdx;m2<msgs.length;m2++)msgs[m2].remove();
-  lastUsedModelId="";
 }
 
 /* ---- Regen ---- */
@@ -5869,7 +5879,7 @@ document.getElementById("clearBtn").addEventListener("click",function(){
   saveToRecent();
   undoData={messages:chatHistory.slice(),backend:activeBackend,modelId:currentModel.id,modelLabel:currentModel.label};
   chatHistory=[];clearAttach();localStorage.removeItem(pk(AUTOSAVE_KEY));localStorage.removeItem(pk("ai_draft"));
-  sessionId=Date.now().toString();responseCount=0;lastUsedModelId="";summarizing=false;
+  sessionId=Date.now().toString();responseCount=0;summarizing=false;
   clearActiveWproj();stopOverseerMonitoring();overseerState=defaultOverseerState();
   preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">🤖</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';

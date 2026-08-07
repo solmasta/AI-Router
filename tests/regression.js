@@ -151,6 +151,9 @@
    - the Coding indicator lives in the systemToggle status bar (with the
      active project/prompt name) rather than the header's icon row, so
      the version number stays fully visible instead of getting squeezed
+   - the dedicated coding agent's own console is labeled "Overseer" too
+     (with its fixed model as a secondary indicator), consistent with
+     the main chat's relabeling instead of a leftover "Assistant"
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -697,7 +700,7 @@ function assert(cond, label) {
   const listFilesTool = (lastCodingAgentBody.tools || []).find((t) => t.function.name === 'list_files');
   assert(listFilesTool && !(listFilesTool.function.parameters.required || []).includes('path'), 'list_files no longer requires a path - omitting it can mean "list the repo root"');
   const chatTextAfterCodingAgent = await page.evaluate(() => document.getElementById('chat').textContent);
-  assert(chatTextAfterCodingAgent.indexOf('Assistant') >= 0, "repo work renders as a normal assistant reply");
+  assert(chatTextAfterCodingAgent.indexOf('Overseer') >= 0, "repo work renders as a normal Overseer reply, labeled consistently with the main chat");
   assert(chatTextAfterCodingAgent.indexOf('README describes this project') >= 0, "the coding agent's final answer actually renders");
 
   console.log('\n-- 3+ rounds of "Continue with the next step" in a row still keep routing to the dedicated coding agent --');
