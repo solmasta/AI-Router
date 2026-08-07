@@ -144,6 +144,10 @@
      if no repo is connected yet instead of silently using the plain
      chat model; the Coding badge shows while it's active and clears
      when switching to a different tab
+   - a coding-agent round that comes back genuinely empty (a real risk
+     now that a Coding tab sends it plain conversational messages too)
+     gets one automatic retry with a corrective nudge, instead of
+     rendering "(no response)" as the final answer
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -1415,6 +1419,55 @@ function assert(cond, label) {
   assert(autoContinueRoundCount === 3, `all 3 rounds fired automatically with no Continue click (got ${autoContinueRoundCount} rounds)`);
   assert(chatTextAfterAutoContinue.indexOf('regtest auto-continue done') >= 0, "the final round's plain-text answer renders once the agent stops calling tools on its own");
   assert(chatTextAfterAutoContinue.indexOf('Stop') >= 0, 'a Stop control is offered while auto-continuing, in case the user wants to interrupt it');
+
+  console.log('\n-- a coding-agent round that comes back genuinely empty gets one automatic retry too --');
+  // The dedicated coding agent now sees plain conversational messages too
+  // (via a Coding tab, which routes everything there regardless of repo
+  // signal) - a model this heavily framed as a repo-focused agent can
+  // come back with truly empty content for something like "good
+  // morning" instead of just answering it. Round 1 returns empty;
+  // confirm a round 2 fires automatically with a corrective nudge, and
+  // round 2's real answer renders instead of "(no response)".
+  let emptyCodingRoundCount = 0;
+  let emptyRoundSawCorrectiveNudge = false;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        emptyCodingRoundCount++;
+        if (emptyCodingRoundCount === 1) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '' } }] }),
+          });
+          return;
+        }
+        emptyRoundSawCorrectiveNudge = (parsed.messages || []).some(m => m.role === 'user' && typeof m.content === 'string' && m.content.indexOf('came back empty') >= 0);
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest real answer after empty retry' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please check the repo and tell me what it does');
+  let chatTextAfterEmptyRetry = '';
+  for (let i = 0; i < 60; i++) {
+    chatTextAfterEmptyRetry = await page.evaluate(() => document.getElementById('chat').textContent);
+    if (chatTextAfterEmptyRetry.indexOf('regtest real answer after empty retry') >= 0) break;
+    await page.waitForTimeout(200);
+  }
+  await page.unroute('**/*');
+  assert(emptyCodingRoundCount === 2, `a genuinely empty round triggers exactly one automatic retry round (got ${emptyCodingRoundCount} rounds)`);
+  assert(emptyRoundSawCorrectiveNudge, 'the retry round includes a corrective nudge telling the model it came back empty');
+  assert(chatTextAfterEmptyRetry.indexOf('(no response)') === -1, 'the empty round never renders as "(no response)" once the retry succeeds');
+  assert(chatTextAfterEmptyRetry.indexOf('regtest real answer after empty retry') >= 0, 'the real answer from the retry round renders once it comes back');
 
   console.log('\n-- a coding-agent reply that writes out a fake tool call as plain text gets one automatic retry instead of being shown as-is --');
   // The dedicated coding agent model sometimes comes back with
