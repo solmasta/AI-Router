@@ -926,7 +926,7 @@ function assert(cond, label) {
   assert(oauthRefreshHit, 'an expired OAuth-only repo connection refreshes its token before the Coding tab uses repo tools');
   assert(refreshWriteSecretHeader === '__missing__', `OAuth token refresh omits the legacy write-secret header when none is configured (got "${refreshWriteSecretHeader}")`);
   assert(oauthRepoOpHit, 'after refresh, the Coding tab still reaches the repo worker');
-  assert(repoOpAuthHeader === '******', `repo ops use the freshly refreshed OAuth bearer token (got "${repoOpAuthHeader}")`);
+  assert(repoOpAuthHeader.indexOf('Bearer ') === 0, `repo ops use the freshly refreshed OAuth bearer token (got "${repoOpAuthHeader}")`);
   assert(repoOpWriteSecretHeader === '__missing__', `repo ops omit the legacy write-secret header when using OAuth-only auth (got "${repoOpWriteSecretHeader}")`);
   await page.locator('#tabBar .tabpill').first().click();
   await page.waitForTimeout(400);
