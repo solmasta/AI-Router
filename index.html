@@ -267,7 +267,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.113</span></span>
+      <span class="wm">ai-router <span>v5.114</span></span>
     </div>
     <div class="hr">
       <span class="cmb hidden" id="codingModeBadge" title="Coding tab - every message here goes straight to your connected repo">&#128187; Coding</span>
@@ -559,7 +559,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.113</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.114</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -2854,7 +2854,8 @@ function codingAgentSystemPrompt(){
   sys+="6. Use merge_branch(branch, title, message) to land a working branch into the default branch via a pull request - only call this when the user explicitly asked you to merge/ship/land the change. Never chain it automatically right after a write_file just because the write succeeded.\n\n";
   sys+="ASSUMPTION:\n";
   sys+="- If the user is asking for coding/debugging help and a GitHub repo is connected, treat that repo as the default codebase even if they don't explicitly say \"GitHub\" or \"repo\".\n";
-  sys+="- If they're clearly asking about pasted code, a generic programming concept, or some other project, answer directly without touching repo tools.\n\n";
+  sys+="- If they're clearly asking about pasted code, a generic programming concept, or some other project, answer directly without touching repo tools.\n";
+  sys+="- If the message is just conversational (a greeting, small talk, a question that has nothing to do with the repo) - answer it directly and briefly in plain text like a normal reply. Never leave the reply blank just because there's no repo action to take.\n\n";
   sys+="CODING PRINCIPLES:\n";
   sys+="- Keep changes proportional to what was actually asked - don't refactor, add abstractions, or fix unrelated things nobody asked for. Three similar lines beats a premature abstraction.\n";
   sys+="- Default to writing no comments. Only add one when the WHY is genuinely non-obvious (a hidden constraint, a workaround, a subtle invariant) - never to explain WHAT the code does, and never referencing this task/fix by name.\n";
@@ -3017,7 +3018,23 @@ async function runCodingAgentRound(sessionId){
         con.wrap.appendChild(contBtn);
       }
     }else{
-      var finalText=(msg.content||"(no response)").replace(/<think>[\s\S]*?<\/think>\s*/g,"").trim();
+      var rawContent=(msg.content||"").replace(/<think>[\s\S]*?<\/think>\s*/g,"").trim();
+      var finalText=rawContent||"(no response)";
+      /* A Coding tab (see codingModeActive) sends every message here,
+         including plain conversational ones with zero repo signal - the
+         system prompt tells the model to "answer directly" in that case,
+         but a model this heavily framed as a repo-focused coding agent
+         can still come back with genuinely nothing instead of a plain
+         reply. Same one-shot retry pattern as the fake-tool-call case
+         below, since there's no fallback model to switch to here (unlike
+         the main chat's pickFallbackModel). */
+      if(!rawContent&&!mySession.emptyRetried){
+        mySession.emptyRetried=true;
+        con.body.innerHTML=renderMd("Let me try that again.");
+        msgs.push(msg);
+        msgs.push({role:"user",content:"That came back empty - you didn't actually answer. If this isn't a repo task, just answer directly in plain text instead of leaving the reply blank."});
+        return runCodingAgentRound(mySession.id);
+      }
       /* Capped at one retry per session (mySession.fakeToolRetried) since
          there's no fallback model to switch to here (unlike the main
          chat's pickFallbackModel) - a model that just doesn't have real
