@@ -466,7 +466,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="modal hidden" id="githubModal"><div class="sheet">
   <div class="sh"><span>Connect GitHub Repo</span><button class="sc" id="closeGithubModal">&#10005;</button></div>
   <div class="sbody">
-    <p style="color:var(--mu);font-size:13px;line-height:1.5;margin:0 0 12px">The AI can read and write files in this repo when a coding conversation calls for it. Once connected, coding/debugging requests default to this repo unless you clearly ask about some other code. Every write commits directly to the repo, but you'll be asked to approve each one before it happens.</p>
+    <p style="color:var(--mu);font-size:13px;line-height:1.5;margin:0 0 12px">Choose which repo the coding agent should use here. Repo access turns on once GitHub OAuth is connected or the legacy write secret is entered. Then coding/debugging requests default to this repo unless you clearly ask about some other code. Every write commits directly to the repo, but you'll be asked to approve each one before it happens.</p>
     <button class="bp" id="ghOauthConnectBtn" style="width:100%;margin-bottom:6px">Connect via GitHub OAuth</button>
     <div id="ghOauthStatus" style="font-size:11px;color:var(--mu);margin-bottom:12px"></div>
     <div style="font-size:11px;color:var(--mu);margin-bottom:10px;border-top:1px solid var(--br);padding-top:10px">Or use the legacy write secret (requires GITHUB_TOKEN + WRITE_SECRET set on the github-ops-worker):</div>
@@ -480,7 +480,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   </div>
   <div class="sf2" style="display:flex;gap:8px">
     <button class="bg hidden" id="githubDisconnectBtn" style="flex:1">Disconnect</button>
-    <button class="bp" id="githubSaveBtn" style="flex:1">Save &amp; Connect</button>
+    <button class="bp" id="githubSaveBtn" style="flex:1">Save repo</button>
   </div>
 </div></div>
 
@@ -847,8 +847,28 @@ function hasGithubRepoConfigured(){
 function hasGithubRepoAuth(){
   return !!(ghWriteSecret||ghOauthToken||ghOauthRefreshToken);
 }
+function getCodingAgentAccessState(){
+  var repoConfigured=hasGithubRepoConfigured();
+  var authReady=hasGithubRepoAuth();
+  return{
+    repoConfigured:repoConfigured,
+    authReady:authReady,
+    hasAccess:!!(modelCanCodeAndControl&&repoConfigured&&authReady)
+  };
+}
 function hasCodingAgentAccess(){
-  return !!(modelCanCodeAndControl&&hasGithubRepoConfigured()&&hasGithubRepoAuth());
+  return getCodingAgentAccessState().hasAccess;
+}
+function getCodingTabNeedsText(){
+  var state=getCodingAgentAccessState();
+  if(state.hasAccess)return "Connected to "+ghRepoOwner+"/"+ghRepoName+" - every message here goes straight to the repo, no need to mention GitHub or code explicitly.";
+  if(state.repoConfigured)return "Repo "+ghRepoOwner+"/"+ghRepoName+" is saved, but repo access still needs GitHub OAuth or the write secret in Settings → GitHub.";
+  return "Open Settings → GitHub to choose a repo, then connect GitHub OAuth or enter the write secret.";
+}
+function getCodingGuardText(){
+  var state=getCodingAgentAccessState();
+  if(state.repoConfigured)return "This Coding tab already has "+ghRepoOwner+"/"+ghRepoName+" saved, but repo access isn't authenticated yet - open Settings → GitHub, connect GitHub OAuth or enter the write secret, then send this again.";
+  return "This Coding tab needs a repo first - open Settings → GitHub, choose one, then send this again.";
 }
 /* GitHub connection state.  Two auth paths:
    1. OAuth (preferred): user completes GitHub OAuth flow; access_token is
@@ -902,6 +922,7 @@ function updateGithubStatus(){
   if(ob)ob.textContent=oauthConnected?"Reconnect GitHub OAuth":"Connect via GitHub OAuth";
   var ost=document.getElementById("ghOauthStatus");
   if(ost)ost.textContent=oauthConnected?"✓ OAuth token stored":"No OAuth token - connect above or enter write secret below";
+  if(codingModeActive&&!chatHistory.length)applyCodingEmptyStateText();
 }
 function ghSaveOauthToken(token,expiresInSec,refreshToken){
   ghOauthToken=token;
@@ -3910,7 +3931,7 @@ function applyCodingEmptyStateText(){
   var esTitle=document.querySelector("#emptyState .es-title");
   var esSub=document.querySelector("#emptyState .es-sub");
   if(esTitle)esTitle.textContent="Coding mode";
-  if(esSub)esSub.textContent=hasCodingAgentAccess()?("Connected to "+ghRepoOwner+"/"+ghRepoName+" - every message here goes straight to the repo, no need to mention GitHub or code explicitly."):"Open Settings → GitHub to connect a repository, then everything you send here goes straight to it.";
+  if(esSub)esSub.textContent=getCodingTabNeedsText();
 }
 function closeTab(index){
   if(openTabs.length<=1||sending)return;
@@ -5637,7 +5658,7 @@ async function doSendRequest(userContent,isRegen,ap){
      silently falling through to the plain chat model, which would make
      the dedicated tab feel like it does nothing. */
   if(!hasImgInContent&&codingModeActive&&!hasCodingAgentAccess()){
-    var codingGuardText="This Coding tab needs a connected repo first - open Settings → GitHub to connect one, then send this again.";
+    var codingGuardText=getCodingGuardText();
     appendMsg("assistant",codingGuardText);
     chatHistory.push({role:"assistant",content:codingGuardText});
     autoSave();
