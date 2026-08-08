@@ -280,7 +280,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.123</span></span>
+      <span class="wm">ai-router <span>v5.124</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -571,7 +571,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.123</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.124</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1085,7 +1085,9 @@ var REPO_TOOLS=[
   {type:"function","function":{name:"read_file",description:"Read a file from the connected GitHub repository. Returns file content.",parameters:{type:"object",properties:{path:{type:"string",description:"File path relative to repo root"}},required:["path"]}}},
   {type:"function","function":{name:"write_file",description:"Write or update a file in the connected GitHub repository. Creates a commit on a branch (never commits straight to the repo's default branch unless the user explicitly asked for that).",parameters:{type:"object",properties:{path:{type:"string",description:"File path"},content:{type:"string",description:"Full file content"},message:{type:"string",description:"Commit message"},branch:{type:"string",description:"Branch to commit to. NEVER use \"main\"/\"master\" unless the user explicitly asked you to change the default branch directly - otherwise use a short descriptive working-branch name. The branch is created automatically from the repo's default branch if it doesn't already exist."}},required:["path","content","message"]}}},
   {type:"function","function":{name:"list_files",description:"List files in a directory of the connected repository. Omit path (or use \".\") to list the repo root.",parameters:{type:"object",properties:{path:{type:"string",description:"Directory path, relative to repo root. Optional - omit or use \".\" for the repo root."}},required:[]}}},
-  {type:"function","function":{name:"merge_branch",description:"Merge a branch into the connected repository's default branch via a pull request (creates one if it doesn't already exist, then merges it). This is a significant, hard-to-reverse action on the default branch - only call this when the user explicitly asked you to merge/ship/land the change, never automatically right after a write_file. Always requires explicit user approval before anything happens.",parameters:{type:"object",properties:{branch:{type:"string",description:"The branch to merge into the default branch"},title:{type:"string",description:"Pull request title / merge commit title"},message:{type:"string",description:"Pull request description / merge commit message"},merge_method:{type:"string",description:"How to merge",enum:["merge","squash","rebase"]}},required:["branch"]}}}
+  {type:"function","function":{name:"merge_branch",description:"Merge a branch into the connected repository's default branch via a pull request (creates one if it doesn't already exist, then merges it). This is a significant, hard-to-reverse action on the default branch - only call this when the user explicitly asked you to merge/ship/land the change, never automatically right after a write_file. Always requires explicit user approval before anything happens.",parameters:{type:"object",properties:{branch:{type:"string",description:"The branch to merge into the default branch"},title:{type:"string",description:"Pull request title / merge commit title"},message:{type:"string",description:"Pull request description / merge commit message"},merge_method:{type:"string",description:"How to merge",enum:["merge","squash","rebase"]}},required:["branch"]}}},
+  {type:"function","function":{name:"run_tests",description:"Trigger the regression test suite (tests/regression.js) via GitHub Actions on a given branch. Returns a run_id you must then poll with get_test_status until status is 'completed'.",parameters:{type:"object",properties:{branch:{type:"string",description:"Branch to run tests on. Defaults to the repo default branch if omitted."}},required:[]}}},
+  {type:"function","function":{name:"get_test_status",description:"Poll the status of a GitHub Actions test run started by run_tests. Pass the run_id returned by run_tests. Returns status ('queued'/'in_progress'/'completed'), conclusion ('success'/'failure'), and a log_tail with test output once completed. Keep calling until status is 'completed'.",parameters:{type:"object",properties:{run_id:{type:"number",description:"The run_id returned by run_tests"}},required:["run_id"]}}}
 ];
 /* App-control tools - let the model actually operate this app's own
    features (save a project, switch model, remember a fact) instead of
@@ -2768,6 +2770,15 @@ function displayToolExecution(toolName,input,result,containerId){
   else if(toolName==="write_file"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Writing: "+esc(input.path)+" (branch: "+esc(input.branch||"?")+")</div><div style='font-size:10px;color:var(--mu)'>"+esc(input.message)+"</div>";}
   else if(toolName==="list_files"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Listing: "+esc(input.path)+"</div>";}
   else if(toolName==="merge_branch"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Merging: "+esc(input.branch||"?")+" into default branch</div>";}
+  else if(toolName==="run_tests"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Triggering tests"+(input.branch?" on "+esc(input.branch):"")+"</div>";}
+  else if(toolName==="get_test_status"){
+    var stLabel=result.status==="completed"?(result.conclusion==="success"?"✅ Passed":"❌ Failed"):"⏳ "+esc(result.status||"?");
+    toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Test run #"+esc(String(input.run_id||"?"))+" — "+stLabel+"</div>";
+    if(result.log_tail){
+      var logId="tl"+Date.now();
+      toolEl.innerHTML+="<details id='"+logId+"'><summary style='cursor:pointer;font-size:10px;color:var(--mu);margin-top:4px'>Show log</summary><pre style='font-size:10px;overflow:auto;max-height:300px;margin-top:4px;white-space:pre-wrap'>"+esc(result.log_tail)+"</pre></details>";
+    }
+  }
   else if(toolName==="create_project"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Creating project: "+esc(input.name)+"</div>";}
   else if(toolName==="switch_model"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Switching model to: "+esc(input.model_id)+"</div>";}
   else if(toolName==="remember"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Remembering: "+esc(input.fact)+"</div>";}
@@ -2829,6 +2840,15 @@ async function executeRepoTool(toolName,toolInput){
       var mres=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"merge_branch",owner:ghRepoOwner,repo:ghRepoName,branch:toolInput.branch,title:toolInput.title,message:toolInput.message,merge_method:toolInput.merge_method})});
       var mdata=await mres.json();
       return mdata.success?{success:true,prNumber:mdata.prNumber,prUrl:mdata.prUrl,sha:mdata.sha}:{error:mdata.error};
+    }else if(toolName==="run_tests"){
+      var tref=toolInput.branch||null;
+      var tres=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"trigger_workflow",owner:ghRepoOwner,repo:ghRepoName,workflow_id:"test.yml",ref:tref,inputs:tref?{branch:tref}:{}})});
+      var tdata=await tres.json();
+      return tdata.success?{success:true,run_id:tdata.run_id,html_url:tdata.html_url}:{error:tdata.error};
+    }else if(toolName==="get_test_status"){
+      var sres=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"get_workflow_run",owner:ghRepoOwner,repo:ghRepoName,run_id:toolInput.run_id})});
+      var sdata=await sres.json();
+      return sdata.success?{success:true,status:sdata.status,conclusion:sdata.conclusion,html_url:sdata.html_url,log_tail:sdata.log_tail}:{error:sdata.error};
     }
     return{error:"Unknown tool"};
   }catch(e){return{error:e.message};}
@@ -2887,6 +2907,19 @@ async function executeToolCall(toolName,toolArgs,renderStatus,logTarget){
     var mergeRes=await executeRepoTool("merge_branch",toolArgs);
     displayToolExecution("merge_branch",toolArgs,mergeRes,logTarget);
     return{toolResult:mergeRes.success?("Merged branch '"+toolArgs.branch+"' into the default branch via PR #"+mergeRes.prNumber+" ("+mergeRes.prUrl+")."):(mergeRes.error||"Failed to merge")};
+  }else if(toolName==="run_tests"){
+    renderStatus('<span style="color:var(--mu);font-size:13px">⏳ Triggering test run&#8230;</span>');
+    var rtRes=await executeRepoTool("run_tests",toolArgs);
+    displayToolExecution("run_tests",toolArgs,rtRes,logTarget);
+    return{toolResult:rtRes.success?("Test run started. run_id="+rtRes.run_id+(rtRes.html_url?" ("+rtRes.html_url+")":"")):(rtRes.error||"Failed to trigger tests")};
+  }else if(toolName==="get_test_status"){
+    renderStatus('<span style="color:var(--mu);font-size:13px">⏳ Checking test status&#8230;</span>');
+    var gsRes=await executeRepoTool("get_test_status",toolArgs);
+    displayToolExecution("get_test_status",toolArgs,gsRes,logTarget);
+    if(!gsRes.success)return{toolResult:gsRes.error||"Failed to get test status"};
+    var summary="status="+gsRes.status+(gsRes.conclusion?" conclusion="+gsRes.conclusion:"");
+    if(gsRes.log_tail)summary+="\n\nLog tail:\n"+gsRes.log_tail;
+    return{toolResult:summary};
   }else if(toolName==="create_project"){
     var cpRes=createProjectFromTool(toolArgs.name,toolArgs.instructions);
     displayToolExecution("create_project",toolArgs,cpRes,logTarget);
@@ -2945,8 +2978,9 @@ function codingAgentSystemPrompt(){
     sys+="THIS REPO IS THE APP YOU'RE RUNNING IN - its own real structure, not a guess:\n";
     sys+="- index.html is the ENTIRE frontend: markup, CSS, and all JS in two inline <script> blocks, each wrapped in its own IIFE. A plain top-level function is NOT reachable as window.foo unless explicitly assigned (window.foo=function(){...}) - inline onclick=\"...\" handlers run in global scope and need that, or they silently no-op.\n";
     sys+="- Several Cloudflare Workers back it, each with its own wrangler config: openai-router.js (DeepInfra models + free web search), openrouter-worker.js (OpenRouter), github-ops-worker.js (this repo's own read_file/write_file/list_files - the tools you're using right now), drive-auth-worker.js (Google Drive OAuth).\n";
-    sys+="- tests/regression.js is a Playwright suite covering flows that have actually broken before. You have no shell/execute_command access, so you cannot run it yourself - tell the user to run it (NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js) before merging, and if your change touches a flow it covers, update the test in the same write_file call rather than letting it drift.\n";
+    sys+="- tests/regression.js is a Playwright suite covering flows that have actually broken before. You CAN run it via run_tests(branch) and poll with get_test_status(run_id) - call run_tests, then call get_test_status in a loop (waiting ~30 s between calls) until status is 'completed', then report pass/fail and show any failure output from log_tail. If your change touches a flow the suite covers, update the test in the same write_file call rather than letting it drift.\n";
     sys+="- Bump the version string in BOTH spots (header \".wm span\" and the Settings modal title, both currently \"v5.x\") with every user-visible change, in the same commit.\n";
+    sys+="- run_tests(branch) and get_test_status(run_id) let you trigger and observe the GitHub Actions regression suite directly from here - after writing code, run the tests, poll until completed, then report results.\n";
     sys+="- Keep changes proportional to what's asked - this is a deliberately single-file app with no build step; don't introduce a framework, split it into multiple files, or add a build pipeline unless explicitly asked to.\n\n";
   }
   sys+="Work on ONE concrete step at a time - don't try to do the whole task in a single burst. After finishing this step, briefly state what you did and what the next step would be, then stop; the user will tell you to continue.\n";
@@ -3009,7 +3043,7 @@ async function runCodingAgentTurn(assembledMessages,autoContinue){
    though the tool genuinely would have worked. Retrying once with an
    explicit nudge fixes this far more often than displaying it as-is. */
 function looksLikeFakeToolCallText(text){
-  return /<tool_call>|<function[=:]|```tool_code|tool_code\b|print\s*\(\s*(read_file|write_file|list_files|get_files|merge_branch)\s*\(/i.test(text||"");
+  return /<tool_call>|<function[=:]|```tool_code|tool_code\b|print\s*\(\s*(read_file|write_file|list_files|get_files|merge_branch|run_tests|get_test_status)\s*\(/i.test(text||"");
 }
 async function runCodingAgentRound(sessionId){
   if(!codingAgentActive||(sessionId!==undefined&&sessionId!==codingAgentActive.id))return;
@@ -3067,6 +3101,30 @@ async function runCodingAgentRound(sessionId){
             toolResult=mergeRes.success?("Merged branch '"+toolArgs.branch+"' via PR #"+mergeRes.prNumber+" ("+mergeRes.prUrl+")."):(mergeRes.error||"Failed to merge");
             lineText=summarizeCodingStep(toolName,toolArgs,mergeRes.success);
           }
+        }else if(toolName==="run_tests"){
+          con.body.innerHTML=renderMd("I'm triggering the test suite"+(toolArgs.branch?" on "+toolArgs.branch:"")+".");
+          var rtRes2=await executeRepoTool("run_tests",toolArgs);
+          if(rtRes2.success){
+            toolResult="Test run started. run_id="+rtRes2.run_id+(rtRes2.html_url?" ("+rtRes2.html_url+")":"");
+            lineText="I triggered the tests (run #"+rtRes2.run_id+"). I'll poll for results.";
+          }else{
+            toolResult=rtRes2.error||"Failed to trigger tests";
+            lineText="I couldn't start the test run.";
+          }
+          displayToolExecution("run_tests",toolArgs,rtRes2);
+        }else if(toolName==="get_test_status"){
+          con.body.innerHTML=renderMd("I'm checking the test results for run #"+toolArgs.run_id+".");
+          var gsRes2=await executeRepoTool("get_test_status",toolArgs);
+          if(gsRes2.success){
+            var tsLabel=gsRes2.status==="completed"?(gsRes2.conclusion==="success"?"✅ passed":"❌ failed"):"still "+gsRes2.status;
+            lineText="Tests "+tsLabel+(gsRes2.conclusion==="success"?".":" — see log for details.");
+            toolResult="status="+gsRes2.status+(gsRes2.conclusion?" conclusion="+gsRes2.conclusion:"");
+            if(gsRes2.log_tail)toolResult+="\n\nLog tail:\n"+gsRes2.log_tail;
+          }else{
+            toolResult=gsRes2.error||"Failed to get test status";
+            lineText="I couldn't get the test status.";
+          }
+          displayToolExecution("get_test_status",toolArgs,gsRes2);
         }
         plainLines.push(lineText);
         msgs.push({role:"tool",tool_call_id:tc.id,content:toolResult||"No result"});

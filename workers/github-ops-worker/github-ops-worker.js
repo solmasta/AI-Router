@@ -265,6 +265,105 @@ async function handleGitHubOp(body, env, oauthToken) {
         return { success: true, prNumber: pr.number, prUrl: pr.html_url, merged: true, sha: mergeData.sha };
       }
 
+      case "trigger_workflow": {
+        const { workflow_id, ref: wfRef, inputs: wfInputs } = body;
+        if (!workflow_id) return { error: "Missing workflow_id" };
+        const wfRef2 = wfRef || await getDefaultBranch(owner, repo, headers);
+        // Dispatch the workflow
+        const dispatchRes = await fetch(
+          `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${encodeURIComponent(workflow_id)}/dispatches`,
+          { method: "POST", headers, body: JSON.stringify({ ref: wfRef2, inputs: wfInputs || {} }) }
+        );
+        if (!dispatchRes.ok) return { error: `Failed to dispatch workflow: ${await describeError(dispatchRes)}` };
+
+        // GitHub's dispatch endpoint returns 204 with no body - poll for the
+        // run that just appeared (the most recent one created after this dispatch).
+        // Record the dispatch time first so pre-existing runs aren't matched.
+        const dispatchedAt = new Date();
+        let run = null;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          await new Promise(r => setTimeout(r, 2000));
+          const runsRes = await fetch(
+            `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${encodeURIComponent(workflow_id)}/runs?branch=${encodeURIComponent(wfRef2)}&per_page=10`,
+            { headers }
+          );
+          if (!runsRes.ok) return { error: `Workflow dispatched but could not look up run id: ${await describeError(runsRes)}` };
+          const runsData = await runsRes.json();
+          run = (runsData.workflow_runs || []).find(r => new Date(r.created_at) >= dispatchedAt);
+          if (run) break;
+        }
+        if (!run) return { success: true, run_id: null, message: "Workflow dispatched - no run found yet; poll get_workflow_run shortly" };
+        return { success: true, run_id: run.id, status: run.status, html_url: run.html_url };
+      }
+
+      case "get_workflow_run": {
+        const { run_id } = body;
+        if (!run_id) return { error: "Missing run_id" };
+        const runRes = await fetch(
+          `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run_id}`,
+          { headers }
+        );
+        if (!runRes.ok) return { error: `Failed to get workflow run: ${await describeError(runRes)}` };
+        const runData = await runRes.json();
+        const result = {
+          success: true,
+          run_id: runData.id,
+          status: runData.status,          // queued | in_progress | completed
+          conclusion: runData.conclusion,  // success | failure | cancelled | null
+          html_url: runData.html_url,
+        };
+        // If completed, also fetch a tail of the logs for the first failed
+        // (or, if all passed, the last) job so the AI can report specifics.
+        if (runData.status === "completed") {
+          const jobsRes = await fetch(
+            `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run_id}/jobs`,
+            { headers }
+          );
+          if (jobsRes.ok) {
+            const jobsData = await jobsRes.json();
+            const jobs = jobsData.jobs || [];
+            // Pick the first failed job, or the last job if all passed.
+            const targetJob = jobs.find(j => j.conclusion === "failure") || jobs[jobs.length - 1];
+            if (targetJob) {
+              const logRes = await fetch(
+                `https://api.github.com/repos/${owner}/${repo}/actions/jobs/${targetJob.id}/logs`,
+                { headers }
+              );
+              if (logRes.ok) {
+                const logText = await logRes.text();
+                // Return last 6000 chars - enough for most test output
+                result.log_tail = logText.slice(-6000);
+              }
+            }
+          }
+        }
+        return result;
+      }
+
+      case "get_workflow_logs": {
+        const { run_id: logRunId } = body;
+        if (!logRunId) return { error: "Missing run_id" };
+        const jobsRes2 = await fetch(
+          `https://api.github.com/repos/${owner}/${repo}/actions/runs/${logRunId}/jobs`,
+          { headers }
+        );
+        if (!jobsRes2.ok) return { error: `Failed to fetch jobs: ${await describeError(jobsRes2)}` };
+        const jobsData2 = await jobsRes2.json();
+        const jobs2 = jobsData2.jobs || [];
+        const logs = [];
+        for (const job of jobs2) {
+          const logRes2 = await fetch(
+            `https://api.github.com/repos/${owner}/${repo}/actions/jobs/${job.id}/logs`,
+            { headers }
+          );
+          if (logRes2.ok) {
+            const text = await logRes2.text();
+            logs.push({ job: job.name, conclusion: job.conclusion, log: text.slice(-4000) });
+          }
+        }
+        return { success: true, jobs: logs };
+      }
+
       case "create_commit":
         // Not implemented: a real commit needs a tree + commit object built
         // from the caller's changes, which this op never did - it used to

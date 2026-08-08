@@ -1,0 +1,41 @@
+name: Regression Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to test (defaults to the branch the workflow runs on)'
+        required: false
+        default: ''
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.branch || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      - name: Start static server
+        run: npx http-server . -p 8899 --silent &
+
+      - name: Wait for server
+        run: npx wait-on http://localhost:8899 --timeout 15000
+
+      - name: Run regression suite
+        run: node tests/regression.js
+        env:
+          NODE_PATH: ${{ github.workspace }}/node_modules
