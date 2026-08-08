@@ -1582,6 +1582,60 @@ function assert(cond, label) {
   assert(chatTextAfterEmptyRetry.indexOf('(no response)') === -1, 'the empty round never renders as "(no response)" once the retry succeeds');
   assert(chatTextAfterEmptyRetry.indexOf('regtest real answer after empty retry') >= 0, 'the real answer from the retry round renders once it comes back');
 
+  console.log('\n-- after a no-response round, tapping Continue starts a fresh round that can auto-retry empty output again --');
+  // A real failure mode: one round exhausts its single empty retry, renders
+  // "(no response)", and the user taps Continue. That next round used to
+  // inherit emptyRetried=true, so it would never auto-retry empties again and
+  // could get stuck repeatedly returning "(no response)". Confirm Continue
+  // starts a fresh round where the empty corrective nudge can fire again.
+  let continueEmptyRoundCount = 0;
+  let continueRoundSawSecondCorrectiveNudge = false;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        continueEmptyRoundCount++;
+        if (continueEmptyRoundCount <= 3) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '' } }] }),
+          });
+          return;
+        }
+        continueRoundSawSecondCorrectiveNudge = (parsed.messages || []).some(m => m.role === 'user' && typeof m.content === 'string' && m.content.indexOf('came back empty') >= 0);
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest continue recovered after second empty retry' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please check the repo one step at a time');
+  for (let i = 0; i < 60; i++) {
+    const noResponseContinueBtn = await page.locator('#chat .msg.ma3 button:has-text("Continue")').last();
+    if (await noResponseContinueBtn.count()) {
+      await noResponseContinueBtn.click();
+      break;
+    }
+    await page.waitForTimeout(200);
+  }
+  let chatTextAfterContinueEmptyRecovery = '';
+  for (let i = 0; i < 60; i++) {
+    chatTextAfterContinueEmptyRecovery = await page.evaluate(() => document.getElementById('chat').textContent);
+    if (chatTextAfterContinueEmptyRecovery.indexOf('regtest continue recovered after second empty retry') >= 0) break;
+    await page.waitForTimeout(200);
+  }
+  await page.unroute('**/*');
+  assert(continueEmptyRoundCount === 4, `empty output still gets one retry after tapping Continue on a prior no-response round (got ${continueEmptyRoundCount} rounds)`);
+  assert(continueRoundSawSecondCorrectiveNudge, 'the post-Continue retry round includes the same empty-output corrective nudge');
+  assert(chatTextAfterContinueEmptyRecovery.indexOf('regtest continue recovered after second empty retry') >= 0, 'the post-Continue retry eventually renders the recovered answer');
+
   console.log('\n-- a coding-agent reply that writes out a fake tool call as plain text gets one automatic retry instead of being shown as-is --');
   // The dedicated coding agent model sometimes comes back with
   // finish_reason "stop" and content that's pseudo-code narrating a tool
