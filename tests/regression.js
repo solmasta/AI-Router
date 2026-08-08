@@ -299,10 +299,11 @@ function assert(cond, label) {
       try { parsed = JSON.parse(req.postData()); } catch (e) {}
       if (parsed && parsed.stream === true) {
         progressReplyCount++;
+        const longReply = 'regtest progress reply ' + progressReplyCount + ' with enough detail to keep the Overseer from marking the conversation as stuck while step progress advances normally through the pending next-step state.';
         await route.fulfill({
           status: 200,
           contentType: 'text/event-stream',
-          body: `data: {"choices":[{"delta":{"content":"regtest progress reply ${progressReplyCount}"}}]}\n\ndata: [DONE]\n\n`,
+          body: `data: {"choices":[{"delta":{"content":${JSON.stringify('')}}}]}\n\ndata: {"choices":[{"delta":{"content":${JSON.stringify(longReply)}}}]}\n\ndata: [DONE]\n\n`,
         });
         return;
       }
