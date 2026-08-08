@@ -280,7 +280,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.130</span></span>
+      <span class="wm">ai-router <span>v5.131</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -571,7 +571,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.130</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.131</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3055,13 +3055,27 @@ async function runCodingAgentTurn(assembledMessages,autoContinue){
 function looksLikeFakeToolCallText(text){
   return /<tool_call>|<function[=:]|```tool_code|tool_code\b|print\s*\(\s*(read_file|write_file|list_files|get_files|merge_branch|run_tests|get_test_status)\s*\(/i.test(text||"");
 }
+/* chatHistory stores client-only metadata like apId so Regen can recreate
+   the exact project/prompt that was active at send time. That metadata must
+   never reach provider APIs: OpenAI-format backends can reject unknown
+   message keys on follow-up turns, which makes a conversation work once and
+   then fail as soon as earlier user messages are included in history. */
+function sanitizeMessagesForProvider(messages){
+  return (messages||[]).map(function(m){
+    var clean={role:m.role,content:m.content};
+    if(m.name!==undefined)clean.name=m.name;
+    if(m.tool_call_id!==undefined)clean.tool_call_id=m.tool_call_id;
+    if(m.tool_calls!==undefined)clean.tool_calls=m.tool_calls;
+    return clean;
+  });
+}
 async function runCodingAgentRound(sessionId){
   if(!codingAgentActive||(sessionId!==undefined&&sessionId!==codingAgentActive.id))return;
   var mySession=codingAgentActive;
   var msgs=mySession.messages;
   var con=renderCodingConsole();
   try{
-    var res=await fetch(DI_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:CODING_AGENT_MODEL_ID,messages:msgs,tools:REPO_TOOLS,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:1500})});
+    var res=await fetch(DI_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:CODING_AGENT_MODEL_ID,messages:sanitizeMessagesForProvider(msgs),tools:REPO_TOOLS,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:1500})});
     if(!res.ok){
       if(res.status===429){
         /* Rate-limited: keep the session alive so the Retry button below
@@ -5755,6 +5769,7 @@ async function doSendRequest(userContent,isRegen,ap){
   }
   messages=messages.concat(chatHistory.slice(0,-1));
   messages.push({role:"user",content:userContent});
+  messages=sanitizeMessagesForProvider(messages);
   /* With a repo connected, code- or GitHub-flavored requests should reach
      the dedicated coding agent by default - otherwise the user can ask for
      debugging help about the connected project without ever saying the word

@@ -339,6 +339,25 @@ function assert(cond, label) {
   const tabsHasMsg = !!tabsRaw && tabsRaw.indexOf('quick test') >= 0;
   assert(tabsHasMsg, 'tab storage still contains the message after a send error (not silently dropped)');
 
+  console.log('\n-- follow-up requests strip client-only message metadata before reaching the model --');
+  let lastFollowupBody = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      try {
+        const parsed = JSON.parse(req.postData());
+        if (parsed.messages) lastFollowupBody = parsed;
+      } catch (e) {}
+    }
+    await route.continue();
+  });
+  await sendMsg('follow up and keep going');
+  for (let i = 0; i < 60 && lastFollowupBody === null; i++) await page.waitForTimeout(200);
+  await page.unroute('**/*');
+  const previousUserTurn = ((lastFollowupBody && lastFollowupBody.messages) || []).find((m) => m.role === 'user' && m.content === 'hi there, quick test');
+  assert(!!previousUserTurn, 'the follow-up request still includes the earlier user turn in conversation history');
+  assert(previousUserTurn && !Object.prototype.hasOwnProperty.call(previousUserTurn, 'apId'), 'the earlier user turn sent to the model no longer includes client-only apId metadata');
+
   console.log('\n-- a send that fails while the tab is hidden auto-retries once the tab is visible again --');
   // Mobile browsers throttle/drop network on a backgrounded PWA, so a send
   // dying mid-flight while the user is away is expected - the fix isn't
