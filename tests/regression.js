@@ -1597,7 +1597,7 @@ function assert(cond, label) {
       try { parsed = JSON.parse(req.postData()); } catch (e) {}
       if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
         continueEmptyRoundCount++;
-        if (continueEmptyRoundCount === 1 || continueEmptyRoundCount === 2 || continueEmptyRoundCount === 3) {
+        if (continueEmptyRoundCount <= 3) {
           await route.fulfill({
             status: 200,
             contentType: 'application/json',
