@@ -135,6 +135,9 @@
      actual next step to continue - right after the first message, with
      nothing pending, it reads as a plain status instead of implying
      work is silently in progress
+   - the persistent Overseer bar's next-step action is labeled "Use next
+     step", fills the continuation prompt, and clears immediately so the
+     same step is not offered over and over
    - the main chat (and the Overseer's own side-chat) also gets one
      automatic retry when the model writes fake tool-call syntax as
      plain text (e.g. an invented <function=some_tool>{...}</function>)
@@ -286,6 +289,44 @@ function assert(cond, label) {
   }));
   assert(barStateAfterFirstMsg.text.indexOf('Working on the next step') === -1, `the bar doesn't claim to be "working on the next step" when no step has actually advanced and there's nothing to continue (got "${barStateAfterFirstMsg.text}")`);
   assert(barStateAfterFirstMsg.continueHidden, 'the Continue control stays hidden when there is no real next step, matching the bar text');
+
+  console.log('\n-- Overseer next-step bar uses a distinct label and clears after one use --');
+  let progressReplyCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.stream === true) {
+        progressReplyCount++;
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/event-stream',
+          body: `data: {"choices":[{"delta":{"content":"regtest progress reply ${progressReplyCount}"}}]}\n\ndata: [DONE]\n\n`,
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('another quick test');
+  await sendMsg('one more quick test');
+  const nextStepBarState = await page.evaluate(() => ({
+    text: document.getElementById('overseerBarText').textContent,
+    label: document.getElementById('overseerBarContinueBtn').textContent,
+    hidden: document.getElementById('overseerBarContinueBtn').classList.contains('hidden'),
+  }));
+  assert(!nextStepBarState.hidden, 'the next-step bar action appears once a real next step is pending');
+  assert(nextStepBarState.text.indexOf('Next step ready') >= 0, `the bar reads as a ready next step instead of pretending work is already in flight (got "${nextStepBarState.text}")`);
+  assert(nextStepBarState.label.indexOf('Use next step') >= 0, `the persistent bar action uses a distinct label instead of another generic Continue (got "${nextStepBarState.label}")`);
+  await page.click('#overseerBarContinueBtn');
+  const nextStepAfterUse = await page.evaluate(() => ({
+    prompt: document.getElementById('prompt').value,
+    hidden: document.getElementById('overseerBarContinueBtn').classList.contains('hidden'),
+  }));
+  await page.unroute('**/*');
+  assert(nextStepAfterUse.prompt.indexOf('Continue with the next step: ') === 0, `using the next-step bar action fills the expected continuation prompt (got "${nextStepAfterUse.prompt}")`);
+  assert(nextStepAfterUse.hidden, 'using the next-step bar action clears it so the same step is not offered repeatedly');
 
   console.log('\n-- Overseer suggestion buttons (inline onclick="insertPrompt(...)") actually work --');
   // displayGeneratedPrompts/displayBrainstormingSuggestions build raw HTML
