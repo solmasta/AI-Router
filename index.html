@@ -122,14 +122,14 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 .obd.off{background:var(--mu)}
 #overseerBarText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ob-continue{flex-shrink:0;margin-left:auto}
-/* Every "Continue" surface (the persistent bar, the one-time step notice,
-   the coding agent's own round-to-round prompts) used to each pick its
-   own color - green here, plain gray there - for what's the exact same
-   action. Green also collided with .obd's existing meaning (a status
-   dot, not a button), so a "Continue" pill next to it read as two
-   unrelated signals. One consistent accent-purple treatment, matching
-   the rest of the app's actual call-to-action color (Send, active
-   states) instead of introducing a second one. */
+/* Step/action pills (the Overseer's "use next step" control and the coding
+   agent's round-to-round prompts) used to each pick their own color -
+   green here, plain gray there - for closely related actions. Green also
+   collided with .obd's existing meaning (a status dot, not a button), so
+   the control next to it read as two unrelated signals. One consistent
+   accent-purple treatment, matching the rest of the app's actual
+   call-to-action color (Send, active states) instead of introducing a
+   second one. */
 .cta{padding:4px 11px;background:rgba(139,140,247,.15);border:1px solid var(--ac);color:var(--ac);border-radius:20px;font-size:11.5px;font-weight:600;cursor:pointer;transition:background .15s}
 .cta:hover{background:rgba(139,140,247,.28)}
 .tt{flex:1;height:3px;background:var(--up);border-radius:2px;overflow:hidden}
@@ -280,7 +280,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.130</span></span>
+      <span class="wm">ai-router <span>v5.132</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -299,7 +299,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <div class="ob hidden" id="overseerBar">
     <span class="obd" id="overseerBarDot"></span>
     <span id="overseerBarText">Overseer monitoring</span>
-    <button class="cta ob-continue hidden" id="overseerBarContinueBtn">Continue &#8594;</button>
+    <button class="cta ob-continue hidden" id="overseerBarContinueBtn">Use next step &#8594;</button>
   </div>
   <div class="tb hidden" id="tokenBar">
     <span id="tokenCount">0 tokens</span>
@@ -571,7 +571,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.130</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.132</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -761,7 +761,7 @@ function defaultOverseerState(){
     messagesProcessed:0,modelsUsed:new Set(),estimatedTokens:0,
     stuck:false,stuckSince:null,recommendations:[],
     attemptedApproaches:[],successProbability:0,efficiencyScore:100,
-    qualityScore:0,steps:[],currentStep:0,contextHistory:[],
+    qualityScore:0,steps:[],currentStep:0,pendingContinueStep:null,contextHistory:[],
     lastResponseLength:0,conversationQuality:"good",lastAssistantConcern:false,
     activeProject:null,activeProjectInstructions:null,
     strategyChat:[]
@@ -2231,6 +2231,9 @@ function makeBetterRecommendation(){
 }
 function showStepUpdate(prevStep,nextStep){
   if(!nextStep)return;
+  overseerState.pendingContinueStep=nextStep;
+  updateOverseerBar();
+  autoSave();
   var notice=document.createElement("div");
   notice.style.cssText="padding:8px 12px;margin:8px 0;background:rgba(34,197,94,0.1);border-left:3px solid #22c55e;border-radius:4px;font-size:12px;color:var(--tx)";
   notice.innerHTML="✓ <strong>Step completed:</strong> "+esc(prevStep)+"<br>→ <strong>Next:</strong> "+esc(nextStep);
@@ -2245,6 +2248,9 @@ function showStepUpdate(prevStep,nextStep){
   var lastText=lastMsg&&lastMsg.role==="assistant"?(typeof lastMsg.content==="string"?lastMsg.content.trim():""):"";
   var midAnalysis=lastText.endsWith(":")||/\b(let me|now let me|i'?ll now|continuing to|next[,\s])\b/i.test(lastText)&&lastText.slice(-80).indexOf(".")<0;
   if(midAnalysis&&document.getElementById("prompt").value.trim()===""){
+    overseerState.pendingContinueStep=null;
+    updateOverseerBar();
+    autoSave();
     window.insertPrompt("Continue with the next step: "+nextStep);
     send();
   }
@@ -2352,21 +2358,16 @@ function updateOverseerBar(){
   bar.classList.remove("hidden");
   var dot=document.getElementById("overseerBarDot");
   dot.className="obd"+(overseerState.stuck?" stuck":(overseerState.progress<40?" warn":""));
-  /* hasNextStep decides BOTH the text and the Continue button below - it
-     used to be two separately-written conditions that drifted apart: the
-     text branch said "Working on the next step" (sounds like something is
-     actively in flight right now) whenever currentStep>0, but the button
-     only actually appears when there's a REAL next step left
-     (currentStep<steps.length) and nothing's stuck. That mismatch showed
-     "Working on X" with no Continue button and nothing actually
-     happening - the bar just sitting there with an amber dot looking like
-     a stuck spinner when the app was fully idle, waiting on the user's
-     next message. Computing hasNextStep once and using it for both keeps
-     them in sync by construction. */
-  var hasNextStep=!overseerState.stuck&&overseerState.currentStep>0&&overseerState.currentStep<overseerState.steps.length;
+  /* hasNextStep decides BOTH the text and the next-step button below - it
+     should only light up when there's a real, still-pending step left for
+     the user to use. Once that step has already been queued into the
+     prompt (or auto-sent), leaving the button around invites the user to
+     fire the exact same continuation again and makes the models look like
+     they're pointlessly repeating themselves. */
+  var hasNextStep=!overseerState.stuck&&!!overseerState.pendingContinueStep&&overseerState.currentStep>0&&overseerState.currentStep<overseerState.steps.length;
   var text="🤖 ";
   if(overseerState.stuck)text+="Waiting on the next detail";
-  else if(hasNextStep)text+="Working on the next step";
+  else if(hasNextStep)text+="Next step ready";
   else if(overseerState.goalType)text+="Tracking: "+overseerState.goalType.toLowerCase();
   else text+="Tracking the conversation";
   if(overseerState.activeProject)text+=" • "+overseerState.activeProject;
@@ -2379,7 +2380,8 @@ function updateOverseerBar(){
      unless you scrolled back to find the original notice. */
   var continueBtn=document.getElementById("overseerBarContinueBtn");
   continueBtn.classList.toggle("hidden",!hasNextStep);
-  if(hasNextStep)continueBtn.dataset.nextStep=overseerState.steps[overseerState.currentStep];
+  if(hasNextStep)continueBtn.dataset.nextStep=overseerState.pendingContinueStep;
+  else delete continueBtn.dataset.nextStep;
 }
 /* Applies a recommended model_switch rec directly - same backend-switch +
    setModel + renderModelList sequence switchToBestModel/ensureVisionModel
@@ -3055,13 +3057,27 @@ async function runCodingAgentTurn(assembledMessages,autoContinue){
 function looksLikeFakeToolCallText(text){
   return /<tool_call>|<function[=:]|```tool_code|tool_code\b|print\s*\(\s*(read_file|write_file|list_files|get_files|merge_branch|run_tests|get_test_status)\s*\(/i.test(text||"");
 }
+/* chatHistory stores client-only metadata like apId so Regen can recreate
+   the exact project/prompt that was active at send time. That metadata must
+   never reach provider APIs: OpenAI-format backends can reject unknown
+   message keys on follow-up turns, which makes a conversation work once and
+   then fail as soon as earlier user messages are included in history. */
+function sanitizeMessagesForProvider(messages){
+  return (messages||[]).map(function(m){
+    var clean={role:m.role,content:m.content};
+    if(m.name!==undefined)clean.name=m.name;
+    if(m.tool_call_id!==undefined)clean.tool_call_id=m.tool_call_id;
+    if(m.tool_calls!==undefined)clean.tool_calls=m.tool_calls;
+    return clean;
+  });
+}
 async function runCodingAgentRound(sessionId){
   if(!codingAgentActive||(sessionId!==undefined&&sessionId!==codingAgentActive.id))return;
   var mySession=codingAgentActive;
   var msgs=mySession.messages;
   var con=renderCodingConsole();
   try{
-    var res=await fetch(DI_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:CODING_AGENT_MODEL_ID,messages:msgs,tools:REPO_TOOLS,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:1500})});
+    var res=await fetch(DI_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:CODING_AGENT_MODEL_ID,messages:sanitizeMessagesForProvider(msgs),tools:REPO_TOOLS,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:1500})});
     if(!res.ok){
       if(res.status===429){
         /* Rate-limited: keep the session alive so the Retry button below
@@ -5140,8 +5156,13 @@ document.getElementById("overseerToggleBtn").addEventListener("click",function()
 document.getElementById("overseerBar").addEventListener("click",function(){openOverseerChat();});
 document.getElementById("overseerBarContinueBtn").addEventListener("click",function(e){
   e.stopPropagation();
-  var nextStep=this.dataset.nextStep;
-  if(nextStep)insertPrompt("Continue with the next step: "+nextStep);
+  var nextStep=overseerState.pendingContinueStep||this.dataset.nextStep;
+  if(nextStep){
+    overseerState.pendingContinueStep=null;
+    updateOverseerBar();
+    autoSave();
+    insertPrompt("Continue with the next step: "+nextStep);
+  }
 });
 document.getElementById("brainstormToggleBtn").addEventListener("click",function(){
   brainstormMode=!brainstormMode;
@@ -5334,18 +5355,26 @@ async function sendOverseerChatMsg(){
       var res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify(body2)});
       if(!res.ok){var err=await res.json().catch(function(){return{};});throw new Error((err.error&&err.error.message)||"HTTP "+res.status);}
       var reader=res.body.getReader(),dec=new TextDecoder(),buf="",done=false;
+      var handleLine=function(ln){
+        if(!ln.startsWith("data: "))return false;
+        var d=ln.slice(6);if(d==="[DONE]")return true;
+        try{
+          var tok=((JSON.parse(d).choices||[])[0]||{});
+          tok=tok.delta&&tok.delta.content;
+          if(tok){full+=tok;body.innerHTML=renderMd(full)+'<span class="cur">▇</span>';log.scrollTop=log.scrollHeight;}
+        }catch(ex){}
+        return false;
+      };
       while(!done){
-        var chunk=await reader.read();if(chunk.done)break;
+        var chunk=await reader.read();
+        if(chunk.done){
+          if(handleLine(buf.trim()))done=true;
+          break;
+        }
         buf+=dec.decode(chunk.value,{stream:true});
         var lines=buf.split("\n");buf=lines.pop();
         for(var i=0;i<lines.length;i++){
-          var ln=lines[i].trim();if(!ln.startsWith("data: "))continue;
-          var d=ln.slice(6);if(d==="[DONE]"){done=true;break;}
-          try{
-            var tok=((JSON.parse(d).choices||[])[0]||{});
-            tok=tok.delta&&tok.delta.content;
-            if(tok){full+=tok;body.innerHTML=renderMd(full)+'<span class="cur">▇</span>';log.scrollTop=log.scrollHeight;}
-          }catch(ex){}
+          if(handleLine(lines[i].trim())){done=true;break;}
         }
       }
     };
@@ -5755,6 +5784,7 @@ async function doSendRequest(userContent,isRegen,ap){
   }
   messages=messages.concat(chatHistory.slice(0,-1));
   messages.push({role:"user",content:userContent});
+  messages=sanitizeMessagesForProvider(messages);
   /* With a repo connected, code- or GitHub-flavored requests should reach
      the dedicated coding agent by default - otherwise the user can ask for
      debugging help about the connected project without ever saying the word
@@ -5863,18 +5893,26 @@ async function doSendRequest(userContent,isRegen,ap){
       var res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify(body),signal:abortController.signal});
       if(!res.ok){var err=await res.json().catch(function(){return{};});throw new Error((err.error&&err.error.message)||"HTTP "+res.status);}
       var reader=res.body.getReader(),dec=new TextDecoder(),buf="",done=false;
+      var handleLine=function(ln){
+        if(!ln.startsWith("data: "))return false;
+        var d=ln.slice(6);if(d==="[DONE]")return true;
+        try{
+          var tok=((JSON.parse(d).choices||[])[0]||{});
+          tok=tok.delta&&tok.delta.content;
+          if(tok){full+=tok;var dispFull=full.replace(/<think>[\s\S]*?<\/think>\s*/g,"");asstMsg.body.innerHTML=renderMd(dispFull)+'<span class="cur">\u2587</span>';scrollBot();}
+        }catch(ex){}
+        return false;
+      };
       while(!done){
-        var chunk=await reader.read();if(chunk.done)break;
+        var chunk=await reader.read();
+        if(chunk.done){
+          if(handleLine(buf.trim()))done=true;
+          break;
+        }
         buf+=dec.decode(chunk.value,{stream:true});
         var lines=buf.split("\n");buf=lines.pop();
         for(var i=0;i<lines.length;i++){
-          var ln=lines[i].trim();if(!ln.startsWith("data: "))continue;
-          var d=ln.slice(6);if(d==="[DONE]"){done=true;break;}
-          try{
-            var tok=((JSON.parse(d).choices||[])[0]||{});
-            tok=tok.delta&&tok.delta.content;
-            if(tok){full+=tok;var dispFull=full.replace(/<think>[\s\S]*?<\/think>\s*/g,"");asstMsg.body.innerHTML=renderMd(dispFull)+'<span class="cur">\u2587</span>';scrollBot();}
-          }catch(ex){}
+          if(handleLine(lines[i].trim())){done=true;break;}
         }
       }
     };
