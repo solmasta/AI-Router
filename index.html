@@ -3222,7 +3222,7 @@ async function runCodingAgentRound(sessionId){
       contBtn2.style.cssText="margin-top:8px";
       contBtn2.onclick=function(){
         contBtn2.disabled=true;contBtn2.textContent="…";
-        codingAgentActive={messages:msgs,id:++codingAgentSeq,autoContinue:!!mySession.autoContinue};
+        codingAgentActive={messages:msgs,id:++codingAgentSeq,autoContinue:codingModeActive||!!mySession.autoContinue};
         runCodingAgentRound(codingAgentActive.id);
       };
       con.wrap.appendChild(contBtn2);
