@@ -5348,18 +5348,26 @@ async function sendOverseerChatMsg(){
       var res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify(body2)});
       if(!res.ok){var err=await res.json().catch(function(){return{};});throw new Error((err.error&&err.error.message)||"HTTP "+res.status);}
       var reader=res.body.getReader(),dec=new TextDecoder(),buf="",done=false;
+      var handleLine=function(ln){
+        if(!ln.startsWith("data: "))return false;
+        var d=ln.slice(6);if(d==="[DONE]")return true;
+        try{
+          var tok=((JSON.parse(d).choices||[])[0]||{});
+          tok=tok.delta&&tok.delta.content;
+          if(tok){full+=tok;body.innerHTML=renderMd(full)+'<span class="cur">▇</span>';log.scrollTop=log.scrollHeight;}
+        }catch(ex){}
+        return false;
+      };
       while(!done){
-        var chunk=await reader.read();if(chunk.done)break;
+        var chunk=await reader.read();
+        if(chunk.done){
+          if(handleLine(buf.trim()))done=true;
+          break;
+        }
         buf+=dec.decode(chunk.value,{stream:true});
         var lines=buf.split("\n");buf=lines.pop();
         for(var i=0;i<lines.length;i++){
-          var ln=lines[i].trim();if(!ln.startsWith("data: "))continue;
-          var d=ln.slice(6);if(d==="[DONE]"){done=true;break;}
-          try{
-            var tok=((JSON.parse(d).choices||[])[0]||{});
-            tok=tok.delta&&tok.delta.content;
-            if(tok){full+=tok;body.innerHTML=renderMd(full)+'<span class="cur">▇</span>';log.scrollTop=log.scrollHeight;}
-          }catch(ex){}
+          if(handleLine(lines[i].trim())){done=true;break;}
         }
       }
     };
@@ -5878,20 +5886,28 @@ async function doSendRequest(userContent,isRegen,ap){
       var res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify(body),signal:abortController.signal});
       if(!res.ok){var err=await res.json().catch(function(){return{};});throw new Error((err.error&&err.error.message)||"HTTP "+res.status);}
       var reader=res.body.getReader(),dec=new TextDecoder(),buf="",done=false;
-      while(!done){
-        var chunk=await reader.read();if(chunk.done)break;
-        buf+=dec.decode(chunk.value,{stream:true});
-        var lines=buf.split("\n");buf=lines.pop();
-        for(var i=0;i<lines.length;i++){
-          var ln=lines[i].trim();if(!ln.startsWith("data: "))continue;
-          var d=ln.slice(6);if(d==="[DONE]"){done=true;break;}
+        var handleLine=function(ln){
+          if(!ln.startsWith("data: "))return false;
+          var d=ln.slice(6);if(d==="[DONE]")return true;
           try{
             var tok=((JSON.parse(d).choices||[])[0]||{});
             tok=tok.delta&&tok.delta.content;
             if(tok){full+=tok;var dispFull=full.replace(/<think>[\s\S]*?<\/think>\s*/g,"");asstMsg.body.innerHTML=renderMd(dispFull)+'<span class="cur">\u2587</span>';scrollBot();}
           }catch(ex){}
+          return false;
+        };
+        while(!done){
+          var chunk=await reader.read();
+          if(chunk.done){
+            if(handleLine(buf.trim()))done=true;
+            break;
+          }
+          buf+=dec.decode(chunk.value,{stream:true});
+          var lines=buf.split("\n");buf=lines.pop();
+          for(var i=0;i<lines.length;i++){
+            if(handleLine(lines[i].trim())){done=true;break;}
+          }
         }
-      }
     };
     await streamFrom(reqBody);
 
