@@ -1396,14 +1396,11 @@ function assert(cond, label) {
   await page.waitForTimeout(300);
   await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
 
-  console.log('\n-- coding agent runs one step at a time, waiting for Continue before the next tool call --');
-  // The coding agent never auto-chains multiple tool rounds in one burst -
-  // each round stops after executing whatever tool_calls came back and
-  // shows a Continue button; the NEXT round (e.g. read_file right after
-  // list_files) only fires once the user actually taps it. Mock round 1
-  // (list_files), confirm read_file has NOT fired yet, click Continue,
-  // confirm round 2 (read_file) then fires, click Continue again, confirm
-  // the final text round completes and renders.
+  console.log('\n-- coding tab auto-chains coding-agent rounds by default, without per-step Continue clicks --');
+  // In Coding mode, the dedicated coding agent should keep chaining tool
+  // rounds on its own so the user doesn't have to tap Continue for every
+  // file. Mock list_files -> read_file -> final text and confirm all three
+  // rounds run from one send, with a Stop affordance present while it runs.
   let codingRoundCount = 0;
   let sawListFilesCall = false;
   let sawReadFileCall = false;
@@ -1454,20 +1451,8 @@ function assert(cond, label) {
     await route.continue();
   });
   await sendMsg('please read the readme after listing the repo');
-  assert(sawListFilesCall, 'round 1 calls list_files');
-  assert(!sawReadFileCall, 'read_file has NOT been called yet - the agent stopped after round 1 instead of auto-chaining to the next tool call');
-  // Continue clicks don't touch #sendBtn (that only reflects the main
-  // send() flow) - poll the actual expected side effect of each round
-  // instead of waitForSendDone(), which would return immediately here.
-  const continueBtnAfterRound1 = await page.locator('#chat .msg.ma3 button:has-text("Continue")').last();
-  await continueBtnAfterRound1.click();
-  for (let i = 0; i < 60 && !sawReadFileCall; i++) await page.waitForTimeout(200);
-  assert(sawReadFileCall, 'clicking Continue actually triggers round 2, which calls read_file');
-  const continueBtnAfterRound2 = await page.locator('#chat .msg.ma3 button:has-text("Continue")').last();
-  await continueBtnAfterRound2.click();
-  // codingRoundCount ticks up as soon as the mocked request lands, but
-  // rendering the final text happens after that response is parsed - wait
-  // for the actual rendered text, not just the request having fired.
+  // codingRoundCount ticks up as soon as mocked requests land, but rendering
+  // the final text happens after the last response is parsed.
   let chatTextAfterCodingRounds = '';
   for (let i = 0; i < 60; i++) {
     chatTextAfterCodingRounds = await page.evaluate(() => document.getElementById('chat').textContent);
@@ -1475,8 +1460,11 @@ function assert(cond, label) {
     await page.waitForTimeout(200);
   }
   await page.unroute('**/*');
-  assert(codingRoundCount === 3, `exactly 3 coding-agent rounds ran, one per Continue click plus the initial send (got ${codingRoundCount})`);
+  assert(sawListFilesCall, 'round 1 calls list_files');
+  assert(sawReadFileCall, 'round 2 calls read_file without requiring a manual Continue click');
+  assert(codingRoundCount === 3, `exactly 3 coding-agent rounds ran from a single send in Coding mode (got ${codingRoundCount})`);
   assert(chatTextAfterCodingRounds.indexOf('regtest coding agent done') >= 0, "the final round's plain-text answer renders once the agent stops calling tools");
+  assert(chatTextAfterCodingRounds.indexOf('Stop') >= 0, 'a Stop control appears while auto-chaining, so the user can interrupt');
 
   console.log('\n-- asking the coding agent to go "on your own" auto-chains rounds instead of requiring a Continue click each time --');
   // A real user report: the agent kept asking for a manual Continue tap

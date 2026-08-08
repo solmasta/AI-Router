@@ -280,7 +280,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.125</span></span>
+      <span class="wm">ai-router <span>v5.126</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -571,7 +571,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.125</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.126</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1670,19 +1670,20 @@ function recentTurnsWereRepoRelevant(history){
 function isTaskAnalysisEmpty(t){
   return t.github===0&&t.code===0&&t.write===0&&t.reason===0&&t.analyze===0&&t.search===0;
 }
-/* The coding agent normally stops after every tool round and waits for an
-   explicit Continue click - a real user report found this tedious for a
-   read-heavy task ("check everything... without doing one by one"), since
-   the model has no way to honor that request itself when the app forces a
-   click between every single file. Detecting this phrase on the message
-   that starts a coding-agent turn lets that turn auto-chain rounds instead
-   of stopping after each one - safe to do because write_file/merge_branch
-   still always pause on their own dedicated approval dialog inside the
-   round regardless of this flag; only the friction between successive
-   read-only rounds is removed. */
+/* The coding agent can auto-chain rounds so the user doesn't have to tap
+   Continue after every single file/tool hop. Explicit phrasing still enables
+   this outside Coding mode; inside Coding mode it's the default so the flow
+   feels like a normal coding assistant. write_file/merge_branch safety stays
+   intact because those tools still pause on their approval dialogs. */
 function looksLikeAutoContinueRequest(text){
   var t=typeof text==="string"?text:((text&&text.find&&text.find(function(c){return c.type==="text";}))||{}).text||"";
   return /\b(on your own|by yourself|without (asking|stopping|checking( in| with me)?|me)|all at once|automatically|keep going (until|without)|don'?t (ask|stop)|no need to (ask|confirm|check)|not one by one|do(ing)? (it|them|everything) all\b)/i.test(t)||/without.*one by one/i.test(t);
+}
+function shouldAutoContinueCodingTurn(text){
+  var t=typeof text==="string"?text:((text&&text.find&&text.find(function(c){return c.type==="text";}))||{}).text||"";
+  if(codingModeActive)return true;
+  if(/^\s*continue with the next step\b/i.test(t))return true;
+  return looksLikeAutoContinueRequest(t);
 }
 /* Weighs the WHOLE conversation, not just the message that was just sent -
    scoring only the latest message meant a short reply like "yeah, do that"
@@ -2992,7 +2993,7 @@ function codingAgentSystemPrompt(){
     sys+="- run_tests(branch) and get_test_status(run_id) let you trigger and observe the GitHub Actions regression suite directly from here - after writing code, run the tests, poll until completed, then report results.\n";
     sys+="- Keep changes proportional to what's asked - this is a deliberately single-file app with no build step; don't introduce a framework, split it into multiple files, or add a build pipeline unless explicitly asked to.\n\n";
   }
-  sys+="Work on ONE concrete step at a time - don't try to do the whole task in a single burst. After finishing this step, briefly state what you did and what the next step would be, then stop; the user will tell you to continue.\n";
+  sys+="Work in clear concrete steps, but keep going on your own until the request is complete or you need user input/approval; only pause early if the user explicitly asks for one step at a time.\n";
   sys+="If the request is ambiguous or you're missing information needed to proceed safely (which file, which branch, what exact behavior), ask a clarifying question instead of guessing.\n";
   sys+="Show your reasoning in <think> tags.";
   return sys;
@@ -3221,7 +3222,7 @@ async function runCodingAgentRound(sessionId){
       contBtn2.style.cssText="margin-top:8px";
       contBtn2.onclick=function(){
         contBtn2.disabled=true;contBtn2.textContent="…";
-        codingAgentActive={messages:msgs,id:++codingAgentSeq};
+        codingAgentActive={messages:msgs,id:++codingAgentSeq,autoContinue:!!mySession.autoContinue};
         runCodingAgentRound(codingAgentActive.id);
       };
       con.wrap.appendChild(contBtn2);
@@ -5748,7 +5749,7 @@ async function doSendRequest(userContent,isRegen,ap){
   }
   if(!hasImgInContent&&hasCodingAgentAccess()&&(codingModeActive||searchGateTasks.github>0||searchGateTasks.code>0||(looksLikeContinuationRequest(qtext)&&recentTurnsWereRepoRelevant(chatHistory)))){
     try{
-      await runCodingAgentTurn(messages,looksLikeAutoContinueRequest(qtext));
+      await runCodingAgentTurn(messages,shouldAutoContinueCodingTurn(qtext));
     }finally{
       /* The normal reply path's own finally (below) resets sendBtn/sending
          once doSendRequest's try block runs to completion - this early
