@@ -66,8 +66,9 @@
      shuffle-for-variety behavior rotating it between several
      similarly-scored coding models message to message
    - GitHub Settings: a one-tap Clear button disconnects the active repo
-     without opening the Connect modal, and previously-connected repos are
-     offered as quick "recent" picks when reconnecting
+     without opening the Connect modal, previously-connected repos are
+     offered as quick "recent" picks when reconnecting, and a repo saved
+     without OAuth/write-secret auth gets an auth-specific Coding-tab guard
    - a fresh deploy that only changes index.html (the common case, which
      never touches sw.js's own bytes) still applies itself automatically -
      no tap required - and defers cleanly instead of reloading mid-request
@@ -578,9 +579,29 @@ function assert(cond, label) {
   const ownerFilledFromRecent = await page.inputValue('#ghOwnerInput');
   const repoFilledFromRecent = await page.inputValue('#ghRepoInput');
   assert(ownerFilledFromRecent === 'solmasta' && repoFilledFromRecent === 'openai-router', `tapping a recent-repo chip fills the owner/repo inputs (got "${ownerFilledFromRecent}/${repoFilledFromRecent}")`);
+  await page.fill('#ghWriteSecretInput', '');
+  await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
+  const ghStatusAfterRepoOnlyReconnect = await page.textContent('#githubStatus');
+  assert(ghStatusAfterRepoOnlyReconnect === 'solmasta/openai-router (saved - add OAuth or write secret)', `saving just the repo (without auth) leaves an explicit saved-but-not-authenticated status (got "${ghStatusAfterRepoOnlyReconnect}")`);
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  const codingEmptyStateNeedsAuth = await page.evaluate(() => document.querySelector('#emptyState .es-sub').textContent);
+  assert(codingEmptyStateNeedsAuth.indexOf('saved') >= 0 && codingEmptyStateNeedsAuth.indexOf('OAuth') >= 0, `an empty Coding tab explains that the repo is saved but auth is still missing (got "${codingEmptyStateNeedsAuth}")`);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(700);
+  const codingEmptyStateNeedsAuthAfterReload = await page.evaluate(() => document.querySelector('#emptyState .es-sub').textContent);
+  assert(codingEmptyStateNeedsAuthAfterReload.indexOf('saved') >= 0 && codingEmptyStateNeedsAuthAfterReload.indexOf('OAuth') >= 0, `reloading an empty Coding tab keeps the auth-specific guidance instead of falling back to "connect a repo" (got "${codingEmptyStateNeedsAuthAfterReload}")`);
+  await sendMsg('hello there');
+  const codingAuthGuardText = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(codingAuthGuardText.indexOf("isn't authenticated yet") >= 0, `sending in a Coding tab with a saved-but-unauthenticated repo shows an auth-specific guard (got: ${codingAuthGuardText.slice(-300)})`);
+  assert(codingAuthGuardText.indexOf('needs a connected repo') < 0, 'the saved-but-unauthenticated Coding-tab guard no longer incorrectly claims that no repo is connected');
+  await page.click('#settingsBtn'); await page.waitForTimeout(150);
+  await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
+  await page.fill('#ghWriteSecretInput', 'regtest-write-secret');
   await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
   const ghStatusAfterRecentReconnect = await page.textContent('#githubStatus');
-  assert(ghStatusAfterRecentReconnect === 'solmasta/openai-router', `reconnecting via the recent-repo chip actually reconnects (got "${ghStatusAfterRecentReconnect}")`);
+  assert(ghStatusAfterRecentReconnect === 'solmasta/openai-router', `reconnecting via the recent-repo chip plus restored auth actually reconnects (got "${ghStatusAfterRecentReconnect}")`);
+  await page.locator('#tabBar .tabpill.act .tpx').click();
+  await page.waitForTimeout(400);
 
   console.log('\n-- vision model + image request omits repo tools even with GitHub connected --');
   // With GitHub connected, an image sent to a vision model (not in
@@ -814,12 +835,14 @@ function assert(cond, label) {
   // A dedicated Coding tab exists so every message there goes straight to
   // the coding agent without needing to sound repo-flavored at all - the
   // whole point is to skip analyzeTask's keyword guessing entirely.
+  const noRepoStateBeforeCodingGuard = await page.evaluate(() => !localStorage.getItem('gh_repo_owner') && !localStorage.getItem('gh_repo_name'));
+  assert(noRepoStateBeforeCodingGuard, 'test setup: no repo is saved before checking the no-repo Coding-tab guard');
   await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
   const codingIndicatorVisibleNoRepo = await page.evaluate(() => document.getElementById('activePromptName').textContent.indexOf('Coding') >= 0);
   assert(codingIndicatorVisibleNoRepo, 'the system-status bar shows a Coding indicator once a Coding tab is active');
   await sendMsg('hello there');
   const chatTextNoRepoGuard = await page.evaluate(() => document.getElementById('chat').textContent);
-  assert(chatTextNoRepoGuard.indexOf('needs a connected repo') >= 0, `sending in a Coding tab with no repo connected shows a clear guard message instead of silently falling back to the plain chat model (got: ${chatTextNoRepoGuard.slice(-300)})`);
+  assert(chatTextNoRepoGuard.indexOf('needs a repo first') >= 0, `sending in a Coding tab with no repo connected shows a clear guard message instead of silently falling back to the plain chat model (got: ${chatTextNoRepoGuard.slice(-300)})`);
 
   console.log('\n-- Coding tab reaches the dedicated coding agent for a completely generic, keyword-free message once a repo is connected --');
   await page.click('#settingsBtn'); await page.waitForTimeout(150);
