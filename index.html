@@ -1680,8 +1680,8 @@ function looksLikeAutoContinueRequest(text){
   return /\b(on your own|by yourself|without (asking|stopping|checking( in| with me)?|me)|all at once|automatically|keep going (until|without)|don'?t (ask|stop)|no need to (ask|confirm|check)|not one by one|do(ing)? (it|them|everything) all\b)/i.test(t)||/without.*one by one/i.test(t);
 }
 function shouldAutoContinueCodingTurn(text){
-  var t=typeof text==="string"?text:((text&&text.find&&text.find(function(c){return c.type==="text";}))||{}).text||"";
   if(codingModeActive)return true;
+  var t=typeof text==="string"?text:((text&&text.find&&text.find(function(c){return c.type==="text";}))||{}).text||"";
   if(/^\s*continue with the next step\b/i.test(t))return true;
   return looksLikeAutoContinueRequest(t);
 }
