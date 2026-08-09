@@ -16,6 +16,10 @@
    - vision model auto-switch on image attach, and auto-restore after
    - memory add/delete
    - tab creation, per-tab isolation, and switching back
+   - closing a background tab only removes that one tab (never more) and
+     confirms with a toast stating how many remain, including an explicit
+     "1 tab left" when the tab bar itself disappears; closing the active
+     tab mid-send is blocked with a clear toast instead of doing nothing
    - profile creation and data isolation
    - Overseer chat: long-press opens it, sends reach the model with the
      Overseer's own dedicated system prompt (not the main chat one)
@@ -926,6 +930,75 @@ function assert(cond, label) {
   await page.waitForTimeout(600);
   const backOnTabA = await page.evaluate(() => document.getElementById('chat').textContent.indexOf('quick test') >= 0);
   assert(backOnTabA, 'switching back to tab A shows its original content');
+
+  console.log('\n-- closing a background tab only removes that one tab, and confirms with a toast --');
+  // A real user report: closing a tab sometimes "just turns red" (a stuck
+  // touch-hover state with no actual feedback) or "removes everything, all
+  // the tabs" - neither of those should be possible from a single tap on
+  // one tab's X. This checks closing a NON-active background tab in a
+  // 3-tab set only removes that one tab and leaves the active tab's
+  // content untouched.
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+  await sendMsg('regtest tab C content');
+  const tabCountBeforeBgClose = await page.evaluate(() => document.querySelectorAll('#tabBar .tabpill').length);
+  assert(tabCountBeforeBgClose === 3, `test setup: 3 tabs open before closing a background one (got ${tabCountBeforeBgClose})`);
+  // Tab B (index 1) is the middle pill - tab C (this test's own, active) is last.
+  await page.locator('#tabBar .tabpill').nth(1).locator('.tpx').click();
+  await page.waitForTimeout(300);
+  const tabCountAfterBgClose = await page.evaluate(() => document.querySelectorAll('#tabBar .tabpill').length);
+  assert(tabCountAfterBgClose === 2, `closing one background tab removes exactly that one, not all of them (got ${tabCountAfterBgClose} remaining)`);
+  const stillOnTabCAfterBgClose = await page.evaluate(() => document.getElementById('chat').textContent.indexOf('regtest tab C content') >= 0);
+  assert(stillOnTabCAfterBgClose, "closing a background tab doesn't disturb the active tab's own content");
+  const bgCloseToast = await page.textContent('#msgToastText');
+  assert(bgCloseToast.indexOf('tabs left') >= 0 || bgCloseToast.indexOf('tab left') >= 0, `closing a tab confirms with a toast stating how many remain, instead of leaving it ambiguous whether more than one was removed (got "${bgCloseToast}")`);
+
+  console.log('\n-- closing down to the last tab confirms "1 tab left" instead of looking like everything vanished --');
+  // Once only one tab remains, the tab bar itself disappears (by design -
+  // no need for tab-switching UI with nothing to switch to). Without an
+  // explicit toast, that abrupt disappearance is exactly what a user
+  // described as "it removes everything, all the tabs."
+  await page.locator('#tabBar .tabpill').first().locator('.tpx').click();
+  await page.waitForTimeout(300);
+  const tabBarHiddenAtOne = await page.evaluate(() => document.getElementById('tabBar').classList.contains('hidden'));
+  assert(tabBarHiddenAtOne, 'test setup: the tab bar hides once only one tab remains');
+  const lastTabStillHasContent = await page.evaluate(() => document.getElementById('chat').textContent.indexOf('regtest tab C content') >= 0);
+  assert(lastTabStillHasContent, "the remaining tab's content is still intact - the bar hiding is cosmetic, not data loss");
+  const oneTabLeftToast = await page.textContent('#msgToastText');
+  assert(oneTabLeftToast.indexOf('1 tab left') >= 0, `closing down to the last tab explicitly confirms "1 tab left" rather than looking like a wipe (got "${oneTabLeftToast}")`);
+
+  console.log('\n-- closing the active tab mid-send is blocked with a clear toast instead of silently doing nothing --');
+  // sending only reflects the ACTIVE tab's own in-flight request - it used
+  // to block closing ANY tab (even unrelated background ones) with zero
+  // feedback, which is the other half of the "X just turns red, nothing
+  // happens" report.
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+  let releaseSlowSend = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.stream === true) {
+        await new Promise((resolve) => { releaseSlowSend = resolve; });
+        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"choices":[{"delta":{"content":"regtest slow reply"}}]}\n\ndata: [DONE]\n\n' });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await page.fill('#prompt', 'regtest message that stays in flight');
+  await page.click('#sendBtn');
+  await page.waitForTimeout(400);
+  const tabCountBeforeBlockedClose = await page.evaluate(() => document.querySelectorAll('#tabBar .tabpill').length);
+  await page.locator('#tabBar .tabpill.act .tpx').click();
+  await page.waitForTimeout(200);
+  const blockedCloseToast = await page.textContent('#msgToastText');
+  assert(blockedCloseToast.indexOf('Finish or stop the current response') >= 0, `closing the active tab mid-send shows a clear toast explaining why, instead of silently doing nothing (got "${blockedCloseToast}")`);
+  const tabCountAfterBlockedClose = await page.evaluate(() => document.querySelectorAll('#tabBar .tabpill').length);
+  assert(tabCountAfterBlockedClose === tabCountBeforeBlockedClose, 'the active tab is not actually closed while its own send is still in flight');
+  if (releaseSlowSend) releaseSlowSend();
+  await waitForSendDone();
+  await page.unroute('**/*');
 
   console.log('\n-- Coding tab always routes to the coding agent, with a clear guard when no repo is connected --');
   // A dedicated Coding tab exists so every message there goes straight to
