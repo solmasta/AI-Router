@@ -15,8 +15,10 @@
 //
 // Required Worker vars:
 //   APP_ORIGIN          - the URL of the deployed index.html, e.g. https://your-app.pages.dev
-//                         used to build the redirect_uri sent to GitHub and to set the
-//                         final redirect destination after /callback.
+//                         Only used as the /callback fallback destination when
+//                         window.opener isn't available (see popupOrRedirectScript
+//                         below) - the redirect_uri actually sent to GitHub is
+//                         always this worker's own /callback (see callbackUri()).
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -81,12 +83,7 @@ export default {
         const msg = error || "missing_code";
         return htmlPage(`
           <p style="color:#f87171">GitHub auth failed: ${escHtml(msg)}</p>
-          <script>
-            if (window.opener) {
-              window.opener.postMessage({type:"gh_oauth_error",error:${JSON.stringify(msg)}}, "*");
-              window.close();
-            }
-          </script>`);
+          <script>${popupOrRedirectScript({ type: "gh_oauth_error", error: msg }, env.APP_ORIGIN)}</script>`);
       }
 
       const cb = callbackUri(env, request.url);
@@ -110,12 +107,7 @@ export default {
         const msg = tokenData.error_description || tokenData.error || "token exchange failed";
         return htmlPage(`
           <p style="color:#f87171">Token exchange failed: ${escHtml(msg)}</p>
-          <script>
-            if (window.opener) {
-              window.opener.postMessage({type:"gh_oauth_error",error:${JSON.stringify(msg)}}, "*");
-              window.close();
-            }
-          </script>`);
+          <script>${popupOrRedirectScript({ type: "gh_oauth_error", error: msg }, env.APP_ORIGIN)}</script>`);
       }
 
       // GitHub's standard OAuth flow doesn't issue refresh tokens.
@@ -133,14 +125,7 @@ export default {
 
       return htmlPage(`
         <p style="color:#4ade80">Connected! Closing&#8230;</p>
-        <script>
-          if (window.opener) {
-            window.opener.postMessage(${JSON.stringify(payload)}, "*");
-            window.close();
-          } else {
-            document.body.innerHTML='<p>Connected. You can close this tab.</p>';
-          }
-        </script>`);
+        <script>${popupOrRedirectScript(payload, env.APP_ORIGIN)}</script>`);
     }
 
     // /refresh - called by the frontend to get a fresh access_token when
@@ -234,4 +219,39 @@ function htmlPage(body) {
 </head><body>${body}</body></html>`,
     { headers: { "Content-Type": "text/html;charset=utf-8" } }
   );
+}
+
+// window.open()'d as a real desktop popup, window.opener works fine and
+// postMessage delivers the result instantly - that's the common case this
+// was originally built for. On a mobile browser, and especially a PWA
+// installed to the home screen, window.open() very often opens a full
+// navigation (a new tab, or replaces the app itself) instead of a true
+// popup, which means window.opener is null here even though the OAuth
+// exchange above genuinely succeeded. Before this fix, that case just
+// showed "Connected. You can close this tab." with no way for the app to
+// actually receive the token - the user would see success, close the tab,
+// find the app still saying "not connected", and be stuck repeating the
+// same flow indefinitely. If APP_ORIGIN is configured, redirect the whole
+// page back to the app with the result in the URL hash instead - hash
+// fragments are never sent to a server in a normal request, so this is
+// the same trust boundary as postMessage(..., "*") was already using, and
+// the app can read+clear it on load the same way a return from any other
+// OAuth redirect flow would.
+function popupOrRedirectScript(payload, appOrigin) {
+  const payloadJson = JSON.stringify(payload);
+  const hashKey = payload.type === "gh_oauth_error" ? "gh_oauth_error" : "gh_oauth";
+  const hashValue = payload.type === "gh_oauth_error" ? payload.error : payloadJson;
+  const redirectUrl = appOrigin
+    ? `${appOrigin.replace(/\/$/, "")}#${hashKey}=${encodeURIComponent(hashValue)}`
+    : null;
+  return `
+    if (window.opener) {
+      window.opener.postMessage(${payloadJson}, "*");
+      window.close();
+    } else if (${JSON.stringify(redirectUrl)}) {
+      location.href = ${JSON.stringify(redirectUrl)};
+    } else {
+      document.body.innerHTML = '<p>${payload.type === "gh_oauth_error" ? "Auth failed" : "Connected"}. You can close this tab.</p>';
+    }
+  `;
 }
