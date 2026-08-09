@@ -22,6 +22,10 @@
    - Overseer chat can also drive repo tool_calls (e.g. write_file) directly,
      through the same TOOL_MODELS gate and approval dialogs as the main
      chat, with its own tool-execution notices in the Overseer's chat log
+   - the Overseer chat's own code-signal keywords are word-boundary matched
+     (not substring - "react" inside "overreacted" doesn't count) and
+     require more than one incidental hit before granting repo tools for
+     a message that isn't actually about the connected repo
    - all repo/coding work (read_file/write_file/list_files/merge_branch)
      runs on one fixed dedicated coding agent model, independent of
      whatever the main chat is using - a repo-flavored message no longer
@@ -1464,6 +1468,66 @@ function assert(cond, label) {
   await page.unroute('**/*');
   const overseerUnrelatedToolNames = ((lastOverseerUnrelatedBody && lastOverseerUnrelatedBody.tools) || []).map((t) => t.function.name);
   assert(overseerUnrelatedToolNames.indexOf('read_file') < 0 && overseerUnrelatedToolNames.indexOf('write_file') < 0 && overseerUnrelatedToolNames.indexOf('list_files') < 0 && overseerUnrelatedToolNames.indexOf('merge_branch') < 0, `an Overseer strategy question with no repo/GitHub signal gets no repo tools even with GitHub connected (got tools: ${JSON.stringify(overseerUnrelatedToolNames)})`);
+  await page.waitForTimeout(300);
+  await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
+
+  console.log('\n-- Overseer chat\'s code-signal keywords are word-boundary matched, not substring - an unrelated word containing one doesn\'t grant repo tools --');
+  // analyzeTask's code-keyword list used to match with a plain indexOf,
+  // so "react" matched inside "overreacted", "code" matched inside "zip
+  // code"/"decode" - completely unrelated messages could still light up
+  // tasks.code and get read_file/write_file/merge_branch offered. This
+  // message hits exactly that old substring trap ("react" inside
+  // "overreacted") and nothing else - it must not qualify for repo tools.
+  await page.dispatchEvent('#overseerBtn', 'mousedown');
+  await page.waitForTimeout(700);
+  await page.dispatchEvent('#overseerBtn', 'mouseup');
+  await page.waitForTimeout(200);
+  let lastOverseerSubstringBody = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      try {
+        const parsed = JSON.parse(req.postData());
+        if (parsed.messages) lastOverseerSubstringBody = parsed;
+      } catch (e) {}
+    }
+    await route.continue();
+  });
+  await page.fill('#overseerChatInput', 'I overreacted about something today, any advice?');
+  await page.click('#overseerChatSendBtn');
+  for (let i = 0; i < 60 && lastOverseerSubstringBody === null; i++) await page.waitForTimeout(200);
+  await page.unroute('**/*');
+  const overseerSubstringToolNames = ((lastOverseerSubstringBody && lastOverseerSubstringBody.tools) || []).map((t) => t.function.name);
+  assert(overseerSubstringToolNames.indexOf('read_file') < 0 && overseerSubstringToolNames.indexOf('write_file') < 0 && overseerSubstringToolNames.indexOf('list_files') < 0 && overseerSubstringToolNames.indexOf('merge_branch') < 0, `"react" appearing inside "overreacted" must not be treated as a code signal (got tools: ${JSON.stringify(overseerSubstringToolNames)})`);
+  await page.waitForTimeout(300);
+  await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
+
+  console.log('\n-- Overseer chat requires more than one incidental code-keyword hit before granting repo tools --');
+  // Unlike a real github keyword (worth +2 on its own), each code keyword
+  // is only worth +1 - a single one showing up once in an otherwise
+  // unrelated message ("bug" in a non-coding complaint) shouldn't be
+  // enough by itself to hand out repo write access. Requires >= 2 hits.
+  await page.dispatchEvent('#overseerBtn', 'mousedown');
+  await page.waitForTimeout(700);
+  await page.dispatchEvent('#overseerBtn', 'mouseup');
+  await page.waitForTimeout(200);
+  let lastOverseerSingleHitBody = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      try {
+        const parsed = JSON.parse(req.postData());
+        if (parsed.messages) lastOverseerSingleHitBody = parsed;
+      } catch (e) {}
+    }
+    await route.continue();
+  });
+  await page.fill('#overseerChatInput', 'there is a bug I keep running into with my sleep schedule');
+  await page.click('#overseerChatSendBtn');
+  for (let i = 0; i < 60 && lastOverseerSingleHitBody === null; i++) await page.waitForTimeout(200);
+  await page.unroute('**/*');
+  const overseerSingleHitToolNames = ((lastOverseerSingleHitBody && lastOverseerSingleHitBody.tools) || []).map((t) => t.function.name);
+  assert(overseerSingleHitToolNames.indexOf('read_file') < 0 && overseerSingleHitToolNames.indexOf('write_file') < 0 && overseerSingleHitToolNames.indexOf('list_files') < 0 && overseerSingleHitToolNames.indexOf('merge_branch') < 0, `a single incidental code-keyword hit ("bug") with no other signal must not be enough on its own to grant repo tools (got tools: ${JSON.stringify(overseerSingleHitToolNames)})`);
   await page.waitForTimeout(300);
   await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
 
