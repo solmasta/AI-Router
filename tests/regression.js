@@ -164,6 +164,11 @@
    - a transient HTTP error from the coding agent (429/500/502/503, and
      Cloudflare's own 504/522/523/524 gateway-timeout family) offers a
      Retry button that re-enters the same session, instead of a dead end
+   - the GitHub OAuth callback's redirect fallback (#gh_oauth=... or
+     #gh_oauth_error=... in the URL hash, used when window.opener isn't
+     available - the common case on mobile/PWA) finishes or reports the
+     connection on load and clears the hash, instead of leaving the app
+     stuck "not connected" after the popup already said "Connected!"
      that kills the whole coding-agent session over what's often just a
      slow response
 
@@ -1830,6 +1835,55 @@ function assert(cond, label) {
     await page.unroute('**/*');
     assert(chatTextAfterTransientRetry.indexOf('regtest recovered after HTTP ' + statusToTest) >= 0, `tapping Retry after HTTP ${statusToTest} re-enters the same session and the real answer renders once it succeeds`);
   }
+
+  console.log('\n-- a GitHub OAuth redirect fallback (#gh_oauth=... in the URL hash) finishes the connection on load --');
+  // On mobile/PWA, window.open() for the OAuth popup often doesn't produce
+  // a real window.opener, so the worker's postMessage path silently fails
+  // even though the token exchange succeeded server-side - the user saw
+  // "Connected!" in the OAuth tab but the app never got the token and stayed
+  // disconnected. The worker's fallback redirects back here with the result
+  // in the hash instead; processGithubOauthRedirect() must pick that up on
+  // load, save the token, and clear the hash.
+  // Profile-scoped keys are prefixed (prof_<name>__gh_oauth_token) once a
+  // non-default profile is active (the "profile: create, isolate" step
+  // above switches to one and never switches back) - look up the actual
+  // key by suffix instead of assuming the unprefixed name, same pattern
+  // used elsewhere in this file (e.g. ai_workprojects/drive_folder_id).
+  const oauthRedirectPayload = encodeURIComponent(JSON.stringify({
+    type: 'gh_oauth_success', access_token: 'regtest-redirect-token', refresh_token: 'regtest-redirect-refresh', expires_in: 3600,
+  }));
+  await page.evaluate((h) => {
+    Object.keys(localStorage).filter((k) => k.indexOf('gh_oauth_token') >= 0 || k.indexOf('gh_oauth_refresh_token') >= 0).forEach((k) => localStorage.removeItem(k));
+    location.hash = h;
+  }, 'gh_oauth=' + oauthRedirectPayload);
+  // A same-document fragment-only URL change (via goto or setting
+  // location.hash) doesn't rerun the page's load-time init code - a real
+  // OAuth redirect lands as a fresh navigation, so force one here with
+  // reload() to actually exercise processGithubOauthRedirect() on load.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(700);
+  const savedOauthToken = await page.evaluate(() => { try { const k = Object.keys(localStorage).find((k) => k.indexOf('gh_oauth_token') >= 0); return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } });
+  assert(savedOauthToken && savedOauthToken.token === 'regtest-redirect-token', `a #gh_oauth redirect payload on load saves the access token via ghSaveOauthToken (got ${JSON.stringify(savedOauthToken)})`);
+  const savedOauthRefresh = await page.evaluate(() => { const k = Object.keys(localStorage).find((k) => k.indexOf('gh_oauth_refresh_token') >= 0); return k ? localStorage.getItem(k) : null; });
+  assert(savedOauthRefresh === 'regtest-redirect-refresh', `the redirect fallback also saves the refresh token, not just the access token (got "${savedOauthRefresh}")`);
+  const hashClearedAfterOauthRedirect = await page.evaluate(() => location.hash);
+  assert(hashClearedAfterOauthRedirect === '', 'the gh_oauth hash is cleared from the URL after being consumed, so a reload does not re-process it');
+  const toastAfterOauthRedirect = await page.evaluate(() => document.getElementById('msgToastText').textContent);
+  assert(toastAfterOauthRedirect.indexOf('GitHub OAuth connected') >= 0, 'a toast confirms the redirect-fallback connection the same way the popup path does');
+
+  console.log('\n-- a GitHub OAuth redirect error (#gh_oauth_error=... in the URL hash) surfaces a toast instead of silently doing nothing --');
+  await page.evaluate((h) => {
+    Object.keys(localStorage).filter((k) => k.indexOf('gh_oauth_token') >= 0 || k.indexOf('gh_oauth_refresh_token') >= 0).forEach((k) => localStorage.removeItem(k));
+    location.hash = h;
+  }, 'gh_oauth_error=' + encodeURIComponent('access_denied'));
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(700);
+  const toastAfterOauthRedirectError = await page.evaluate(() => document.getElementById('msgToastText').textContent);
+  assert(toastAfterOauthRedirectError.indexOf('access_denied') >= 0, `a #gh_oauth_error redirect payload surfaces the underlying error in a toast (got "${toastAfterOauthRedirectError}")`);
+  const hashClearedAfterOauthError = await page.evaluate(() => location.hash);
+  assert(hashClearedAfterOauthError === '', 'the gh_oauth_error hash is also cleared after being consumed');
+  const noTokenSavedAfterOauthError = await page.evaluate(() => { const k = Object.keys(localStorage).find((k) => k.indexOf('gh_oauth_token') >= 0); return k ? localStorage.getItem(k) : null; });
+  assert(!noTokenSavedAfterOauthError, `an error payload never saves a token (got "${noTokenSavedAfterOauthError}")`);
 
   console.log('\n-- an abandoned coding-agent step (no Continue click) still leaves its findings in real conversation history --');
   // Without this, moving on to an unrelated message after a pending

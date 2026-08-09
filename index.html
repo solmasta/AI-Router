@@ -280,7 +280,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.133</span></span>
+      <span class="wm">ai-router <span>v5.134</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -571,7 +571,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.133</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.134</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -978,6 +978,37 @@ async function getGhAccessToken(){
     if(ok2)return ghOauthToken;
   }
   return null;
+}
+/* The OAuth popup (ghOAuthConnect below) only actually receives its
+   result via postMessage when window.opener is real - true on desktop,
+   but window.open() very often opens a full navigation instead of a true
+   popup on mobile browsers and especially on a PWA installed to the home
+   screen, leaving window.opener null in the callback tab even though the
+   token exchange succeeded server-side. The worker's own fallback for
+   that case (see popupOrRedirectScript in github-oauth-worker.js)
+   redirects back here with the result in the URL hash instead - this
+   picks that up on load. Without it, the user would see "Connected!" in
+   the OAuth tab, close it, and find the app still saying not connected,
+   with no way to actually finish - exactly the "have to keep redoing
+   this" report that prompted adding this path. */
+function processGithubOauthRedirect(){
+  var hash=location.hash;
+  if(!hash||hash.length<2)return;
+  var successMatch=hash.match(/gh_oauth=([^&]+)/);
+  var errorMatch=hash.match(/gh_oauth_error=([^&]+)/);
+  if(successMatch){
+    try{
+      var payload=JSON.parse(decodeURIComponent(successMatch[1]));
+      if(payload&&payload.access_token){
+        ghSaveOauthToken(payload.access_token,payload.expires_in,payload.refresh_token);
+        showToast("GitHub OAuth connected!");
+      }
+    }catch(e){}
+    history.replaceState(null,"",location.pathname+location.search);
+  }else if(errorMatch){
+    showToast("GitHub OAuth failed: "+decodeURIComponent(errorMatch[1]));
+    history.replaceState(null,"",location.pathname+location.search);
+  }
 }
 function ghOAuthConnect(){
   var popup=window.open(GH_OAUTH_URL+"/authorize","gh_oauth","width=700,height=600,popup");
@@ -6195,6 +6226,7 @@ loadWProjects();
 loadAutoSave();
 loadDraft();
 loadGithubConnection();
+processGithubOauthRedirect();
 initTabs();
 loadMemories();
 renderMemoryList();
