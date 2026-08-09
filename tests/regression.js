@@ -161,6 +161,11 @@
    - an OAuth-only GitHub connection with an expired token can refresh and
      keep repo/coding access alive without also requiring the legacy write
      secret path
+   - a transient HTTP error from the coding agent (429/500/502/503, and
+     Cloudflare's own 504/522/523/524 gateway-timeout family) offers a
+     Retry button that re-enters the same session, instead of a dead end
+     that kills the whole coding-agent session over what's often just a
+     slow response
 
    Run: NODE_PATH=/opt/node22/lib/node_modules node tests/regression.js
 */
@@ -1781,6 +1786,50 @@ function assert(cond, label) {
   await page.unroute('**/*');
   assert(stubbornFakeToolCallRoundCount === 2, `still capped at exactly one retry even when the retry also comes back fake (got ${stubbornFakeToolCallRoundCount} rounds)`);
   assert(chatTextAfterStubbornFakeToolCall.indexOf('tool_code') >= 0, 'after the single retry is exhausted, the fake text is shown as-is instead of retrying again');
+
+  console.log('\n-- transient HTTP errors from the coding agent offer a Retry button instead of a dead end --');
+  // 429/500/502/503 already got a Retry button that re-enters the same
+  // session without starting a new chatHistory turn. A real user report
+  // hit an HTTP 524 (Cloudflare's own gateway-timeout family - a slow
+  // coding-agent call is exactly the kind of request that trips it) and
+  // got the generic dead-end message instead, with the session killed
+  // (codingAgentActive set to null) and no way to pick back up except
+  // starting over. Check one from each family: an already-covered status
+  // (503) and a newly-covered one (524).
+  for (const statusToTest of [503, 524]) {
+    let transientErrorRoundCount = 0;
+    await page.route('**/*', async (route) => {
+      const req = route.request();
+      if (req.method() === 'POST' && req.postData()) {
+        let parsed = null;
+        try { parsed = JSON.parse(req.postData()); } catch (e) {}
+        if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+          transientErrorRoundCount++;
+          if (transientErrorRoundCount === 1) {
+            await route.fulfill({ status: statusToTest, contentType: 'text/plain', body: 'gateway error' });
+            return;
+          }
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest recovered after HTTP ' + statusToTest } }] }) });
+          return;
+        }
+      }
+      await route.continue();
+    });
+    await sendMsg('please check the repo status ' + statusToTest);
+    const retryBtn = page.locator('#chat .msg.ma3 button:has-text("Retry")').last();
+    await retryBtn.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+    const retryVisible = await retryBtn.isVisible().catch(() => false);
+    assert(retryVisible, `HTTP ${statusToTest} offers a Retry button instead of a dead end (got: ${await page.evaluate(() => document.getElementById('chat').textContent).catch(() => '')})`.slice(0, 400));
+    if (retryVisible) await retryBtn.click();
+    let chatTextAfterTransientRetry = '';
+    for (let i = 0; i < 40; i++) {
+      chatTextAfterTransientRetry = await page.evaluate(() => document.getElementById('chat').textContent);
+      if (chatTextAfterTransientRetry.indexOf('regtest recovered after HTTP ' + statusToTest) >= 0) break;
+      await page.waitForTimeout(200);
+    }
+    await page.unroute('**/*');
+    assert(chatTextAfterTransientRetry.indexOf('regtest recovered after HTTP ' + statusToTest) >= 0, `tapping Retry after HTTP ${statusToTest} re-enters the same session and the real answer renders once it succeeds`);
+  }
 
   console.log('\n-- an abandoned coding-agent step (no Continue click) still leaves its findings in real conversation history --');
   // Without this, moving on to an unrelated message after a pending

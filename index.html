@@ -280,7 +280,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.132</span></span>
+      <span class="wm">ai-router <span>v5.133</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -571,7 +571,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.132</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.133</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3094,8 +3094,13 @@ async function runCodingAgentRound(sessionId){
           runCodingAgentRound(sid);
         };})(mySession.id,con);
         con.wrap.appendChild(retryBtn429);
-      }else if(res.status===500||res.status===503||res.status===502){
-        /* Transient server error – keep session alive and offer Retry */
+      }else if(res.status===500||res.status===503||res.status===502||res.status===504||res.status===522||res.status===523||res.status===524){
+        /* Transient server/gateway error - keep session alive and offer
+           Retry. 522/523/524 are Cloudflare's own connection-timeout/
+           unreachable-origin family (a long coding-agent call is exactly
+           the kind of request that trips these) - previously fell into
+           the dead-end branch below, killing the whole session over what
+           was often just a slow response, not a real failure. */
         con.body.innerHTML='<span style="color:var(--er)">The API returned an error (HTTP '+res.status+') \u2013 tap Retry to try again.</span>';
         var retryBtn5xx=document.createElement("button");
         retryBtn5xx.className="ba";retryBtn5xx.textContent="Retry";
