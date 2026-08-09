@@ -59,9 +59,11 @@ header{display:flex;align-items:center;justify-content:space-between;padding:cal
   .ib{min-width:34px;min-height:34px;padding:7px}
 }
 .ib:focus-visible,.mb:focus-visible,.bp:focus-visible,.bg:focus-visible,.mic:focus-visible,.ws:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
-.sbrow{display:flex;align-items:center;gap:2px;flex-shrink:0}
-.sb{display:flex;align-items:center;gap:8px;flex:1;min-width:0;padding:9px 2px;border:none;background:none;color:var(--mu);font-size:13px;cursor:pointer;text-align:left;border-radius:10px;transition:background .15s}
+.sb{display:flex;align-items:center;gap:8px;width:100%;padding:9px 2px;border:none;background:none;color:var(--mu);font-size:13px;cursor:pointer;text-align:left;flex-shrink:0;border-radius:10px;transition:background .15s}
 .sb:hover{color:var(--tx);background:var(--up)}
+.term-panel{flex-shrink:0;display:flex;flex-direction:column;background:#0d1117;border-radius:10px;margin:0 0 8px;overflow:hidden;max-height:150px}
+.term-head{padding:6px 10px;font-family:var(--mn);font-size:10.5px;color:#8b949e;border-bottom:1px solid rgba(255,255,255,.08);flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.term-log{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px 10px;font-family:var(--mn);font-size:11px;line-height:1.55;color:#c9d1d9;white-space:pre-wrap;word-break:break-word}
 .tabbar{display:flex;gap:6px;padding:6px 0;overflow-x:auto;flex-shrink:0;-webkit-overflow-scrolling:touch;scrollbar-width:none}
 .tabbar::-webkit-scrollbar{display:none}
 .tabpill{display:flex;align-items:center;gap:6px;background:var(--up);border-radius:14px;padding:6px 8px 6px 12px;font-size:12px;color:var(--mu);cursor:pointer;white-space:nowrap;flex-shrink:0;max-width:160px;transition:background .15s,color .15s}
@@ -287,7 +289,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.139</span></span>
+      <span class="wm">ai-router <span>v5.140</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -296,16 +298,17 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
       <button class="ib" id="projectsBtn" title="Saved chats">&#128193;</button>
     </div>
   </header>
-  <div class="sbrow">
-    <button class="sb" id="systemToggle">
-      <span class="sd" id="systemDot"></span>
-      <span class="sl" id="activePromptName">System prompt</span>
-      <span class="sa">&#8250;</span>
-    </button>
-    <button class="ib hidden" id="terminalBtn" title="Coding terminal - live log of repo actions, separate from the chat" style="font-family:var(--mn);font-size:13px;flex-shrink:0">&gt;_</button>
-  </div>
+  <button class="sb" id="systemToggle">
+    <span class="sd" id="systemDot"></span>
+    <span class="sl" id="activePromptName">System prompt</span>
+    <span class="sa">&#8250;</span>
+  </button>
   <div class="tabbar hidden" id="tabBar"></div>
   <div class="chat" id="chat"><div class="es" id="emptyState"><div class="es-icon">🤖</div><div class="es-title">I'm your Overseer.</div><div class="es-sub">Tell me what you need — I'll pick the right model, use your tools, and get it done.</div></div></div>
+  <div class="term-panel hidden" id="terminalPanel">
+    <div class="term-head">&gt;_ Terminal <span style="opacity:.7">&#8212; live repo activity, separate from chat</span></div>
+    <div class="term-log" id="terminalLog"><div id="terminalPlaceholder" style="color:#6e7681">No repo activity yet - once the coding agent reads, writes, or lists files, it shows up here.</div></div>
+  </div>
   <div class="ob hidden" id="overseerBar">
     <span class="obd" id="overseerBarDot"></span>
     <span id="overseerBarText">Overseer monitoring</span>
@@ -473,13 +476,6 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   </div>
 </div></div>
 
-<div class="modal hidden" id="terminalModal"><div class="sheet">
-  <div class="sh"><span>&gt;_ Terminal</span><button class="sc" id="closeTerminalModal">&#10005;</button></div>
-  <div class="sbody">
-    <p style="color:var(--mu);font-size:12px;line-height:1.5;margin:0 0 10px">A live log of what the coding agent actually reads, writes, and runs against your repo - separate from the conversational summary in chat. Cleared on reload.</p>
-    <div id="terminalLog" style="background:#0d1117;color:#c9d1d9;font-family:var(--mn);font-size:12px;line-height:1.6;padding:12px;border-radius:8px;min-height:200px;max-height:60vh;overflow-y:auto;white-space:pre-wrap;word-break:break-word"></div>
-  </div>
-</div></div>
 
 <div class="modal hidden" id="githubModal"><div class="sheet">
   <div class="sh"><span>Connect GitHub Repo</span><button class="sc" id="closeGithubModal">&#10005;</button></div>
@@ -589,7 +585,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.139</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.140</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -2926,34 +2922,32 @@ function appendTerminalLog(entry){
   entry.ts=Date.now();
   codingTerminalLog.push(entry);
   if(codingTerminalLog.length>CODING_TERMINAL_LOG_MAX)codingTerminalLog.shift();
-  if(!document.getElementById("terminalModal").classList.contains("hidden"))renderTerminalEntry(entry);
-  updateTerminalBtnVisibility();
+  renderTerminalEntry(entry);
+  updateTerminalPanelVisibility();
 }
-function updateTerminalBtnVisibility(){
-  document.getElementById("terminalBtn").classList.toggle("hidden",!(codingModeActive||codingTerminalLog.length>0));
+/* The panel is always in the DOM (no button/modal to open it) - only its
+   visibility toggles, based on whether it's actually relevant right now:
+   the active tab is a Coding tab, or repo activity already happened this
+   session (so switching away from a Coding tab doesn't hide history the
+   user was just looking at). */
+function updateTerminalPanelVisibility(){
+  document.getElementById("terminalPanel").classList.toggle("hidden",!(codingModeActive||codingTerminalLog.length>0));
 }
 function renderTerminalEntry(entry){
   var log=document.getElementById("terminalLog");
+  var placeholder=document.getElementById("terminalPlaceholder");
+  if(placeholder)placeholder.remove();
   var line=document.createElement("div");
   if(entry.kind==="call"){line.innerHTML='<span style="color:#8b8cf7">$</span> '+esc(entry.text);line.style.marginTop="10px";}
   else if(entry.kind==="ok"){line.innerHTML='<span style="color:#3fb950">✓</span> '+esc(entry.text);}
   else if(entry.kind==="error"){line.innerHTML='<span style="color:#f85149">✗</span> '+esc(entry.text);}
   else if(entry.kind==="diff"){
-    line.style.cssText="margin:4px 0 2px 14px;padding:8px;background:rgba(255,255,255,.04);border-radius:4px;max-height:240px;overflow:auto";
+    line.style.cssText="margin:4px 0 2px 14px;padding:8px;background:rgba(255,255,255,.04);border-radius:4px;max-height:150px;overflow:auto";
     var diffText=entry.text.length>4000?entry.text.slice(0,4000)+"\n… ("+(entry.text.length-4000)+" more characters)":entry.text;
     line.textContent=diffText;
   }
   log.appendChild(line);
   log.scrollTop=log.scrollHeight;
-}
-function renderTerminalLog(){
-  var log=document.getElementById("terminalLog");
-  log.innerHTML="";
-  if(!codingTerminalLog.length){
-    log.innerHTML='<div style="color:#6e7681">No repo activity yet - once the coding agent reads, writes, or lists files, it shows up here.</div>';
-    return;
-  }
-  codingTerminalLog.forEach(renderTerminalEntry);
 }
 async function executeRepoTool(toolName,toolInput){
   appendTerminalLog({kind:"call",text:formatToolCallLine(toolName,toolInput)});
@@ -4160,7 +4154,7 @@ function applyTabAsLiveState(t){
    whichever of refreshPL/setWprojPromptBadge is actually current, since
    both now prepend the Coding prefix themselves. */
 function updateCodingModeUI(){
-  updateTerminalBtnVisibility();
+  updateTerminalPanelVisibility();
   if(activeWProjId){
     var p=wproj.find(function(x){return x.id===activeWProjId;});
     if(p){setWprojPromptBadge(p);return;}
@@ -5620,8 +5614,6 @@ document.getElementById("overseerChatInput").addEventListener("keydown",function
 });
 document.getElementById("overseerChatInput").addEventListener("input",function(){this.style.height="auto";this.style.height=Math.min(this.scrollHeight,120)+"px";});
 bindM("overseerChatModal","closeOverseerChatModal");
-document.getElementById("terminalBtn").addEventListener("click",function(){renderTerminalLog();openModal("terminalModal");});
-bindM("terminalModal","closeTerminalModal");
 /* Tap = quick ON/OFF toggle so Overseer can be gotten out of the way fast
    mid-conversation. Long-press (500ms) = open the full report + strategy
    chat, same idea as the old tap-only report-only behavior. Covers both
