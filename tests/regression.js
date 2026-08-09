@@ -47,6 +47,9 @@
      answered them too
    - repo/coding work stays conversational in the transcript instead of
      dumping raw tool-status chatter into the main chat
+   - a separate Terminal panel logs every actual repo read/write/list/run
+     (the real tool call, its outcome, and written file content) as it
+     happens, independent of the conversational summary in chat
    - write_file tool never defaults to main/master; the approved branch is
      what actually reaches the GitHub ops worker
    - merge_branch tool requires its own dedicated approval dialog before
@@ -1284,6 +1287,23 @@ function assert(cond, label) {
     return last ? !!last.parentElement.querySelector('button') : false;
   });
   assert(continueBtnAfterWrite, 'a Continue button appears after the step instead of automatically starting another round');
+
+  console.log('\n-- the Terminal panel logs the actual write_file call, result, and content separately from the chat --');
+  // A real user asked for a live view of what's actually being read/
+  // written, distinct from the conversational summary in chat bubbles -
+  // the terminal button should appear once repo activity has happened,
+  // and its log (a completely separate DOM tree from #chat) should show
+  // the tool call, its outcome, and the real file content.
+  const terminalBtnVisibleAfterWrite = await page.evaluate(() => !document.getElementById('terminalBtn').classList.contains('hidden'));
+  assert(terminalBtnVisibleAfterWrite, 'the Terminal button becomes visible once a repo write has actually happened');
+  await page.click('#terminalBtn'); await page.waitForTimeout(200);
+  const terminalLogText = await page.evaluate(() => document.getElementById('terminalLog').textContent);
+  assert(terminalLogText.indexOf('write_file regtest.txt') >= 0, `the terminal log shows the actual write_file call (got: ${terminalLogText.slice(0, 300)})`);
+  assert(terminalLogText.indexOf('committed regtest') >= 0, `the terminal log shows the commit result (got: ${terminalLogText.slice(0, 300)})`);
+  assert(terminalLogText.indexOf('hello world') >= 0, 'the terminal log shows the actual file content that was written, not just a summary');
+  const chatTextHasNoTerminalMarkup = await page.evaluate(() => document.getElementById('chat').textContent.indexOf('$ write_file') < 0);
+  assert(chatTextHasNoTerminalMarkup, 'the terminal-style log lives in its own panel, not dumped into the chat transcript');
+  await page.click('#closeTerminalModal'); await page.waitForTimeout(150);
 
   console.log('\n-- merge_branch tool requires its own approval dialog, and the approved branch/op reach the worker --');
   // merge_branch touches the repo's actual default branch - a materially
