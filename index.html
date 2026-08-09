@@ -68,8 +68,14 @@ header{display:flex;align-items:center;justify-content:space-between;padding:cal
 .tabpill.act{background:rgba(139,140,247,.18);color:var(--ac)}
 .tabpill .tpt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px}
 .tabpill .tpx{color:var(--mu);font-size:14px;line-height:1;padding:0 2px;border-radius:50%;flex-shrink:0}
-.tabpill .tpx:hover{color:var(--er)}
-.tabpill.act .tpx:hover{color:var(--er)}
+/* Scoped to devices that actually support hover - on touch, :hover has no
+   real "pointer left" event to clear it, so a tap could leave the X stuck
+   red-looking with no visible reason, easily mistaken for "it's broken"
+   even when the tap's actual close action worked fine. */
+@media (hover:hover) and (pointer:fine){
+  .tabpill .tpx:hover{color:var(--er)}
+  .tabpill.act .tpx:hover{color:var(--er)}
+}
 .catchips{display:flex;gap:6px;padding:10px 16px 0;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;flex-shrink:0}
 .catchips::-webkit-scrollbar{display:none}
 .catchip{flex-shrink:0;background:var(--up);border:none;border-radius:14px;padding:6px 12px;font-size:12px;color:var(--mu);cursor:pointer;white-space:nowrap}
@@ -281,7 +287,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.138</span></span>
+      <span class="wm">ai-router <span>v5.139</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -583,7 +589,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.138</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.139</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -4229,8 +4235,19 @@ function applyCodingEmptyStateText(){
   if(esSub)esSub.textContent=getCodingTabNeedsText();
 }
 function closeTab(index){
-  if(openTabs.length<=1||sending)return;
+  if(openTabs.length<=1)return;
   var closingActive=(index===activeTabIndex);
+  /* sending only ever reflects the ACTIVE tab's in-flight request - it used
+     to block closing ANY tab, so tapping X on a background tab while the
+     current one was mid-response silently did nothing (no toast, nothing
+     in the console), which just looked broken. Only closing the active
+     tab out from under its own in-flight request is actually unsafe. */
+  if(closingActive&&sending){
+    showToast("Finish or stop the current response before closing this tab.");
+    return;
+  }
+  var closedTitle=openTabs[index].title||"New chat";
+  if(!closingActive)syncActiveTabFromLiveState();
   openTabs.splice(index,1);
   if(closingActive){
     var newIndex=Math.min(index,openTabs.length-1);
@@ -4241,6 +4258,11 @@ function closeTab(index){
   }
   renderTabBar();
   saveTabsToStorage();
+  /* The tab bar itself disappears once only one tab is left (see
+     renderTabBar) - with no confirmation of what just happened, that can
+     read as "it removed everything" instead of "you closed down to your
+     last tab, which is still right here." */
+  showToast("Closed \""+closedTitle+"\" - "+openTabs.length+" tab"+(openTabs.length===1?"":"s")+" left.");
 }
 function initTabs(){
   var raw=null;
