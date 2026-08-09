@@ -280,7 +280,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.134</span></span>
+      <span class="wm">ai-router <span>v5.135</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -571,7 +571,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.134</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.135</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1632,7 +1632,22 @@ function analyzeTask(text){
      agent, so a false positive here doesn't just mildly bias model
      choice, it silently hijacks an unrelated conversation. */
   githubKeywords.forEach(function(k){if(new RegExp("\\b"+k.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"\\b").test(lower))tasks.github+=2;});
-  codeKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.code+=1;});
+  /* Same word-boundary reasoning as githubKeywords above - a plain
+     indexOf let "react" match inside "reacted"/"overreacted"/"reaction",
+     "code" match inside "decode"/"encode"/"zip code"/"Unicode", "java"
+     match inside "javascript" (already its own separate hit) - ordinary
+     English sentences with zero coding content were silently scoring
+     tasks.code>0 and (via the Overseer chat's own gate below) handing out
+     read_file/write_file/merge_branch for messages that never mentioned
+     code at all. "c++" is the one entry that isn't bounded by word
+     characters on both ends (trailing "+" is non-word, so a trailing \b
+     would never match), so it keeps plain substring matching - a rare,
+     distinctive enough token that this doesn't reopen the same problem. */
+  codeKeywords.forEach(function(k){
+    var esc=k.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+    var pattern=(/^\w/.test(k)&&/\w$/.test(k))?("\\b"+esc+"\\b"):esc;
+    if(new RegExp(pattern).test(lower))tasks.code+=1;
+  });
   writeKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.write+=1;});
   reasonKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.reason+=1;});
   analyzeKeywords.forEach(function(k){if(lower.indexOf(k)>=0)tasks.analyze+=1;});
@@ -5334,7 +5349,15 @@ async function sendOverseerChatMsg(){
      unrelated one ("please write a file" -> "brand new app idea, thoughts?")
      is a normal, expected pattern here, not a continuation - a sticky
      window would hand out repo tools for the wrong question. */
-  var overseerRepoRelevant=overseerTaskSignals.github>0||overseerTaskSignals.code>0;
+  /* github hits are already a strong signal (each real match scores +2 -
+     see analyzeTask), but code hits are +1 each from a basket of individual
+     keywords ("fix","error","function"...) any one of which can turn up
+     once in an otherwise unrelated message. Requiring at least 2 there
+     means a single incidental word isn't enough on its own to hand out
+     read_file/write_file/merge_branch in this per-message-only gate - a
+     genuinely code-focused message almost always trips more than one of
+     these anyway ("there's a bug in this function" -> bug+function). */
+  var overseerRepoRelevant=overseerTaskSignals.github>0||overseerTaskSignals.code>=2;
   var overseerHasRepoTools=overseerHasTools&&hasCodingAgentAccess()&&overseerRepoRelevant;
   var sys="You are the Overseer, a strategic advisor built into this app. The user has stepped out of their main conversation with the AI model to talk strategy with you directly - about approach, what to try next, or whether they're stuck. Be direct and concise. Base advice on the actual context below, not generic platitudes.\n\n"+
     (overseerPersonality?("Personality: "+overseerPersonality+" - let this come through naturally in your tone and word choice, without announcing or explaining it.\n\n"):"")+
