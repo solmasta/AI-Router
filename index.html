@@ -280,7 +280,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.135</span></span>
+      <span class="wm">ai-router <span>v5.137</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -571,7 +571,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.135</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.137</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1561,7 +1561,7 @@ function undoClear(){
   if(def){setModel(def);}else{currentModel={id:undoData.modelId,label:undoData.modelLabel||undoData.modelId};document.getElementById("modelBtnLabel").textContent=currentModel.label;document.getElementById("modelBtn").disabled=false;}
   document.getElementById("chat").innerHTML="";
   document.getElementById("emptyState")&&document.getElementById("emptyState").remove();
-  chatHistory.forEach(function(m){appendMsg(m.role,m.content);});
+  chatHistory.forEach(function(m){appendMsg(m.role,m.content,false,m.modelLabel);});
   setTimeout(function(){var c=document.getElementById("chat");c.scrollTop=c.scrollHeight;},100);
   autoSave();updTokenBar();
   undoData=null;
@@ -1590,7 +1590,7 @@ function renderRecent(){
         var def=allModels.find(function(m){return m.id===r.modelId;});
         if(def){setModel(def);}else{currentModel={id:r.modelId,label:r.modelLabel||r.modelId};document.getElementById("modelBtnLabel").textContent=currentModel.label;document.getElementById("modelBtn").disabled=false;}
         document.getElementById("chat").innerHTML="";
-        chatHistory.forEach(function(m){appendMsg(m.role,m.content);});
+        chatHistory.forEach(function(m){appendMsg(m.role,m.content,false,m.modelLabel);});
         setTimeout(function(){var c=document.getElementById("chat");c.scrollTop=c.scrollHeight;},100);
         autoSave();updTokenBar();
         document.getElementById("recentModal").classList.add("hidden");
@@ -2451,7 +2451,10 @@ function showBetterRecommendation(rec,alternates){
     recHtml+='<div style="padding:6px 0">'+esc(rec.reason)+'</div>';
   }
   if(alternates&&alternates.length>0){
-    recHtml+='<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.1);font-size:11px;color:var(--mu)">';
+    /* var(--br), not a hardcoded white-based rgba - a white-tinted divider
+       is only visible against a dark page background, so it disappeared
+       entirely in the light theme. */
+    recHtml+='<div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--br);font-size:11px;color:var(--mu)">';
     recHtml+='<strong>Alternatives:</strong><br>';
     alternates.forEach(function(alt){
       if(alt.type==="model_switch"){recHtml+='• '+esc(alt.model)+' ('+alt.confidence+'%)<br>';}
@@ -3248,9 +3251,29 @@ async function runCodingAgentRound(sessionId){
          user moves on to a different message instead of tapping
          Continue, and ends up flatly contradicting what the coding agent
          just found (e.g. claiming it can't see the repo at all). */
-      chatHistory.push({role:"assistant",content:roundSummary});
+      chatHistory.push({role:"assistant",content:roundSummary,modelLabel:CODING_AGENT_MODEL_LABEL});
       autoSave();
-      if(mySession.autoContinue&&(mySession.autoRoundCount||0)<CODING_AGENT_MAX_AUTO_ROUNDS){
+      /* Auto-continue used to chain blindly up to CODING_AGENT_MAX_AUTO_ROUNDS
+         with no check that each round actually made progress - a tool call
+         that keeps failing the same way (e.g. a token that expired
+         mid-task) produced a wall of near-identical "I couldn't inspect
+         the repository files." bubbles instead of stopping to ask, which
+         is exactly the "duplicate confused retry loop" a real user
+         reported. Comparing this round's tool call + outcome to the
+         previous one catches that without touching the deliberately
+         separate empty-response/fake-tool-call retry caps above. */
+      /* get_test_status is meant to be called repeatedly with the same
+         run_id until the run finishes (its own tool description says so)
+         - an unchanged "still in_progress" status between polls is
+         expected progress-in-waiting, not a stuck loop, so it's excluded
+         from both sides of this check: it never counts as a repeat, and
+         polling doesn't overwrite what the next real step gets compared
+         against. */
+      var isPollingRound=msg.tool_calls.length===1&&msg.tool_calls[0]["function"].name==="get_test_status";
+      var roundSignature=msg.tool_calls.map(function(tc){return tc["function"].name+":"+(tc["function"].arguments||"");}).join("|")+"::"+roundSummary;
+      var isRepeatOfLastRound=!isPollingRound&&mySession.lastRoundSignature===roundSignature;
+      if(!isPollingRound)mySession.lastRoundSignature=roundSignature;
+      if(mySession.autoContinue&&!isRepeatOfLastRound&&(mySession.autoRoundCount||0)<CODING_AGENT_MAX_AUTO_ROUNDS){
         mySession.autoRoundCount=(mySession.autoRoundCount||0)+1;
         var stopBtn=document.createElement("button");
         stopBtn.className="ba";stopBtn.textContent="Stop";
@@ -3259,10 +3282,17 @@ async function runCodingAgentRound(sessionId){
         con.wrap.appendChild(stopBtn);
         runCodingAgentRound(mySession.id);
       }else{
-        /* Either auto-continue was never requested, or a runaway task hit
-           CODING_AGENT_MAX_AUTO_ROUNDS - either way, fall back to the
-           normal one-tap-per-round behavior instead of chaining further
+        /* Either auto-continue was never requested, a runaway task hit
+           CODING_AGENT_MAX_AUTO_ROUNDS, or this round came back identical
+           to the last one - either way, fall back to the normal
+           one-tap-per-round behavior instead of chaining further
            unattended. */
+        if(mySession.autoContinue&&isRepeatOfLastRound){
+          var stuckNote=document.createElement("div");
+          stuckNote.style.cssText="font-size:11.5px;color:var(--mu);margin-top:8px";
+          stuckNote.textContent="This step came back the same as the last one, so I paused instead of repeating it automatically.";
+          con.wrap.appendChild(stuckNote);
+        }
         var contBtn=document.createElement("button");
         contBtn.className="cta";contBtn.textContent="Continue";
         contBtn.style.cssText="margin-top:8px";
@@ -3302,7 +3332,7 @@ async function runCodingAgentRound(sessionId){
         return runCodingAgentRound(mySession.id);
       }
       con.body.innerHTML=renderMd(finalText||"(no response)");
-      chatHistory.push({role:"assistant",content:finalText});
+      chatHistory.push({role:"assistant",content:finalText,modelLabel:CODING_AGENT_MODEL_LABEL});
       autoSave();
       /* Whether the model happens to call a tool or just replies in plain
          text this round isn't a reliable "I'm truly done" signal - it's
@@ -3736,7 +3766,7 @@ function loadConv(conv){
   chatHistory=conv.messages.map(function(m){return{role:m.role,content:m.content};});
   document.getElementById("chat").innerHTML="";
   var def=allModels.find(function(m){return m.id===conv.modelId;});if(def)setModel(def);
-  chatHistory.forEach(function(m){appendMsg(m.role,m.content);});
+  chatHistory.forEach(function(m){appendMsg(m.role,m.content,false,m.modelLabel);});
   closeModal("convsModal");updTokenBar();
 }
 function openProjEditor(id){
@@ -3853,7 +3883,7 @@ function loadWprojConv(conv,p){
   document.getElementById("chat").innerHTML="";
   sessionId=conv.sessionId||Date.now().toString();
   var def=allModels.find(function(m){return m.id===conv.modelId;});if(def)setModel(def);
-  chatHistory.forEach(function(m){appendMsg(m.role,m.content);});
+  chatHistory.forEach(function(m){appendMsg(m.role,m.content,false,m.modelLabel);});
   activeWProjId=p.id;
   setWprojPromptBadge(p);
   closeModal("wprojDetail");updTokenBar();
@@ -3973,7 +4003,7 @@ function loadAutoSave(){
     var def=allModels.find(function(m){return m.id===saved.modelId;});
     if(def){setModel(def);}else{currentModel={id:saved.modelId,label:saved.modelLabel||saved.modelId};document.getElementById("modelBtnLabel").textContent=currentModel.label;document.getElementById("modelBtn").disabled=false;}
     chatHistory=saved.messages.map(function(m){return{role:m.role,content:m.content};});
-    chatHistory.forEach(function(m){appendMsg(m.role,m.content);});
+    chatHistory.forEach(function(m){appendMsg(m.role,m.content,false,m.modelLabel);});
     setTimeout(function(){var c=document.getElementById("chat");c.scrollTop=c.scrollHeight;},100);
     updTokenBar();
   }catch(e){}
@@ -4000,7 +4030,7 @@ function saveTabsToStorage(){
 function renderChatFromHistory(hist){
   document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">🤖</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';
   chatHistory=[];
-  (hist||[]).forEach(function(m){chatHistory.push({role:m.role,content:m.content});appendMsg(m.role,m.content);});
+  (hist||[]).forEach(function(m){chatHistory.push({role:m.role,content:m.content,modelLabel:m.modelLabel});appendMsg(m.role,m.content,false,m.modelLabel);});
   setTimeout(function(){var c=document.getElementById("chat");c.scrollTop=c.scrollHeight;},50);
   updTokenBar();
 }
@@ -5578,7 +5608,7 @@ document.getElementById("clearFavesBtn").addEventListener("click",function(){fav
 function hideEmpty(){var el=document.getElementById("emptyState");if(el)el.remove();}
 function scrollBot(){var c=document.getElementById("chat");if(c.scrollHeight-c.scrollTop-c.clientHeight<200)c.scrollTop=c.scrollHeight;}
 
-function appendMsg(role,content,streaming){
+function appendMsg(role,content,streaming,modelLabel){
   hideEmpty();
   var chat=document.getElementById("chat");
   var wrap=document.createElement("div");wrap.className="msg "+(role==="user"?"mu":"ma3");
@@ -5598,8 +5628,21 @@ function appendMsg(role,content,streaming){
   var lspan=document.createElement("span");lspan.textContent=role==="user"?"You":"Overseer";
   label.appendChild(lspan);
   if(role==="assistant"){
-    var mtag=document.createElement("span");mtag.className="modelTag";mtag.textContent=currentModel.label;
-    label.appendChild(mtag);
+    /* modelLabel lets a caller say which model actually produced this
+       specific message, instead of always painting whatever currentModel
+       happens to be right now - without it, re-rendering history (tab
+       switch, reload, regen) relabeled every past reply with today's
+       active model, and a canned guard message (no model involved at all)
+       still showed up tagged with one. undefined (param omitted) keeps
+       the old behavior for the live streaming bubble, created before its
+       eventual model is settled, and for any not-yet-updated caller;
+       explicit null means "no tag" (a canned message, not a model reply);
+       any other string is shown as-is. */
+    var tagText=modelLabel===undefined?currentModel.label:modelLabel;
+    if(tagText){
+      var mtag=document.createElement("span");mtag.className="modelTag";mtag.textContent=tagText;
+      label.appendChild(mtag);
+    }
   }
   var body=document.createElement("div");body.className="body";
   if(streaming){body.innerHTML='<span class="cur">\u2587</span>';wrap.classList.add("ma2");}
@@ -5863,8 +5906,12 @@ async function doSendRequest(userContent,isRegen,ap){
      the dedicated tab feel like it does nothing. */
   if(!hasImgInContent&&codingModeActive&&!hasCodingAgentAccess()){
     var codingGuardText=getCodingGuardText();
-    appendMsg("assistant",codingGuardText);
-    chatHistory.push({role:"assistant",content:codingGuardText});
+    /* This is a canned client-side string, not a model reply - tagging it
+       with whatever the main chat's currentModel happens to be (e.g.
+       "Mistral Small 3.2 24B") made it look like that model answered
+       inside the Coding tab when no model was ever actually involved. */
+    appendMsg("assistant",codingGuardText,false,null);
+    chatHistory.push({role:"assistant",content:codingGuardText,modelLabel:null});
     autoSave();
     sending=false;document.getElementById("sendBtn").disabled=false;document.getElementById("sendBtn").textContent="Send";document.getElementById("sendBtn").style.background="";
     return;
@@ -6036,7 +6083,7 @@ async function doSendRequest(userContent,isRegen,ap){
 
     asstMsg.wrap.classList.remove("ma2");
     asstMsg.body.innerHTML=renderMd(full||(isRegen?"(no response)":triedFallback?"\u26a0\ufe0f No response from "+esc(currentModel.label)+" either - try rephrasing or pick a different model.":"(empty response)"));
-    chatHistory.push({role:"assistant",content:full});
+    chatHistory.push({role:"assistant",content:full,modelLabel:currentModel.label});
     showNextStepPrompt();
     memSuggestions.forEach(function(t){showMemorySuggestion(t);});
     /* Offer to save an ordinary conversation as a reusable Work Project
@@ -6059,7 +6106,7 @@ async function doSendRequest(userContent,isRegen,ap){
       /* User stopped generation - keep partial response if any */
       if(full){
         asstMsg.body.innerHTML=renderMd(full);
-        chatHistory.push({role:"assistant",content:full});
+        chatHistory.push({role:"assistant",content:full,modelLabel:currentModel.label});
         autoSave();
       }else{
         asstMsg.wrap.remove();
@@ -6105,7 +6152,7 @@ async function doSendRequest(userContent,isRegen,ap){
           speakText(full);
           asstMsg.wrap.classList.remove("ma2");
           asstMsg.body.innerHTML=renderMd(full||"(empty response)");
-          chatHistory.push({role:"assistant",content:full});
+          chatHistory.push({role:"assistant",content:full,modelLabel:currentModel.label});
           showNextStepPrompt();
           memSuggestionsAfterErrorFallback.forEach(function(t){showMemorySuggestion(t);});
           autoSave();responseCount++;if(responseCount%5===0)autoSnap();saveChatToActiveWproj();updTokenBar();

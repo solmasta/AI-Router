@@ -37,6 +37,14 @@
      its findings in real conversation history, so a later unrelated
      message doesn't have the main chat model contradicting what the
      coding agent already found
+   - auto-continue pauses (with an explanatory note, falling back to a
+     manual Continue button) instead of repeating an identical failing
+     tool call round after round all the way to the auto-round cap
+   - each reply's model-name tag is stored with that specific message, not
+     repainted with whatever model is active now - a canned guard message
+     (no model involved) shows no tag at all, and switching models plus
+     reloading doesn't relabel earlier replies as if the new model had
+     answered them too
    - repo/coding work stays conversational in the transcript instead of
      dumping raw tool-status chatter into the main chat
    - write_file tool never defaults to main/master; the approved branch is
@@ -669,6 +677,16 @@ function assert(cond, label) {
   const codingAuthGuardText = await page.evaluate(() => document.getElementById('chat').textContent);
   assert(codingAuthGuardText.indexOf("isn't authenticated yet") >= 0, `sending in a Coding tab with a saved-but-unauthenticated repo shows an auth-specific guard (got: ${codingAuthGuardText.slice(-300)})`);
   assert(codingAuthGuardText.indexOf('needs a connected repo') < 0, 'the saved-but-unauthenticated Coding-tab guard no longer incorrectly claims that no repo is connected');
+  // This guard text is a canned client-side string, not a model reply - it
+  // must not carry a model-name tag (previously showed whatever the main
+  // chat's currentModel happened to be, e.g. "Mistral Small 3.2 24B",
+  // making it look like that model answered inside the Coding tab).
+  const guardBubbleHasModelTag = await page.evaluate(() => {
+    const bubbles = document.querySelectorAll('#chat .msg.ma3');
+    const last = bubbles[bubbles.length - 1];
+    return !!(last && last.querySelector('.modelTag'));
+  });
+  assert(!guardBubbleHasModelTag, 'the saved-but-unauthenticated Coding-tab guard message has no model-name tag, since no model actually produced it');
   await page.click('#settingsBtn'); await page.waitForTimeout(150);
   await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
   await page.fill('#ghWriteSecretInput', 'regtest-write-secret');
@@ -1667,6 +1685,52 @@ function assert(cond, label) {
   assert(autoContinueRoundCount === 3, `all 3 rounds fired automatically with no Continue click (got ${autoContinueRoundCount} rounds)`);
   assert(chatTextAfterAutoContinue.indexOf('regtest auto-continue done') >= 0, "the final round's plain-text answer renders once the agent stops calling tools on its own");
   assert(chatTextAfterAutoContinue.indexOf('Stop') >= 0, 'a Stop control is offered while auto-continuing, in case the user wants to interrupt it');
+
+  console.log('\n-- auto-continue pauses instead of repeating a stuck round forever --');
+  // A real user report: a tool call that keeps failing the same way
+  // produced a wall of near-identical "I couldn't inspect the repository
+  // files." bubbles instead of stopping - auto-continue used to just keep
+  // chaining up to CODING_AGENT_MAX_AUTO_ROUNDS with no check that a round
+  // actually made progress. Two consecutive rounds with the same tool call
+  // and the same (failing) outcome must pause auto-continue and fall back
+  // to a manual Continue button instead of repeating a third time.
+  let stuckRoundCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        stuckRoundCount++;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', tool_calls: [{ id: 'regtest_stuck_' + stuckRoundCount, type: 'function', function: { name: 'list_files', arguments: JSON.stringify({}) } }] } }] }),
+        });
+        return;
+      }
+      if (req.url().indexOf('github-ops-worker') >= 0) {
+        // Same failure every round (deterministic, unlike this sandbox's
+        // real network failures) so the round's outcome text is identical
+        // each time - exactly the "stuck" case this test is checking for.
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, error: 'regtest simulated repo failure' }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please go through the whole repo on your own without doing one by one');
+  let chatTextWhileStuck = '';
+  for (let i = 0; i < 60; i++) {
+    chatTextWhileStuck = await page.evaluate(() => document.getElementById('chat').textContent);
+    if (chatTextWhileStuck.indexOf('paused instead of repeating it automatically') >= 0) break;
+    await page.waitForTimeout(200);
+  }
+  await page.unroute('**/*');
+  assert(stuckRoundCount <= 3, `a round repeating the exact same failing tool call pauses auto-continue within a couple of rounds instead of chaining all the way to the 25-round cap (got ${stuckRoundCount} rounds)`);
+  assert(chatTextWhileStuck.indexOf('paused instead of repeating it automatically') >= 0, `a note explains why auto-continue paused instead of just silently offering Continue (got: ${chatTextWhileStuck.slice(-300)})`);
+  const stuckContinueVisible = await page.evaluate(() => !!document.querySelector('#chat .msg.ma3 button.cta'));
+  assert(stuckContinueVisible, 'a manual Continue button is still offered after pausing, so the user can push through if they want to');
 
   console.log('\n-- a coding-agent round that comes back genuinely empty gets one automatic retry too --');
   // The dedicated coding agent now sees plain conversational messages too
@@ -2698,6 +2762,31 @@ function assert(cond, label) {
   assert(overseerLabelInfo.primary === 'Overseer', `the reply bubble's primary label reads "Overseer" (got "${overseerLabelInfo.primary}")`);
   assert(!!overseerLabelInfo.modelTagText, 'a secondary model-name indicator is present on the reply bubble');
   assert(overseerLabelInfo.modelTagText === overseerLabelInfo.currentModelLabel, `the model-name indicator matches the model that actually answered (got "${overseerLabelInfo.modelTagText}" vs active "${overseerLabelInfo.currentModelLabel}")`);
+
+  console.log('\n-- a reply\'s model-name tag survives a later model switch + reload instead of getting relabeled with today\'s active model --');
+  // appendMsg used to always paint currentModel.label onto every assistant
+  // bubble, including on a full re-render from chatHistory (tab switch,
+  // reload, regen) - so switching models later silently relabeled every
+  // earlier reply as if the NEW model had answered them too. Each
+  // chatHistory entry now carries its own modelLabel from when it was
+  // actually created; re-rendering must use that instead of the live model.
+  const modelBeforeSwitch = overseerLabelInfo.currentModelLabel;
+  await page.click('#modelBtn'); await page.waitForTimeout(300);
+  const otherModelIndex = await page.evaluate((exclude) => {
+    const cards = Array.from(document.querySelectorAll('#modelList .mc'));
+    return cards.findIndex((c) => (c.querySelector('.mcl') || {}).textContent !== exclude);
+  }, modelBeforeSwitch);
+  assert(otherModelIndex >= 0, 'test setup: found a different model to switch to in the picker');
+  const otherModelCard = page.locator('#modelList .mc').nth(otherModelIndex);
+  const modelAfterSwitch = (await otherModelCard.locator('.mcl').textContent()).trim();
+  await otherModelCard.click();
+  await page.waitForTimeout(300);
+  const modelBtnLabelAfterSwitch = await page.textContent('#modelBtnLabel');
+  assert(modelBtnLabelAfterSwitch === modelAfterSwitch, `test setup: the model picker actually switched the active model (got "${modelBtnLabelAfterSwitch}", expected "${modelAfterSwitch}")`);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(700);
+  const modelTagsAfterReload = await page.evaluate(() => Array.from(document.querySelectorAll('#chat .msg.ma3 .modelTag')).map((el) => el.textContent));
+  assert(modelTagsAfterReload.indexOf(modelBeforeSwitch) >= 0, `the earlier reply's model-name tag still reads "${modelBeforeSwitch}" after reload, not relabeled with the now-active "${modelAfterSwitch}" (got tags: ${JSON.stringify(modelTagsAfterReload)})`);
 
   console.log('\n-- the Overseer\'s quality/stuck tracking reacts to what the model actually said, not just reply length --');
   // A long, fluent refusal used to score "excellent" purely for being
