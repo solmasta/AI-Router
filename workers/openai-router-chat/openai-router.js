@@ -2,6 +2,12 @@ const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
   "Access-Control-Allow-Headers": "Content-Type, X-App-Secret",
+  // Response headers are invisible to client-side fetch() on a cross-origin
+  // response unless explicitly exposed here - Retry-After isn't on the
+  // browser's CORS-safelisted response header list, so without this the
+  // coding agent's 429-retry countdown (index.html) can never actually read
+  // DeepInfra's real Retry-After value no matter what upstream sends.
+  "Access-Control-Expose-Headers": "Retry-After",
 };
 
 // Shared-secret check so a bare Worker URL (visible in the page source) can't
@@ -313,16 +319,24 @@ export default {
       body: JSON.stringify(body),
     });
 
+    // Reconstructing a fresh Response below (rather than just returning
+    // `upstream` as-is) otherwise silently drops every upstream header,
+    // including Retry-After on a 429 - the coding agent's retry countdown
+    // (index.html) has nothing real to read without this, and falls back to
+    // a guessed default no matter what DeepInfra actually sent.
+    const retryAfter = upstream.headers.get("Retry-After");
+    const retryAfterHeaders = retryAfter ? { "Retry-After": retryAfter } : {};
+
     if (body.stream) {
       return new Response(upstream.body, {
         status: upstream.status,
-        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", ...CORS }
+        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", ...retryAfterHeaders, ...CORS }
       });
     }
 
     return new Response(await upstream.text(), {
       status: upstream.status,
-      headers: { "Content-Type": "application/json", ...CORS }
+      headers: { "Content-Type": "application/json", ...retryAfterHeaders, ...CORS }
     });
   },
 };

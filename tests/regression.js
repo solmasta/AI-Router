@@ -1923,7 +1923,23 @@ function assert(cond, label) {
     }
     await route.continue();
   });
-  await sendMsg('please go through every file in the repo on your own without doing one by one, and let me know when you are done');
+  // Deliberately not using the sendMsg() helper here (fill+click+wait for
+  // "Send" to reappear) - the whole point of this check is to look at
+  // Send's state WHILE the chain is still mid-flight, between round 1 and
+  // round 2. The recursive round-2/round-3 calls used to be fire-and-forget
+  // (no return/await), so the promise driving doSendRequest's own
+  // `finally{sending=false...}` resolved after just round 1, and Send
+  // silently flipped back to its idle label while the agent kept working
+  // in the background - nothing then stopped a second message from being
+  // sent mid-chain, doubling up concurrent requests against the same API
+  // (traced back from a real report of the coding agent getting stuck in a
+  // repeating "Rate-limited... tap Retry" loop). Send must stay in its
+  // busy state for the whole chain now, not just the first round.
+  await page.fill('#prompt', 'please go through every file in the repo on your own without doing one by one, and let me know when you are done');
+  await page.click('#sendBtn');
+  await page.waitForTimeout(300);
+  const sendBtnTextMidChain = await page.textContent('#sendBtn');
+  assert(sendBtnTextMidChain.indexOf('Send') === -1, `Send stays in its busy state mid-chain (after round 1, before round 2 has fired) instead of falsely reporting idle (got "${sendBtnTextMidChain}", rounds so far: ${autoContinueRoundCount})`);
   let chatTextAfterAutoContinue = '';
   for (let i = 0; i < 60; i++) {
     chatTextAfterAutoContinue = await page.evaluate(() => document.getElementById('chat').textContent);
@@ -1931,6 +1947,9 @@ function assert(cond, label) {
     await page.waitForTimeout(200);
   }
   await page.unroute('**/*');
+  await waitForSendDone();
+  const sendBtnTextAfterChainDone = await page.textContent('#sendBtn');
+  assert(sendBtnTextAfterChainDone.indexOf('Send') >= 0, `Send returns to idle only once the whole auto-continue chain actually finishes (got "${sendBtnTextAfterChainDone}")`);
   assert(autoContinueRoundCount === 3, `all 3 rounds fired automatically with no Continue click (got ${autoContinueRoundCount} rounds)`);
   assert(chatTextAfterAutoContinue.indexOf('regtest auto-continue done') >= 0, "the final round's plain-text answer renders once the agent stops calling tools on its own");
   assert(chatTextAfterAutoContinue.indexOf('Stop') >= 0, 'a Stop control is offered while auto-continuing, in case the user wants to interrupt it');
@@ -2262,6 +2281,62 @@ function assert(cond, label) {
     await page.unroute('**/*');
     assert(chatTextAfterTransientRetry.indexOf('regtest recovered after HTTP ' + statusToTest) >= 0, `tapping Retry after HTTP ${statusToTest} re-enters the same session and the real answer renders once it succeeds`);
   }
+
+  console.log('\n-- a 429 from the coding agent counts down before Retry is tappable, honoring Retry-After --');
+  // Retry used to be tappable the instant a 429 rendered, so mashing it
+  // right away almost always just landed on the same rate limit again -
+  // a real report of this looking like a stuck loop. Retry-After: 2 here
+  // should drive a ~2s disabled countdown before it becomes clickable.
+  // Access-Control-Expose-Headers is required here, matching the real fix
+  // in workers/openai-router-chat/openai-router.js - Retry-After is not on
+  // the browser's CORS-safelisted response header list, so a cross-origin
+  // fetch() (this mock, like the real DI_URL call, is a different origin
+  // than the page) can't read it at all without this being explicitly
+  // exposed, no matter what the server actually sends.
+  let rateLimitRoundCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        rateLimitRoundCount++;
+        if (rateLimitRoundCount === 1) {
+          await route.fulfill({ status: 429, headers: { 'content-type': 'text/plain', 'Retry-After': '2', 'Access-Control-Expose-Headers': 'Retry-After' }, body: 'rate limited' });
+          return;
+        }
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest recovered after 429' } }] }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please check the repo status for rate limiting');
+  const rateLimitRetryBtn = page.locator('#chat .msg.ma3 button:has-text("Retry")').last();
+  await rateLimitRetryBtn.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+  const rateLimitRetryDisabledImmediately = await rateLimitRetryBtn.isDisabled().catch(() => false);
+  assert(rateLimitRetryDisabledImmediately, 'the Retry button starts disabled with a countdown instead of being immediately tappable into the same limit');
+  const rateLimitRetryInitialText = await rateLimitRetryBtn.textContent().catch(() => '');
+  assert(/retry in 2s/i.test(rateLimitRetryInitialText || ''), `the countdown reads the mocked Retry-After: 2 header, not the 6s no-header fallback (got "${rateLimitRetryInitialText}")`);
+  await page.waitForTimeout(1000);
+  const rateLimitRetryStillDisabledAt1s = await rateLimitRetryBtn.isDisabled().catch(() => true);
+  assert(rateLimitRetryStillDisabledAt1s, 'the countdown honors the Retry-After header (2s) instead of enabling immediately');
+  let rateLimitRetryEnabledAfterCountdown = true;
+  for (let i = 0; i < 40; i++) {
+    rateLimitRetryEnabledAfterCountdown = await rateLimitRetryBtn.isDisabled().catch(() => true);
+    if (!rateLimitRetryEnabledAfterCountdown) break;
+    await page.waitForTimeout(200);
+  }
+  assert(!rateLimitRetryEnabledAfterCountdown, 'Retry becomes tappable once the Retry-After countdown actually elapses');
+  await rateLimitRetryBtn.click();
+  let chatTextAfterRateLimitRetry = '';
+  for (let i = 0; i < 40; i++) {
+    chatTextAfterRateLimitRetry = await page.evaluate(() => document.getElementById('chat').textContent);
+    if (chatTextAfterRateLimitRetry.indexOf('regtest recovered after 429') >= 0) break;
+    await page.waitForTimeout(200);
+  }
+  await page.unroute('**/*');
+  assert(chatTextAfterRateLimitRetry.indexOf('regtest recovered after 429') >= 0, 'tapping Retry after the countdown re-enters the same session and the real answer renders once it succeeds');
 
   console.log('\n-- a GitHub OAuth redirect fallback (#gh_oauth=... in the URL hash) finishes the connection on load --');
   // On mobile/PWA, window.open() for the OAuth popup often doesn't produce
