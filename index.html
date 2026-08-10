@@ -29,6 +29,14 @@ body{background:var(--bg);color:var(--tx);font-family:-apple-system,system-ui,sa
    which trades a few px of space when the toolbar auto-hides for a
    layout that never moves under you. */
 .app{display:flex;flex-direction:column;height:100vh;height:100dvh;height:100svh;max-width:820px;width:100%;margin:0 auto;padding:0 16px}
+/* First thing painted, before any JS runs - plain HTML+CSS with no
+   dependency on the app's own init sequence completing. Faded out (not
+   removed until the transition ends) once init finishes, with a minimum
+   display time so a fast/cached load doesn't just flash it for a few ms. */
+#splashScreen{position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:var(--bg);transition:opacity .4s ease,visibility .4s ease}
+#splashScreen.hide{opacity:0;visibility:hidden;pointer-events:none}
+#splashScreen img{width:128px;height:128px;border-radius:22%;box-shadow:0 8px 40px rgba(80,150,255,.22)}
+#splashScreen .splash-word{font-weight:800;font-size:19px;letter-spacing:2px;color:var(--tx)}
 header{display:flex;align-items:center;justify-content:space-between;padding:calc(13px + env(safe-area-inset-top,0px)) 0 12px;flex-shrink:0;gap:8px}
 .hl{display:flex;align-items:center;gap:8px;min-width:0}
 .wm{font-size:15px;color:var(--tx);flex-shrink:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;letter-spacing:-.01em}
@@ -286,10 +294,11 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
+<div id="splashScreen"><img src="icon-512.png" alt=""><span class="splash-word">AI ROUTER</span></div>
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.140</span></span>
+      <span class="wm">ai-router <span>v5.141</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -585,7 +594,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.140</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.141</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -641,6 +650,24 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 
 <script>
 (function(){
+var splashShownAt=Date.now();
+function hideSplashScreen(){
+  var el=document.getElementById("splashScreen");
+  if(!el)return;
+  /* A minimum display time keeps a fast/cached load from just flashing
+     the splash for a few ms - long enough to actually register as a
+     splash screen, short enough not to feel like a delay. */
+  var minMs=500,elapsed=Date.now()-splashShownAt;
+  setTimeout(function(){
+    el.classList.add("hide");
+    setTimeout(function(){el.remove();},450);
+  },Math.max(0,minMs-elapsed));
+}
+/* Safety net - if something in the init sequence below throws before
+   reaching its own hideSplashScreen() call, this still clears the splash
+   after a few seconds instead of leaving it stuck in front of a broken
+   app with no way to tell what's wrong. */
+setTimeout(hideSplashScreen,5000);
 var DI_URL="https://openai-router-chat.lukedorsett.workers.dev";
 var OR_URL="https://openrouter-worker.lukedorsett.workers.dev";
 var DRIVE_AUTH_URL="https://ai-router-drive.lukedorsett.workers.dev";
@@ -6406,6 +6433,7 @@ loadDocLibrary();
 renderDocLibraryList();
 updateGithubStatus();
 document.getElementById("activeProfileLabel").textContent=activeProfile==="default"?"default":activeProfile;
+hideSplashScreen();
 
 /* If previously connected, silently renew the access_token from the
    stored refresh_token via drive-auth-worker (driveEnsureToken) - a plain
