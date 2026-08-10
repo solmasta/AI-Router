@@ -98,8 +98,14 @@
      actual GitHub repos (fetched directly from GitHub's API with the
      OAuth token - only offered under OAuth, since the legacy write-secret
      path never hands the browser a token to call it with), supports a
-     client-side filter, and picking one fills owner/repo the same way a
-     manual entry would
+     client-side filter, and picking one connects it immediately (no
+     separate Save tap needed - unlike typing owner/name by hand, picking
+     from an actual list already is the confirmation)
+   - switching the connected repo mid-conversation in a Coding tab tells
+     the model plainly that its own earlier claims in that thread describe
+     the old repo now, and shows the user a visible notice too - instead
+     of the model confidently repeating stale repo identity/structure
+     claims from before the switch
    - a fresh deploy that only changes index.html (the common case, which
      never touches sw.js's own bytes) still applies itself automatically -
      no tap required - and defers cleanly instead of reloading mid-request
@@ -1190,15 +1196,83 @@ function assert(cond, label) {
   assert(filteredRows.length === 1 && filteredRows[0].indexOf('regtest-other-repo') >= 0, `typing a filter narrows the list client-side without refetching (got ${JSON.stringify(filteredRows)})`);
   await page.locator('#ghRepoBrowserList button').first().click();
   await page.waitForTimeout(150);
+  // Picking a repo from an actual list IS the confirmation - unlike manual
+  // entry, this connects immediately with no separate Save tap needed
+  // (a real user found "pick it, then also have to tap Save" confusing,
+  // stacked on top of OAuth-connect already being a separate step from
+  // choosing a repo).
   const ownerFilledFromBrowser = await page.inputValue('#ghOwnerInput');
   const repoFilledFromBrowser = await page.inputValue('#ghRepoInput');
-  assert(ownerFilledFromBrowser === 'solmasta' && repoFilledFromBrowser === 'regtest-other-repo', `clicking a repo row fills the owner/repo inputs the same way a manual entry would (got "${ownerFilledFromBrowser}/${repoFilledFromBrowser}")`);
+  assert(ownerFilledFromBrowser === 'solmasta' && repoFilledFromBrowser === 'regtest-other-repo', `clicking a repo row fills the owner/repo inputs (got "${ownerFilledFromBrowser}/${repoFilledFromBrowser}")`);
   const browserCollapsedAfterPick = await page.evaluate(() => document.getElementById('ghRepoBrowser').classList.contains('hidden'));
   assert(browserCollapsedAfterPick, 'picking a repo collapses the browser panel instead of leaving it open');
+  const statusAfterBrowserPick = await page.textContent('#githubStatus');
+  assert(statusAfterBrowserPick.indexOf('solmasta/regtest-other-repo') >= 0, `picking a repo from the browser connects it right away - no separate Save tap needed (status shows "${statusAfterBrowserPick}")`);
+  const pickToast = await page.textContent('#msgToastText');
+  assert(pickToast.indexOf('Connected to solmasta/regtest-other-repo') >= 0, `a toast confirms the browser-picked repo actually connected (got "${pickToast}")`);
+  const savedAfterBrowserPick = await page.evaluate(() => localStorage.getItem('gh_repo_owner') === 'solmasta' && localStorage.getItem('gh_repo_name') === 'regtest-other-repo');
+  assert(savedAfterBrowserPick, 'the browser-picked repo is actually persisted to storage, not just shown in the inputs');
   // Restore the real repo connection for the rest of the suite.
   await page.fill('#ghOwnerInput', 'solmasta');
   await page.fill('#ghRepoInput', 'AI-Router');
   await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
+
+  console.log('\n-- a Coding tab warns the model (and the user) when the connected repo changes mid-conversation --');
+  // A real user report: a long-running Coding tab kept confidently
+  // describing an EARLIER-connected repo after switching to a different
+  // one - chatHistory still holds every system prompt/tool result the
+  // model saw before the switch, and the model has no way to know those
+  // went stale just because the live connection changed later.
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  let repoChangeRequestBodies = [];
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        repoChangeRequestBodies.push(parsed);
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest reply ' + repoChangeRequestBodies.length } }] }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('what repo are we working with');
+  await page.waitForTimeout(300);
+  const noticeAfterFirstTurn = await page.evaluate(() => document.getElementById('chat').textContent.indexOf('Repo connection changed') >= 0);
+  assert(!noticeAfterFirstTurn, 'the very first coding turn in a fresh tab has nothing to compare against, so no false "repo changed" warning fires');
+  const firstTurnSysContent = ((repoChangeRequestBodies[0] && repoChangeRequestBodies[0].messages) || []).filter((m) => m.role === 'system').map((m) => m.content).join('\n');
+  assert(firstTurnSysContent.indexOf('REPO CONNECTION CHANGED') < 0, 'the first turn\'s request carries no stale-repo warning either');
+
+  await page.click('#settingsBtn'); await page.waitForTimeout(150);
+  await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
+  await page.fill('#ghOwnerInput', 'solmasta');
+  await page.fill('#ghRepoInput', 'regtest-repo-b');
+  await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
+
+  await sendMsg('now what repo do you see');
+  await page.waitForTimeout(300);
+  const noticeAfterSwitch = await page.evaluate(() => document.getElementById('chat').textContent.indexOf('Repo connection changed to') >= 0 && document.getElementById('chat').textContent.indexOf('regtest-repo-b') >= 0);
+  assert(noticeAfterSwitch, 'switching the connected repo mid-conversation shows a visible notice in chat, not just a silent behind-the-scenes change');
+  const secondTurnSysContent = ((repoChangeRequestBodies[1] && repoChangeRequestBodies[1].messages) || []).filter((m) => m.role === 'system').map((m) => m.content).join('\n');
+  assert(secondTurnSysContent.indexOf('REPO CONNECTION CHANGED MID-CONVERSATION') >= 0, 'the model itself is told the repo changed, not just the user');
+  assert(secondTurnSysContent.indexOf('solmasta/AI-Router') >= 0 && secondTurnSysContent.indexOf('solmasta/regtest-repo-b') >= 0, `the warning names both the old and new repo so the model knows exactly what changed (got: ${secondTurnSysContent.slice(0, 400)})`);
+
+  await sendMsg('and now');
+  await page.waitForTimeout(300);
+  const thirdTurnSysContent = ((repoChangeRequestBodies[2] && repoChangeRequestBodies[2].messages) || []).filter((m) => m.role === 'system').map((m) => m.content).join('\n');
+  assert(thirdTurnSysContent.indexOf('REPO CONNECTION CHANGED') < 0, 'once the tab has caught up to the current repo, a later turn with no further change carries no repeat warning');
+  await page.unroute('**/*');
+
+  // Restore the real repo connection for the rest of the suite.
+  await page.click('#settingsBtn'); await page.waitForTimeout(150);
+  await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
+  await page.fill('#ghOwnerInput', 'solmasta');
+  await page.fill('#ghRepoInput', 'AI-Router');
+  await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
+  await page.locator('#tabBar .tabpill').first().click();
+  await page.waitForTimeout(400);
 
   console.log('\n-- profile: create, isolate --');
   await page.click('#settingsBtn'); await page.waitForTimeout(150);
