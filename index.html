@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.144</span></span>
+      <span class="wm">ai-router <span>v5.146</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -489,7 +489,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="modal hidden" id="githubModal"><div class="sheet">
   <div class="sh"><span>Connect GitHub Repo</span><button class="sc" id="closeGithubModal">&#10005;</button></div>
   <div class="sbody">
-    <p style="color:var(--mu);font-size:13px;line-height:1.5;margin:0 0 12px">Choose which repo the coding agent should use here. Repo access turns on once GitHub OAuth is connected or the legacy write secret is entered. Then coding/debugging requests default to this repo unless you clearly ask about some other code. Every write commits directly to the repo, but you'll be asked to approve each one before it happens.</p>
+    <p style="color:var(--mu);font-size:13px;line-height:1.5;margin:0 0 12px">Two separate steps: connecting GitHub OAuth below only grants access - it doesn't pick a repo. Then either tap "Browse your repos" and pick one (connects it right away), or type an owner/name and tap Save. Once both are done, coding/debugging requests default to that repo unless you clearly ask about some other code. Every write commits directly to it, but you'll be asked to approve each one before it happens.</p>
     <button class="bp" id="ghOauthConnectBtn" style="width:100%;margin-bottom:6px">Connect via GitHub OAuth</button>
     <div id="ghOauthStatus" style="font-size:11px;color:var(--mu);margin-bottom:12px"></div>
     <button class="bg hidden" id="ghBrowseReposBtn" style="width:100%;margin-bottom:8px">Browse your repos</button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.144</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.146</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -763,6 +763,16 @@ var openTabs=[],activeTabIndex=0;
    activeBackend/currentModel already do, persisted per-tab so switching
    tabs doesn't leak coding mode into an unrelated conversation. */
 var codingModeActive=false;
+/* Which repo (owner/name) this tab's coding conversation last actually ran
+   against - not the same thing as "is this a Coding tab" (codingModeActive).
+   A user switching which repo is connected mid-conversation (a real report:
+   the model kept confidently describing a DIFFERENT, earlier-connected repo)
+   needs to be caught here: chatHistory keeps every earlier system
+   prompt/tool result the model saw, including ones that named the OLD repo,
+   and the model has no way to know those are stale just because the live
+   connection changed later. null means this tab has never run a coding turn
+   yet, so there's nothing to compare against. */
+var codingTabRepo=null;
 var MK="ai_memories";
 var memories=[];
 var DLK="ai_doclibrary";
@@ -1170,11 +1180,31 @@ function renderMyGithubRepoList(repos){
     btn.addEventListener("click",function(){
       document.getElementById("ghOwnerInput").value=r.owner;
       document.getElementById("ghRepoInput").value=r.name;
-      updateGithubSaveBtnLabel();
+      /* Picking a repo from an actual list, unlike typing owner/name by
+         hand, IS the confirmation - a real user found the extra "now also
+         tap Save" step after picking confusing, on top of OAuth-connect
+         being a separate step from choosing a repo in the first place.
+         Connects immediately instead of just filling the inputs. */
+      saveGithubRepoConnection(r.owner,r.name,document.getElementById("ghWriteSecretInput").value.trim());
       document.getElementById("ghRepoBrowser").classList.add("hidden");
+      showToast("Connected to "+r.fullName);
     });
     listEl.appendChild(btn);
   });
+}
+/* Shared by the manual Save button and the repo-browser row click above -
+   both ultimately mean "this is the repo, use it," just reached two
+   different ways (typed by hand vs picked from an actual list). Keeping
+   one copy means a future fix here can't land in one path and not the
+   other. */
+function saveGithubRepoConnection(owner,repo,writeSecret){
+  localStorage.setItem(pk("gh_repo_owner"),owner);
+  localStorage.setItem(pk("gh_repo_name"),repo);
+  if(writeSecret){localStorage.setItem(pk("gh_write_secret"),writeSecret);}
+  else{localStorage.removeItem(pk("gh_write_secret"));}
+  saveRecentRepo(owner,repo);
+  loadGithubConnection();
+  updateGithubStatus();
 }
 function disconnectGithub(){
   localStorage.removeItem(pk("gh_repo_owner"));
@@ -3280,6 +3310,27 @@ function summarizeCodingRound(plainLines,roundCommentary){
 }
 async function runCodingAgentTurn(assembledMessages,autoContinue){
   var msgs=assembledMessages.slice();
+  /* A real user report: a long-running Coding tab kept confidently
+     describing an EARLIER-connected repo after switching to a different
+     one mid-conversation - chatHistory still holds every system prompt
+     and tool result the model saw before the switch, including ones that
+     named the old repo, and the model has no way to know those went stale
+     just because the live connection changed later (the dynamically-
+     generated guard text always reflects the CURRENT connection - it's
+     the model's own free-text answers, drawing on its older context,
+     that go wrong). Comparing against what this tab's coding context
+     last actually assumed catches that and tells the model plainly not
+     to trust its own earlier claims in this thread. */
+  var currentRepoKey=(ghRepoOwner&&ghRepoName)?(ghRepoOwner+"/"+ghRepoName):null;
+  if(codingTabRepo&&currentRepoKey&&codingTabRepo!==currentRepoKey){
+    /* Inserted right before the current user turn (the last entry in
+       assembledMessages), not appended after it - a reminder placed after
+       the actual question reads oddly and gets less attention than one
+       immediately ahead of it. */
+    msgs.splice(msgs.length-1,0,{role:"system",content:"REPO CONNECTION CHANGED MID-CONVERSATION: this thread was connected to "+codingTabRepo+" earlier, but is now connected to "+currentRepoKey+" instead. Any earlier claims in this conversation about which repo is connected, its structure, or its contents describe the OLD repo ("+codingTabRepo+") and are no longer accurate - do not repeat them. Treat "+currentRepoKey+" as the only current repo and rely on fresh tool calls against it, not anything said earlier in this thread."});
+    showModelSwitchNotice("🔀 Repo connection changed to <strong>"+esc(currentRepoKey)+"</strong> - earlier messages in this tab may still reference "+esc(codingTabRepo)+".");
+  }
+  codingTabRepo=currentRepoKey;
   msgs.unshift({role:"system",content:codingAgentSystemPrompt()});
   codingAgentActive={messages:msgs,id:++codingAgentSeq,autoContinue:!!autoContinue};
   await runCodingAgentRound();
@@ -4211,7 +4262,7 @@ function tabTitleFor(hist){
 }
 function currentTabSnapshot(){
   var ov=Object.assign({},overseerState,{modelsUsed:Array.from(overseerState.modelsUsed)});
-  return{title:tabTitleFor(chatHistory),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive};
+  return{title:tabTitleFor(chatHistory),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive,codingRepo:codingTabRepo};
 }
 function syncActiveTabFromLiveState(){
   if(!openTabs.length)return;
@@ -4252,6 +4303,7 @@ function applyTabAsLiveState(t){
   preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;
   declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   codingModeActive=!!t.codingMode;
+  codingTabRepo=t.codingRepo||null;
   updateCodingModeUI();
 }
 /* The systemToggle bar right under the header already shows contextual
@@ -4325,6 +4377,7 @@ function createNewTab(isCoding){
   preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;
   declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   codingModeActive=!!isCoding;
+  codingTabRepo=null;
   updateCodingModeUI();
   if(isCoding)applyCodingEmptyStateText();
   renderTabBar();
@@ -5310,13 +5363,7 @@ document.getElementById("githubSaveBtn").addEventListener("click",function(){
   var repo=document.getElementById("ghRepoInput").value.trim();
   var writeSecret=document.getElementById("ghWriteSecretInput").value.trim();
   if(!owner||!repo){showToast("Enter both the repo owner and repo name.");return;}
-  localStorage.setItem(pk("gh_repo_owner"),owner);
-  localStorage.setItem(pk("gh_repo_name"),repo);
-  if(writeSecret){localStorage.setItem(pk("gh_write_secret"),writeSecret);}
-  else{localStorage.removeItem(pk("gh_write_secret"));}
-  saveRecentRepo(owner,repo);
-  loadGithubConnection();
-  updateGithubStatus();
+  saveGithubRepoConnection(owner,repo,writeSecret);
   closeModal("githubModal");
 });
 document.getElementById("githubDisconnectBtn").addEventListener("click",function(){
