@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.148</span></span>
+      <span class="wm">ai-router <span>v5.149</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -1722,6 +1722,19 @@ function undoClear(){
   autoSave();updTokenBar();
   undoData=null;
 }
+/* Removes one entry from the Recent Chats list. There was previously no
+   way to get rid of a stale entry at all - the list only ever changed by
+   FIFO eviction once a 6th chat got auto-saved (see saveToRecent's
+   recent.length>5 cap), so an old chat's title/model just sat there
+   indefinitely with no way to clear it out on purpose. */
+function deleteRecentChat(index){
+  try{
+    var recent=JSON.parse(localStorage.getItem(pk(RECENT_KEY))||"[]");
+    recent.splice(index,1);
+    localStorage.setItem(pk(RECENT_KEY),JSON.stringify(recent));
+  }catch(e){}
+  renderRecent();
+}
 function renderRecent(){
   var list=document.getElementById("recentList");
   try{
@@ -1729,12 +1742,15 @@ function renderRecent(){
     if(!recent.length){list.innerHTML='<p class="el">No recent chats. They appear here after you clear or start a new conversation.</p>';return;}
     list.innerHTML="";
     recent.forEach(function(r,i){
-      var btn=document.createElement("button");
-      btn.className="ri";
+      var row=document.createElement("div");
+      row.className="ri";
+      row.style.cssText="display:flex;align-items:center;justify-content:space-between;gap:8px";
+      var main=document.createElement("button");
+      main.style.cssText="background:none;border:none;padding:0;margin:0;text-align:left;cursor:pointer;flex:1;min-width:0;color:inherit;font:inherit";
       var d=new Date(r.savedAt);
       var timeStr=d.toLocaleDateString()+" "+d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
-      btn.innerHTML='<div class="rit">'+esc(r.title)+'</div><div class="rid">'+esc(r.modelLabel||r.modelId)+" &middot; "+esc(timeStr)+'</div>';
-      btn.addEventListener("click",function(){
+      main.innerHTML='<div class="rit">'+esc(r.title)+'</div><div class="rid">'+esc(r.modelLabel||r.modelId)+" &middot; "+esc(timeStr)+'</div>';
+      main.addEventListener("click",function(){
         if(chatHistory.length&&!confirm("Load this recent chat? Current chat will be cleared."))return;
         saveToRecent();
         chatHistory=r.messages;
@@ -1751,7 +1767,10 @@ function renderRecent(){
         autoSave();updTokenBar();
         document.getElementById("recentModal").classList.add("hidden");
       });
-      list.appendChild(btn);
+      var db=document.createElement("button");db.className="cdb";db.innerHTML="&#10005;";db.title="Remove from Recent";
+      db.addEventListener("click",function(e){e.stopPropagation();deleteRecentChat(i);});
+      row.appendChild(main);row.appendChild(db);
+      list.appendChild(row);
     });
   }catch(e){list.innerHTML='<p class="el">Could not load recent chats.</p>';}
 }
@@ -3698,6 +3717,17 @@ function getModelSystemPrompt(ap){
      reaching for something that was never offered in the first place. */
   sys+="\nYou only have the tools explicitly defined for this conversation, if any - never invent or attempt to call a tool/function that wasn't given to you (e.g. a weather, stock, or other lookup you don't actually have). If you need real-time information you don't have and no search results were already provided above, say so plainly instead of pretending to call a tool.\n";
   sys+="\nIf you notice a durable fact about the user worth remembering for future conversations (a preference, an ongoing project, important context) - not something only relevant to this one message - wrap it in <memory>fact here</memory> tags. Use this sparingly, only for things genuinely worth remembering long-term. The user will be asked to approve before it's actually saved.\n";
+  /* Was previously offered on raw message count alone (8+ messages, see
+     the call site) regardless of what the conversation actually was -
+     fired just as readily for idle small talk as for an actual recurring
+     task, which is what made it feel like it was flooding every long
+     chat with an irrelevant "save as project" banner. Same self-flagging
+     pattern as <memory> above: only the model, which can actually judge
+     whether this is a specific reusable task/ruleset rather than a
+     one-off conversation, should decide - the length check at the call
+     site now only gates the earliest point this can possibly fire, not
+     whether it does. */
+  if(!inProject)sys+="\nIf this conversation has settled into a specific, recurring task or ruleset the user would realistically want to return to later as a saved Work Project (not just any topic that happened to run long) - add the tag <project_suggest/> by itself, once, anywhere in your reply. Use this rarely - most conversations, including long ones, are NOT project-worthy. The user will be asked to confirm before anything is actually saved.\n";
   return sys;
 }
 
@@ -4567,6 +4597,12 @@ function extractMemorySuggestions(responseText){
   return out;
 }
 function stripMemoryTags(text){return text.replace(/<memory>[\s\S]*?<\/memory>\s*/g,"");}
+/* Same self-flagging idea as <memory> above, but for "is this conversation
+   worth offering as a reusable Work Project" - see the <project_suggest/>
+   instruction in getModelSystemPrompt(). Self-closing since there's no
+   payload to capture, just a yes/no signal. */
+function hasProjectSuggestTag(responseText){return /<project_suggest\s*\/?>/i.test(responseText||"");}
+function stripProjectSuggestTags(text){return text.replace(/<project_suggest\s*\/?>\s*/gi,"");}
 function showMemorySuggestion(text){
   var notice=document.createElement("div");
   notice.style.cssText="padding:8px 12px;margin:8px 0;background:rgba(139,140,247,0.08);border-left:3px solid var(--ac);border-radius:4px;font-size:12px;color:var(--tx)";
@@ -6397,6 +6433,8 @@ async function doSendRequest(userContent,isRegen,ap){
 
     var memSuggestions=extractMemorySuggestions(full);
     full=stripMemoryTags(full);
+    var suggestsProject=hasProjectSuggestTag(full);
+    full=stripProjectSuggestTags(full);
     speakText(full);
 
     asstMsg.wrap.classList.remove("ma2");
@@ -6404,12 +6442,17 @@ async function doSendRequest(userContent,isRegen,ap){
     chatHistory.push({role:"assistant",content:full,modelLabel:currentModel.label});
     showNextStepPrompt();
     memSuggestions.forEach(function(t){showMemorySuggestion(t);});
-    /* Offer to save an ordinary conversation as a reusable Work Project
-       once it's clearly settled into a topic (8 messages in) - never for
-       a conversation already running under a project (its own rules
-       already apply), and never more than once per conversation. */
+    /* Offer to save an ordinary conversation as a reusable Work Project -
+       gated on the model actually flagging this one as reusable (see
+       <project_suggest/> in getModelSystemPrompt), not just message count.
+       A raw "8 messages in" threshold used to fire this for any chat that
+       happened to run long, including plain small talk, which is what made
+       it feel like it was flooding every conversation regardless of
+       content. Never for a conversation already running under a project
+       (its own rules already apply), and never more than once per
+       conversation. */
     var inProject=ap&&typeof ap.id==="string"&&ap.id.indexOf("wproj_")===0;
-    if(!inProject&&!projectSuggestionShown&&chatHistory.length>=8){
+    if(!inProject&&!projectSuggestionShown&&suggestsProject){
       projectSuggestionShown=true;
       showProjectSuggestion();
     }
