@@ -2259,6 +2259,44 @@ function assert(cond, label) {
   assert(stubbornFakeToolCallRoundCount === 2, `still capped at exactly one retry even when the retry also comes back fake (got ${stubbornFakeToolCallRoundCount} rounds)`);
   assert(chatTextAfterStubbornFakeToolCall.indexOf('tool_code') >= 0, 'after the single retry is exhausted, the fake text is shown as-is instead of retrying again');
 
+  console.log('\n-- once a fake tool-call has happened, later rounds carry a persistent reminder, not just a one-shot in-round retry --');
+  // A real user report: the model dumped <tool_call><function=write_file>
+  // syntax as literal chat text across several SEPARATE sends in the same
+  // Coding tab (each one silently failing to actually write the file it
+  // claimed to) - the one-shot in-round retry above only corrects the
+  // model for that round; a brand new message rebuilds the system prompt
+  // from scratch and forgets it. codingAgentFakeToolSeen should now be
+  // true from the test just above, so a fresh message's system prompt
+  // must carry the persistent reminder.
+  let persistentFakeToolReminderBody = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        persistentFakeToolReminderBody = parsed;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest fresh session answer' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  // Needs an explicit repo/github keyword (analyzeTask's githubKeywords) to
+  // route to the coding agent here - unlike "please check the repo again"
+  // in the test above, plain "check one more file" matches neither that
+  // nor looksLikeContinuationRequest's narrower phrase list, so it never
+  // even reached the coding agent (a test-wording bug, not an app one).
+  await sendMsg('please check another file in the repo');
+  for (let i = 0; i < 40 && persistentFakeToolReminderBody === null; i++) await page.waitForTimeout(200);
+  await page.unroute('**/*');
+  const persistentFakeToolReminderSeen = !!(persistentFakeToolReminderBody && persistentFakeToolReminderBody.messages && persistentFakeToolReminderBody.messages.some((m) => m.role === 'system' && typeof m.content === 'string' && m.content.indexOf('wrote out tool-call syntax as literal text') >= 0));
+  assert(persistentFakeToolReminderSeen, `a fresh message in the same tab carries a persistent reminder not to repeat the fake-tool-call mistake, not just a one-shot in-round retry (got system messages: ${JSON.stringify((persistentFakeToolReminderBody && persistentFakeToolReminderBody.messages || []).filter((m) => m.role === 'system').map((m) => (m.content || '').slice(0, 80)))})`);
+
   console.log('\n-- a coding-agent reply that falsely claims it has no tool access gets one automatic retry instead of being shown as fact --');
   // A real transcript: after an earlier hiccup, the model flatly claimed
   // "I don't actually have the ability to check the repository contents"

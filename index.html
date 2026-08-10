@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.151</span></span>
+      <span class="wm">ai-router <span>v5.152</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.151</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.152</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -784,6 +784,14 @@ var codingTabRepo=null;
    for the rest of the conversation instead of relying on a one-shot
    after-the-fact retry that a stubborn model can just repeat past. */
 var codingAgentDenialSeen=false;
+/* Same problem, same fix, for the OTHER one-shot in-round retry in
+   runCodingAgentRound: a model that dumps tool-call syntax as literal text
+   (<tool_call><function=...>) instead of a real function call gets
+   corrected once, but that correction doesn't survive into the NEXT round
+   either - a real user report showed this repeating across several
+   separate sends in the same Coding tab, each one silently failing to
+   actually write the file it claimed to (looksLikeFakeToolCallText). */
+var codingAgentFakeToolSeen=false;
 var MK="ai_memories";
 var memories=[];
 var DLK="ai_doclibrary";
@@ -3286,7 +3294,7 @@ function codingAgentSystemPrompt(){
   sys+="2. Use list_files(path) to explore one directory at a time, or list_all_files([path]) to get every file path in the whole repo (or a subtree) in a single call\n";
   sys+="3. Use write_file(path, content, message, branch) to make changes - includes automatic git commit\n";
   sys+="4. Always provide COMPLETE working code in write_file calls - not snippets\n";
-  sys+="5. NEVER set branch to \"main\"/\"master\" unless the user explicitly asked you to change the default branch directly - use a short descriptive working-branch name instead, it's created automatically from the default branch if it doesn't exist\n";
+  sys+="5. NEVER set branch to \"main\"/\"master\" unless the user explicitly asked you to change the default branch directly - use a short descriptive working-branch name instead, it's created automatically from the default branch if it doesn't exist. Pick that name ONCE per task and reuse the exact same branch for every write_file in it - if the user wants it all pushed/merged together, splitting related changes across different branch names defeats that even if every individual write succeeds.\n";
   sys+="6. Use merge_branch(branch, title, message) to land a working branch into the default branch via a pull request - only call this when the user explicitly asked you to merge/ship/land the change. Never chain it automatically right after a write_file just because the write succeeded.\n";
   sys+="7. Before guessing a file's exact name/extension/location (e.g. guessing between .js and .jsx, or which directory something lives in), call list_all_files first instead of trying read_file paths one at a time and hitting 404s - it's one call for the whole repo and tells you exactly what's really there.\n\n";
   sys+="ASSUMPTION:\n";
@@ -3328,6 +3336,13 @@ function codingAgentSystemPrompt(){
      conversation, fixes it at the source instead of only reacting after
      the fact each time. */
   if(codingAgentDenialSeen)sys+="\nIMPORTANT: earlier in this conversation you incorrectly claimed you lacked tool access or that your actions were hypothetical, contradicting real tool calls you had already made. That claim was always false - you have real, working read_file/write_file/list_files/merge_branch/run_tests/get_test_status access right now, in this exact conversation. Do not repeat that denial; just use the tools.\n";
+  /* Same persistence problem as codingAgentDenialSeen above, for the other
+     one-shot in-round retry: writing out tool_call/function-call syntax as
+     literal reply text instead of actually invoking the tool. Without
+     this, a model that does it once keeps doing it every other round for
+     the rest of the conversation, silently never writing the file it
+     claims to have written. */
+  if(codingAgentFakeToolSeen)sys+="\nIMPORTANT: earlier in this conversation you wrote out tool-call syntax as literal text (things like <tool_call>, <function=...>, or print(write_file(...))) instead of actually invoking the tool - that produced no real effect, even though it looked like a completed action. Always use the real function-calling mechanism for read_file/write_file/list_files/list_all_files/merge_branch/run_tests/get_test_status - never write their syntax out as plain text.\n";
   sys+="Show your reasoning in <think> tags.";
   return sys;
 }
@@ -3714,6 +3729,9 @@ async function runCodingAgentRound(sessionId){
          at the top of this function. */
       if(looksLikeFakeToolCallText(finalText)&&!mySession.fakeToolRetried){
         mySession.fakeToolRetried=true;
+        /* Persists past this round - see codingAgentFakeToolSeen above and
+           its use in codingAgentSystemPrompt(). */
+        codingAgentFakeToolSeen=true;
         con.body.innerHTML=renderMd("Let me try that again using the actual tool.");
         msgs.push(msg);
         msgs.push({role:"user",content:"That wasn't a real tool call - it was tool-call syntax written out as plain text, so nothing actually ran. Use the real function-calling mechanism now: emit an actual tool_calls entry for the tool you need instead of writing tool_code, print(read_file(...)), <tool_call>, or similar as text."});
@@ -4421,7 +4439,7 @@ function tabTitleFor(hist){
 }
 function currentTabSnapshot(){
   var ov=Object.assign({},overseerState,{modelsUsed:Array.from(overseerState.modelsUsed)});
-  return{title:tabTitleFor(chatHistory),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive,codingRepo:codingTabRepo,codingDenialSeen:codingAgentDenialSeen};
+  return{title:tabTitleFor(chatHistory),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive,codingRepo:codingTabRepo,codingDenialSeen:codingAgentDenialSeen,codingFakeToolSeen:codingAgentFakeToolSeen};
 }
 function syncActiveTabFromLiveState(){
   if(!openTabs.length)return;
@@ -4464,6 +4482,7 @@ function applyTabAsLiveState(t){
   codingModeActive=!!t.codingMode;
   codingTabRepo=t.codingRepo||null;
   codingAgentDenialSeen=!!t.codingDenialSeen;
+  codingAgentFakeToolSeen=!!t.codingFakeToolSeen;
   updateCodingModeUI();
 }
 /* The systemToggle bar right under the header already shows contextual
@@ -4539,6 +4558,7 @@ function createNewTab(isCoding){
   codingModeActive=!!isCoding;
   codingTabRepo=null;
   codingAgentDenialSeen=false;
+  codingAgentFakeToolSeen=false;
   updateCodingModeUI();
   if(isCoding)applyCodingEmptyStateText();
   renderTabBar();
@@ -6683,7 +6703,7 @@ document.getElementById("clearBtn").addEventListener("click",function(){
   undoData={messages:chatHistory.slice(),backend:activeBackend,modelId:currentModel.id,modelLabel:currentModel.label};
   chatHistory=[];clearAttach();localStorage.removeItem(pk(AUTOSAVE_KEY));localStorage.removeItem(pk("ai_draft"));
   sessionId=Date.now().toString();responseCount=0;summarizing=false;
-  codingTabRepo=null;codingAgentDenialSeen=false;
+  codingTabRepo=null;codingAgentDenialSeen=false;codingAgentFakeToolSeen=false;
   clearActiveWproj();stopOverseerMonitoring();overseerState=defaultOverseerState();
   preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">🤖</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';
