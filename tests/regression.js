@@ -3417,10 +3417,38 @@ function assert(cond, label) {
   const modelAfterOneFollowupTabB = await page.textContent('#modelBtnLabel');
   assert(modelAfterOneFollowupTabB === modelDuringTabB, `a new tab gets its own full one-message vision grace period, not a leftover count from a previous tab (during="${modelDuringTabB}" after one follow-up="${modelAfterOneFollowupTabB}")`);
 
-  console.log('\n-- Overseer proactively suggests saving a settled conversation as a Work Project --');
-  // A fresh, non-project conversation that reaches 8 messages should
-  // offer to save itself as a reusable project; accepting generates a
-  // name/instructions from the conversation and actually creates it.
+  console.log('\n-- Recent Chats: an individual entry can be removed instead of only ever auto-evicted by the FIFO cap --');
+  // There used to be no way to remove a single Recent Chats entry on
+  // purpose - it only ever changed when a 6th save evicted the oldest one.
+  await page.click('#newTabBtn'); await page.waitForTimeout(300);
+  await sendMsg('regtest recent-delete unique message');
+  await page.click('#clearBtn'); await page.waitForTimeout(200);
+  await page.click('#settingsBtn'); await page.waitForTimeout(150);
+  await page.click('#recentChatsBtn'); await page.waitForTimeout(200);
+  const recentEntryPresent = await page.evaluate(() => document.getElementById('recentList').textContent.indexOf('regtest recent-delete unique message') >= 0);
+  assert(recentEntryPresent, 'the just-cleared chat shows up in the Recent Chats list');
+  await page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll('#recentList .ri'));
+    const row = rows.find((r) => r.textContent.indexOf('regtest recent-delete unique message') >= 0);
+    row.querySelector('.cdb').click();
+  });
+  await page.waitForTimeout(200);
+  const recentEntryRemovedFromDom = await page.evaluate(() => document.getElementById('recentList').textContent.indexOf('regtest recent-delete unique message') < 0);
+  assert(recentEntryRemovedFromDom, 'deleting a Recent Chats entry removes it from the list immediately');
+  await page.click('#closeRecentModal'); await page.waitForTimeout(150);
+  await page.click('#settingsBtn'); await page.waitForTimeout(150);
+  await page.click('#recentChatsBtn'); await page.waitForTimeout(200);
+  const recentEntryStaysGoneAfterReopen = await page.evaluate(() => document.getElementById('recentList').textContent.indexOf('regtest recent-delete unique message') < 0);
+  assert(recentEntryStaysGoneAfterReopen, 'the deletion actually persisted to storage, not just the in-memory render');
+  await page.click('#closeRecentModal'); await page.waitForTimeout(150);
+
+  console.log('\n-- Overseer proactively suggests saving a settled conversation as a Work Project, but only when the model itself flags it --');
+  // Message count alone used to trigger this (8 messages in) even for
+  // ordinary small talk; now it's gated on the model's own <project_suggest/>
+  // self-flag (see getModelSystemPrompt), same pattern as <memory>. A long
+  // but unflagged conversation should NOT get the banner - only once a reply
+  // actually includes the tag should it appear; accepting it then generates
+  // a name/instructions from the conversation and actually creates it.
   await page.click('#newTabBtn'); await page.waitForTimeout(400);
   await page.click('#modelBtn'); await page.waitForTimeout(150);
   await page.click('#openrouterBtn'); await page.waitForTimeout(300);
@@ -3441,8 +3469,26 @@ function assert(cond, label) {
     await sendMsg(`regtest settle message ${i}`);
   }
   await page.unroute('**/*');
+  const noProjectSuggestionFromCountAlone = await page.evaluate(() => document.getElementById('chat').textContent.indexOf('Save this conversation as a reusable project') < 0);
+  assert(noProjectSuggestionFromCountAlone, 'a long but unflagged conversation (8 messages, no <project_suggest/>) does NOT get offered as a project on message count alone');
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.stream === true) {
+        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"choices":[{"delta":{"content":"regtest settled reply <project_suggest/>"}}]}\n\ndata: [DONE]\n\n' });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('regtest settle message flagged');
+  await page.unroute('**/*');
   const projectSuggestionVisible = await page.evaluate(() => document.getElementById('chat').textContent.indexOf('Save this conversation as a reusable project') >= 0);
-  assert(projectSuggestionVisible, 'a suggestion to save the conversation as a project appears once it settles (8 messages)');
+  assert(projectSuggestionVisible, 'a suggestion to save the conversation as a project appears once the model actually self-flags it with <project_suggest/>');
+  const tagNotLeakedIntoReply = await page.evaluate(() => document.getElementById('chat').textContent.indexOf('project_suggest') < 0);
+  assert(tagNotLeakedIntoReply, 'the <project_suggest/> tag itself is stripped from the rendered reply, not shown as raw text');
   await page.route('**/*', async (route) => {
     const req = route.request();
     if (req.method() === 'POST' && req.postData()) {
