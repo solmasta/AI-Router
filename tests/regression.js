@@ -852,6 +852,12 @@ function assert(cond, label) {
   assert(!!lastCodingAgentBody, 'a repo-flavored message reaches the dedicated coding agent model');
   assert(Array.isArray(lastCodingAgentBody.tools) && lastCodingAgentBody.tools.length > 0, 'the coding agent request carries the repo tools');
   assert(lastCodingAgentBody.tool_choice === 'auto', `the coding agent gets tool_choice:"auto", free to call a tool or just answer (got "${lastCodingAgentBody.tool_choice}")`);
+  // A real transcript: a write_file call for a several-KB file kept coming
+  // back as incomplete tool-call-shaped text, cut off mid-property, because
+  // max_tokens:1500 wasn't enough room for the JSON-escaped file content -
+  // each auto-continue round then restarted the whole file from scratch
+  // with no memory of the truncated attempt, which read as a stuck loop.
+  assert(lastCodingAgentBody.max_tokens >= 8000, `the coding agent gets enough max_tokens for a real file write, not just a trivial one (got ${lastCodingAgentBody.max_tokens})`);
   // list_files used to require a path, so the model had no legitimate way
   // to ask for "the whole repo" - it had to guess a path or get an error
   // either way. Confirm the tool's own schema no longer forces one.
@@ -1520,6 +1526,56 @@ function assert(cond, label) {
   await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
   const overseerChatClosed = await page.evaluate(() => document.getElementById('overseerChatModal').classList.contains('hidden'));
   assert(overseerChatClosed, 'Overseer chat modal closes via its close button');
+
+  console.log('\n-- Overseer chat gets the same generous max_tokens as the coding agent when repo tools are actually offered --');
+  // Same truncation risk as runCodingAgentRound above - this side-panel can
+  // also call write_file (overseerHasRepoTools), so a repo-relevant
+  // question here must get the same headroom, not the smaller budget only
+  // meant for the trivial app-control tool calls this loop also handles.
+  // Explicit setup rather than assuming GH/model state survived from far
+  // earlier tests - overseerHasRepoTools needs both a connected repo AND
+  // a tool-capable current model (confirmed tool-capable elsewhere in this
+  // file, e.g. the fallback-model test's app-control tool round).
+  await page.click('#settingsBtn'); await page.waitForTimeout(150);
+  await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
+  await page.fill('#ghOwnerInput', 'solmasta');
+  await page.fill('#ghRepoInput', 'AI-Router');
+  await page.fill('#ghWriteSecretInput', 'regtest-write-secret');
+  await page.click('#githubSaveBtn'); await page.waitForTimeout(300);
+  // Saving already closes the Settings modal (same as the earlier "Coding
+  // tab reaches..." test, which doesn't click a separate close button
+  // either) - a redundant closeSettingsModal click here just times out
+  // waiting for a button that's already hidden.
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  await page.locator('.mc:has-text("Mistral Small")').first().click();
+  await page.waitForTimeout(150);
+  await page.dispatchEvent('#overseerBtn', 'mousedown');
+  await page.waitForTimeout(700);
+  await page.dispatchEvent('#overseerBtn', 'mouseup');
+  await page.waitForTimeout(200);
+  let overseerChatRepoToolsBody = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.messages && parsed.messages.some((m) => typeof m.content === 'string' && m.content.indexOf('strategic advisor') >= 0)) {
+        overseerChatRepoToolsBody = parsed;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest overseer repo answer' } }] }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await page.fill('#overseerChatInput', 'please read a file from the github repo for me');
+  await page.click('#overseerChatSendBtn');
+  for (let i = 0; i < 40 && overseerChatRepoToolsBody === null; i++) await page.waitForTimeout(200);
+  await page.unroute('**/*');
+  assert(!!overseerChatRepoToolsBody, 'test setup: the repo-relevant Overseer chat question actually reached the tool round');
+  const overseerChatToolNames = ((overseerChatRepoToolsBody && overseerChatRepoToolsBody.tools) || []).map((t) => t.function.name);
+  assert(overseerChatToolNames.indexOf('write_file') >= 0, `test setup: repo tools (including write_file) were actually offered (got tools: ${JSON.stringify(overseerChatToolNames)})`);
+  assert(overseerChatRepoToolsBody.max_tokens >= 8000, `the Overseer chat gets enough max_tokens for a real file write when repo tools are offered (got ${overseerChatRepoToolsBody.max_tokens})`);
+  await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
 
   console.log('\n-- write_file tool never defaults to main/master, and the approved branch is what actually reaches the worker --');
   // write_file used to have no branch parameter at all - the ops worker

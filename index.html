@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.153</span></span>
+      <span class="wm">ai-router <span>v5.154</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.153</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.154</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3471,7 +3471,18 @@ async function runCodingAgentRound(sessionId){
   var msgs=mySession.messages;
   var con=renderCodingConsole();
   try{
-    var res=await fetch(DI_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:CODING_AGENT_MODEL_ID,messages:sanitizeMessagesForProvider(msgs),tools:REPO_TOOLS,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:1500})});
+    /* A real transcript: a write_file call for a several-KB CSS file kept
+       coming back as incomplete tool-call-shaped text (cut off mid-property,
+       e.g. "font-size: 0.") instead of a real call, over and over, each
+       auto-continue round restarting the whole file from scratch with no
+       memory of what it already "typed" - what looked like a stuck loop was
+       actually max_tokens:1500 truncating the JSON-escaped write_file
+       arguments before the model could finish emitting a real tool call,
+       which then also has no room left to write the same content back out
+       as plain text either. 1500 tokens is barely 6,000 characters even
+       before escaping overhead - nowhere near enough for a real source
+       file. Raised well past what a normal file write needs. */
+    var res=await fetch(DI_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:CODING_AGENT_MODEL_ID,messages:sanitizeMessagesForProvider(msgs),tools:REPO_TOOLS,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:8000})});
     if(!res.ok){
       if(res.status===429){
         /* Rate-limited: keep the session alive so the Retry button below
@@ -5926,7 +5937,13 @@ async function sendOverseerChatMsg(){
          list_files -> read_file -> write_file etc. within one message
          instead of getting one shot at a single tool call. */
       for(var toolRound=0;toolRound<MAX_TOOL_ROUNDS;toolRound++){
-        var p1res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:currentModel.id,messages:msgs,tools:overseerTools,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:1000})});
+        /* This surface can call write_file too (overseerHasRepoTools above)
+           - same truncation risk as runCodingAgentRound's fetch below for
+           anything beyond a trivial file, so it gets the same generous
+           budget rather than a smaller one that's only fine for the
+           app-control tools (create_project/switch_model/remember) this
+           loop also handles. */
+        var p1res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:currentModel.id,messages:msgs,tools:overseerTools,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:overseerHasRepoTools?8000:1000})});
         if(!p1res.ok)break;
         var p1data=await p1res.json();
         var p1choice=(p1data.choices||[])[0]||{};
