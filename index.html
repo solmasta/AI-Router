@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.149</span></span>
+      <span class="wm">ai-router <span>v5.150</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.149</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.150</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3432,17 +3432,37 @@ async function runCodingAgentRound(sessionId){
         /* Rate-limited: keep the session alive so the Retry button below
            can re-enter the same round without creating a new chatHistory
            user turn (which is what causes the double-error the user sees
-           when they type "Try again" as a message instead). */
-        con.body.innerHTML='<span style="color:var(--er)">Rate-limited by the API \u2013 wait a moment, then tap Retry.</span>';
+           when they type "Try again" as a message instead). The button
+           used to be tap-able the instant this rendered, so a user
+           tapping Retry right away almost always just landed on the same
+           limit again before it had actually cleared - a real report of
+           this looking like a stuck loop. Honor the API's own
+           Retry-After when it sends one, otherwise fall back to a
+           reasonable default, and keep the button disabled with a
+           visible countdown instead of inviting an immediate re-tap. */
+        var retryAfterHdr=parseInt(res.headers.get("Retry-After")||"",10);
+        var retryWaitSec=(retryAfterHdr>0&&retryAfterHdr<=60)?retryAfterHdr:6;
+        con.body.innerHTML='<span style="color:var(--er)">Rate-limited by the API \u2013 retrying immediately won\u2019t help until the limit clears.</span>';
         var retryBtn429=document.createElement("button");
-        retryBtn429.className="ba";retryBtn429.textContent="Retry";
+        retryBtn429.className="ba";retryBtn429.disabled=true;retryBtn429.textContent="Retry in "+retryWaitSec+"s";
         retryBtn429.style.cssText="margin-top:8px";
+        con.wrap.appendChild(retryBtn429);
+        var retryCountdown=retryWaitSec;
+        var retryTimer=setInterval(function(){
+          retryCountdown--;
+          if(retryCountdown<=0){
+            clearInterval(retryTimer);
+            retryBtn429.disabled=false;retryBtn429.textContent="Retry";
+          }else{
+            retryBtn429.textContent="Retry in "+retryCountdown+"s";
+          }
+        },1000);
         retryBtn429.onclick=(function(sid,c){return function(){
+          clearInterval(retryTimer);
           retryBtn429.disabled=true;retryBtn429.textContent="\u2026";
           c.body.innerHTML='<span class="cur">\u2587</span> working on the next step\u2026';
           runCodingAgentRound(sid);
         };})(mySession.id,con);
-        con.wrap.appendChild(retryBtn429);
       }else if(res.status===500||res.status===503||res.status===502||res.status===504||res.status===522||res.status===523||res.status===524){
         /* Transient server/gateway error - keep session alive and offer
            Retry. 522/523/524 are Cloudflare's own connection-timeout/
@@ -3580,7 +3600,23 @@ async function runCodingAgentRound(sessionId){
         stopBtn.style.cssText="margin-top:8px";
         stopBtn.onclick=function(){mySession.autoContinue=false;stopBtn.disabled=true;stopBtn.textContent="Stopped";};
         con.wrap.appendChild(stopBtn);
-        runCodingAgentRound(mySession.id);
+        /* Was fire-and-forget here (no return/await), unlike every other
+           recursive call in this function - the promise chain resolved
+           back up through runCodingAgentTurn's single `await
+           runCodingAgentRound()` after just this ONE round, so
+           doSendRequest's `finally{sending=false...}` released the Send
+           button and reported the app idle while the agent kept firing
+           further rounds completely undetected in the background. That
+           let a second message get sent while this chain was still
+           mid-flight, doubling up concurrent requests against the same
+           API - a real user report of the coding agent getting stuck in
+           a repeating "Rate-limited... tap Retry" loop traced back to
+           exactly this. A short pacing delay between rounds also avoids
+           bursting the API back-to-back in the first place, which is
+           what tends to trip a real rate limit across a chain of up to
+           CODING_AGENT_MAX_AUTO_ROUNDS. */
+        await new Promise(function(pr){setTimeout(pr,700);});
+        return runCodingAgentRound(mySession.id);
       }else{
         /* Either auto-continue was never requested, a runaway task hit
            CODING_AGENT_MAX_AUTO_ROUNDS, or this round came back identical
