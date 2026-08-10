@@ -1136,6 +1136,43 @@ function assert(cond, label) {
   const chatTextInCodingTab = await page.evaluate(() => document.getElementById('chat').textContent);
   assert(chatTextInCodingTab.indexOf('regtest coding tab reply') >= 0, "the coding agent's reply actually renders in the Coding tab");
 
+  console.log('\n-- a model-switch recommendation never appears in a Coding tab, since the coding work always runs on the fixed agent model regardless --');
+  // A real user report: "Switch to X... Switched" kept firing mid-task in
+  // a Coding tab and got tapped along with everything else - pointless,
+  // since runCodingAgentTurn always uses the one fixed
+  // CODING_AGENT_MODEL_ID no matter what the main chat's currentModel is.
+  // Reuses the same fake-tool-call content the stubborn-retry test below
+  // uses - it's short AND trips detectAssistantConcern's looksLikeFakeToolCallText
+  // check, a reliable way to make this conversation read as "stuck" and
+  // fire makeBetterRecommendation() without depending on exact timing.
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'tool_code\nprint(list_files())' } }] }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('regtest another coding message that should look stuck');
+  let switchButtonSeenInCodingTab = false;
+  for (let i = 0; i < 20; i++) {
+    switchButtonSeenInCodingTab = await page.evaluate(() => Array.from(document.querySelectorAll('#chat button')).some((b) => (b.textContent || '').indexOf('Switch to') >= 0));
+    if (switchButtonSeenInCodingTab) break;
+    await page.waitForTimeout(300);
+  }
+  await page.unroute('**/*');
+  assert(!switchButtonSeenInCodingTab, 'no "Switch to X" model-switch recommendation ever appears in a Coding tab, since it would have zero effect on the coding agent actually doing the work');
+  // A fresh plain tab, not clicking into whatever "first" tab happens to
+  // exist this deep in the suite (that landed on an unpredictable tab with
+  // its own accumulated history and broke a much later, unrelated test).
+  // GitHub connection state (gh_repo_owner etc.) is global, not per-tab,
+  // so later tests that still need repo access are unaffected.
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+
   console.log('\n-- OAuth-only GitHub refresh keeps Coding-tab repo access alive without a legacy write secret --');
   await page.evaluate(() => {
     localStorage.setItem('gh_repo_owner', 'solmasta');
