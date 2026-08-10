@@ -56,6 +56,8 @@
      happens, independent of the conversational summary in chat - always
      visible whenever it's relevant (a Coding tab, or activity already
      happened this session), no button/modal needed to see it
+   - a branded splash screen shows on load and hides itself automatically
+     once the app finishes booting, with no tap required
    - write_file tool never defaults to main/master; the approved branch is
      what actually reaches the GitHub ops worker
    - merge_branch tool requires its own dedicated approval dialog before
@@ -2997,6 +2999,26 @@ function assert(cond, label) {
   // instead of the plain chat flow those tests actually mean to exercise.
   await page.locator('#tabBar .tabpill').first().click();
   await page.waitForTimeout(400);
+
+  console.log('\n-- a splash screen shows on load with the app\'s own branding, then gets out of the way on its own --');
+  // A real request: replace the generic app icon/branding with the app's
+  // actual logo, shown as a proper splash screen while the app boots -
+  // not gated behind anything, and not something the user has to dismiss.
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  const splashExistsOnLoad = await page.evaluate(() => !!document.getElementById('splashScreen'));
+  assert(splashExistsOnLoad, 'the splash screen element is present as soon as the page loads');
+  let splashGone = false;
+  for (let i = 0; i < 30; i++) {
+    splashGone = await page.evaluate(() => {
+      const el = document.getElementById('splashScreen');
+      return !el || el.classList.contains('hide');
+    });
+    if (splashGone) break;
+    await page.waitForTimeout(200);
+  }
+  assert(splashGone, 'the splash screen hides itself automatically once the app finishes loading, with no tap required');
+  const appUsableAfterSplash = await page.evaluate(() => !!document.getElementById('prompt') && !document.getElementById('sendBtn').disabled);
+  assert(appUsableAfterSplash, 'the app underneath is fully interactive once the splash clears');
 
   console.log('\n-- a fresh deploy applies itself automatically instead of waiting for a tap --');
   // Field techs on iPhone struggle even with clearing a cache, so the app
