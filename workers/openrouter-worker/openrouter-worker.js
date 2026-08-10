@@ -32,7 +32,7 @@ export default {
       const res = await fetch("https://openrouter.ai/api/v1/models", {
         headers: {
           "Authorization": `Bearer ${env.OPENROUTER_KEY}`,
-          "HTTP-Referer": "https://solmasta.github.io/openai-router",
+          "HTTP-Referer": "https://solmasta.github.io/AI-Router/",
         }
       });
       const data = await res.json();
@@ -66,7 +66,7 @@ export default {
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${env.OPENROUTER_KEY}`,
-        "HTTP-Referer": "https://solmasta.github.io/openai-router",
+        "HTTP-Referer": "https://solmasta.github.io/AI-Router/",
         "X-Title": "ai-router",
       },
       body: JSON.stringify(body),

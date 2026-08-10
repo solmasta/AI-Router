@@ -6,7 +6,7 @@
   // Used as a safety fallback; the actual redirect_uri is always <this-worker-origin>/callback.
   // Set CALLBACK_URI as a var if you need to override the redirect_uri explicitly.
   "vars": {
-    "APP_ORIGIN": "https://openai-router.pages.dev"
+    "APP_ORIGIN": "https://solmasta.github.io/AI-Router/"
   },
   // Secrets to configure in the Cloudflare dashboard (Workers & Pages > github-oauth-worker > Settings > Variables & Secrets):
   //   APP_SECRET           - same shared secret as the other workers

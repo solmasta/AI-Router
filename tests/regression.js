@@ -73,7 +73,9 @@
      immediately on a model tool_call, with real observable side effects
    - hardcoded app-structure knowledge only appears in the coding agent's
      own system prompt when GitHub is connected to this actual repo, not
-     some other repo
+     some other repo - checked under both the current repo name and the
+     pre-rename one (openai-router -> AI-Router), so a connection saved
+     before the rename doesn't silently lose it
    - the main chat model is never told it has repository tools - that
      system-prompt text lives only in the dedicated coding agent's prompt
    - repo tools are gated on actual repo/GitHub signal, not generic coding
@@ -221,7 +223,16 @@ function assert(cond, label) {
   fs.writeFileSync(imgPath, pngBuf);
 
   const browser = await chromium.launch({ executablePath: CHROMIUM_PATH, headless: true });
-  const page = await browser.newPage();
+  // Service workers now actually register successfully (sw.js registration
+  // used to be a hardcoded absolute path that always 404s once the repo's
+  // been renamed - now relative, so it correctly activates here too). Once
+  // active, a service worker's own fetch handler intercepts same-origin
+  // requests in its own context, which page.route() can't see through -
+  // that silently broke this suite's index.html-mocking tests (checking
+  // the "a fresh deploy applies itself automatically" flow) by letting the
+  // real file through underneath the mock. Blocked here to keep tests
+  // deterministic and focused on app logic, not service-worker semantics.
+  const page = await browser.newPage({ serviceWorkers: 'block' });
   const errors = [];
   page.on('pageerror', err => errors.push(err.message));
   function isNoise(e) {
@@ -2441,11 +2452,14 @@ function assert(cond, label) {
   console.log('\n-- hardcoded app-structure knowledge only appears when the connected repo actually IS this app --');
   // Without this, the coding agent asked to do "a checkup" or "add a
   // feature" on the app has to guess its own architecture from scratch
-  // every time. It must only apply to solmasta/openai-router specifically
-  // - injecting it for some other repo the user points GitHub at would
-  // just be wrong. This knowledge lives in the dedicated coding agent's
-  // own system prompt now (codingAgentSystemPrompt), not the main chat
-  // model's - repo work never touches the main chat model at all.
+  // every time. It must only apply to solmasta/AI-Router specifically
+  // (the repo was renamed from openai-router - still matching the old
+  // name too, checked further below, so a connection saved before the
+  // rename doesn't silently lose this) - injecting it for some other repo
+  // the user points GitHub at would just be wrong. This knowledge lives
+  // in the dedicated coding agent's own system prompt now
+  // (codingAgentSystemPrompt), not the main chat model's - repo work
+  // never touches the main chat model at all.
   // The previous test's create_project call left a Work Project active -
   // getModelSystemPrompt takes a completely different branch whenever a
   // project is active, which would skip repo routing entirely regardless
@@ -2455,7 +2469,7 @@ function assert(cond, label) {
   await page.click('#settingsBtn'); await page.waitForTimeout(150);
   await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
   await page.fill('#ghOwnerInput', 'solmasta');
-  await page.fill('#ghRepoInput', 'openai-router');
+  await page.fill('#ghRepoInput', 'AI-Router');
   await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
   let lastCheckupBody = null;
   await page.route('**/*', async (route) => {
@@ -2479,7 +2493,37 @@ function assert(cond, label) {
   for (let i = 0; i < 60 && lastCheckupBody === null; i++) await page.waitForTimeout(200);
   await page.unroute('**/*');
   const checkupSysContent = ((lastCheckupBody && lastCheckupBody.messages) || []).filter((m) => m.role === 'system').map((m) => m.content).join('\n');
-  assert(checkupSysContent.indexOf("THIS REPO IS THE APP YOU'RE RUNNING IN") >= 0, 'a maintenance/checkup request on the connected openai-router repo gets the coding agent the hardcoded app-structure knowledge');
+  assert(checkupSysContent.indexOf("THIS REPO IS THE APP YOU'RE RUNNING IN") >= 0, 'a maintenance/checkup request on the connected AI-Router repo gets the coding agent the hardcoded app-structure knowledge');
+
+  console.log('\n-- the old pre-rename repo name (openai-router) still gets the same hardcoded app-structure knowledge --');
+  await page.click('#settingsBtn'); await page.waitForTimeout(150);
+  await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
+  await page.fill('#ghOwnerInput', 'solmasta');
+  await page.fill('#ghRepoInput', 'openai-router');
+  await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
+  let lastOldNameBody = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        lastOldNameBody = parsed;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest checkup done' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('can you do a maintenance checkup on the app');
+  for (let i = 0; i < 60 && lastOldNameBody === null; i++) await page.waitForTimeout(200);
+  await page.unroute('**/*');
+  const oldNameSysContent = ((lastOldNameBody && lastOldNameBody.messages) || []).filter((m) => m.role === 'system').map((m) => m.content).join('\n');
+  assert(oldNameSysContent.indexOf("THIS REPO IS THE APP YOU'RE RUNNING IN") >= 0, 'a connection saved under the pre-rename repo name still gets the hardcoded app-structure knowledge, not silently dropped');
 
   await page.click('#settingsBtn'); await page.waitForTimeout(150);
   await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
@@ -2508,13 +2552,13 @@ function assert(cond, label) {
   for (let i = 0; i < 60 && lastOtherRepoBody === null; i++) await page.waitForTimeout(200);
   await page.unroute('**/*');
   const otherRepoSysContent = ((lastOtherRepoBody && lastOtherRepoBody.messages) || []).filter((m) => m.role === 'system').map((m) => m.content).join('\n');
-  assert(otherRepoSysContent.indexOf("THIS REPO IS THE APP YOU'RE RUNNING IN") < 0, 'the same request against a different connected repo does NOT get openai-router-specific knowledge');
+  assert(otherRepoSysContent.indexOf("THIS REPO IS THE APP YOU'RE RUNNING IN") < 0, 'the same request against a different connected repo does NOT get AI-Router-specific knowledge');
 
   // Leave GitHub pointed back at the real repo, matching actual usage.
   await page.click('#settingsBtn'); await page.waitForTimeout(150);
   await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
   await page.fill('#ghOwnerInput', 'solmasta');
-  await page.fill('#ghRepoInput', 'openai-router');
+  await page.fill('#ghRepoInput', 'AI-Router');
   await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
 
   console.log('\n-- the main chat model is never told it has repository tools - only the dedicated coding agent ever gets that --');

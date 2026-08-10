@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.141</span></span>
+      <span class="wm">ai-router <span>v5.142</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -494,7 +494,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
     <div id="ghOauthStatus" style="font-size:11px;color:var(--mu);margin-bottom:12px"></div>
     <div style="font-size:11px;color:var(--mu);margin-bottom:10px;border-top:1px solid var(--br);padding-top:10px">Or use the legacy write secret (requires GITHUB_TOKEN + WRITE_SECRET set on the github-ops-worker):</div>
     <input type="text" id="ghOwnerInput" class="fi" placeholder="Repo owner, e.g. solmasta" autocomplete="off" style="width:100%;margin-bottom:8px;box-sizing:border-box">
-    <input type="text" id="ghRepoInput" class="fi" placeholder="Repo name, e.g. openai-router" autocomplete="off" style="width:100%;box-sizing:border-box">
+    <input type="text" id="ghRepoInput" class="fi" placeholder="Repo name, e.g. AI-Router" autocomplete="off" style="width:100%;box-sizing:border-box">
     <input type="password" id="ghWriteSecretInput" class="fi" placeholder="Repo secret (legacy - leave blank if using OAuth)" autocomplete="off" style="width:100%;margin-top:8px;box-sizing:border-box">
     <div id="ghRecentRepos" class="hidden" style="margin-top:10px">
       <div style="font-size:11px;color:var(--mu);margin-bottom:6px">Recent repos</div>
@@ -594,7 +594,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.141</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.142</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3147,7 +3147,14 @@ function codingAgentSystemPrompt(){
   sys+="- Read enough of the surrounding file first to match its existing naming, style, and conventions instead of imposing your own.\n";
   sys+="- Watch for security issues you might introduce (XSS, injection, secrets in code) - if you notice one in what you just wrote, fix it before moving on.\n";
   sys+="- No half-finished implementations - a change either works end to end or it isn't done yet.\n\n";
-  if(ghRepoOwner==="solmasta"&&ghRepoName==="openai-router"){
+  /* Repo was renamed from openai-router to AI-Router - still matching the
+     old name too (GitHub keeps renamed repos reachable under it) so this
+     doesn't silently lose the app's self-awareness for anyone who saved
+     the connection before the rename. Case-insensitive since ghRepoName
+     is just whatever the user typed into the Settings input, not
+     necessarily GitHub's own canonical casing. */
+  var ghRepoNameLower=(ghRepoName||"").toLowerCase();
+  if(ghRepoOwner==="solmasta"&&(ghRepoNameLower==="ai-router"||ghRepoNameLower==="openai-router")){
     sys+="THIS REPO IS THE APP YOU'RE RUNNING IN - its own real structure, not a guess:\n";
     sys+="- index.html is the ENTIRE frontend: markup, CSS, and all JS in two inline <script> blocks, each wrapped in its own IIFE. A plain top-level function is NOT reachable as window.foo unless explicitly assigned (window.foo=function(){...}) - inline onclick=\"...\" handlers run in global scope and need that, or they silently no-op.\n";
     sys+="- Several Cloudflare Workers back it, each with its own wrangler config: openai-router.js (DeepInfra models + free web search), openrouter-worker.js (OpenRouter), github-ops-worker.js (this repo's own read_file/write_file/list_files - the tools you're using right now), drive-auth-worker.js (Google Drive OAuth).\n";
@@ -6547,7 +6554,19 @@ function checkForFreshVersion() {
    waiting for the user to background/refocus the app first. */
 checkForFreshVersion();
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/openai-router/sw.js').then(function(reg) {
+  /* Relative, not an absolute '/openai-router/sw.js' - GitHub Pages serves
+     this app from a subpath named after the repo (username.github.io/
+     repo-name/), so a hardcoded absolute path silently 404s the moment
+     the repo gets renamed (as it did - this app is now at /AI-Router/,
+     not /openai-router/). Relative resolves against index.html's own
+     location regardless of what the repo happens to be named. */
+  navigator.serviceWorker.register('./sw.js').then(function(reg) {
+    /* register() can resolve without a usable registration in some
+       environments (e.g. service workers blocked at the browser-context
+       level) - the unconditional checkForFreshVersion() call above this
+       block is the real safety net either way, so just skip these extra
+       SW-lifecycle-tied checks rather than throwing on reg.addEventListener. */
+    if (!reg) return;
     reg.addEventListener('updatefound', function() {
       var worker = reg.installing;
       worker.addEventListener('statechange', function() {
@@ -6566,7 +6585,7 @@ if ('serviceWorker' in navigator) {
     });
     window.addEventListener('focus', function() { reg.update(); checkForFreshVersion(); });
     setInterval(function() { reg.update(); checkForFreshVersion(); }, 5 * 60 * 1000);
-  });
+  }).catch(function() {});
   navigator.serviceWorker.addEventListener('controllerchange', function() {
     tryApplyUpdate();
   });
