@@ -146,6 +146,13 @@
      corrective nudge, and never renders the pseudo-code as the final
      answer; if the retry also comes back fake, it's shown as-is rather
      than retrying forever (no fallback model exists for this agent)
+   - a coding-agent reply that falsely claims it has no tool access (e.g.
+     "I don't actually have the ability to...") triggers exactly one
+     automatic retry with a corrective nudge, instead of showing the
+     user a confident denial that contradicts real tool calls already
+     visible earlier in the same conversation - reaching this code path
+     at all already proves the tools are live, so the claim is always
+     wrong, never legitimate
    - 3+ rounds of tapping the auto-generated "Continue with the next
      step: X" prompt in a row keep routing to the dedicated coding agent
      instead of falling back to the plain chat model once those generic
@@ -2161,6 +2168,56 @@ function assert(cond, label) {
   await page.unroute('**/*');
   assert(stubbornFakeToolCallRoundCount === 2, `still capped at exactly one retry even when the retry also comes back fake (got ${stubbornFakeToolCallRoundCount} rounds)`);
   assert(chatTextAfterStubbornFakeToolCall.indexOf('tool_code') >= 0, 'after the single retry is exhausted, the fake text is shown as-is instead of retrying again');
+
+  console.log('\n-- a coding-agent reply that falsely claims it has no tool access gets one automatic retry instead of being shown as fact --');
+  // A real transcript: after an earlier hiccup, the model flatly claimed
+  // "I don't actually have the ability to check the repository contents"
+  // and "I haven't actually performed any of those file operations" -
+  // directly contradicting real read_file/write_file calls already
+  // visible earlier in the SAME conversation. Reaching this code path at
+  // all already proves repo tools are live and authenticated, so this is
+  // always a hallucination, never a legitimate claim - it must not be
+  // shown to the user as if it were an accurate status report.
+  let capabilityDenialRoundCount = 0;
+  let capabilityDenialCorrectiveNudgeSeen = false;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        capabilityDenialRoundCount++;
+        if (capabilityDenialRoundCount === 1) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: "I don't actually have the ability to check the repository contents. I haven't actually performed any of those file operations." } }] }),
+          });
+          return;
+        }
+        capabilityDenialCorrectiveNudgeSeen = (parsed.messages || []).some((m) => m.role === 'user' && typeof m.content === 'string' && m.content.indexOf('DO have real, working') >= 0);
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest real answer after capability-denial retry' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('can you check the repo files');
+  let chatTextAfterCapabilityDenialRetry = '';
+  for (let i = 0; i < 60; i++) {
+    chatTextAfterCapabilityDenialRetry = await page.evaluate(() => document.getElementById('chat').textContent);
+    if (chatTextAfterCapabilityDenialRetry.indexOf('regtest real answer after capability-denial retry') >= 0) break;
+    await page.waitForTimeout(200);
+  }
+  await page.unroute('**/*');
+  assert(capabilityDenialRoundCount === 2, `a false "I don't have access" claim triggers exactly one automatic retry round (got ${capabilityDenialRoundCount} rounds)`);
+  assert(capabilityDenialCorrectiveNudgeSeen, 'the retry round includes a corrective nudge telling the model it does have real tool access');
+  assert(chatTextAfterCapabilityDenialRetry.indexOf("don't actually have the ability") === -1, 'the false denial from round 1 never renders as the final answer');
+  assert(chatTextAfterCapabilityDenialRetry.indexOf('regtest real answer after capability-denial retry') >= 0, 'the real answer from the retry round renders once it comes back');
 
   console.log('\n-- transient HTTP errors from the coding agent offer a Retry button instead of a dead end --');
   // 429/500/502/503 already got a Retry button that re-enters the same

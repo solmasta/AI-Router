@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.146</span></span>
+      <span class="wm">ai-router <span>v5.147</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.146</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.147</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3350,6 +3350,23 @@ async function runCodingAgentTurn(assembledMessages,autoContinue){
 function looksLikeFakeToolCallText(text){
   return /<tool_call>|<function[=:]|```tool_code|tool_code\b|print\s*\(\s*(read_file|write_file|list_files|get_files|merge_branch|run_tests|get_test_status)\s*\(/i.test(text||"");
 }
+/* A real transcript: after an earlier empty/malformed reply got the
+   "let me try that again" nudge, the model sometimes concluded the WRONG
+   thing about why - not "I should just call the tool," but "I must not
+   actually have tool access at all," and said so outright ("I don't
+   actually have the ability to...", "these were hypothetical...", "I
+   haven't actually performed any of those file operations") - directly
+   contradicting the real read_file/write_file calls already visible
+   earlier in the SAME conversation's own terminal log. This is always a
+   hallucination, never a legitimate claim: reaching this code path at
+   all already proves REPO_TOOLS are live and authenticated for this
+   session - there is no code path where the coding agent runs without
+   them. Retrying once with an explicit correction fixes it far more
+   often than showing a confident denial the user has every reason to
+   trust as accurate. */
+function looksLikeCapabilityDenialText(text){
+  return /\bi\s+(don'?t|do\s+not)\s+(actually\s+)?have\s+(the\s+)?(ability|access)\b|\bi\s+can'?t\s+actually\b|\bi\s+haven'?t\s+actually\s+(performed|made|created|done)\b|\bwere\s+hypothetical\b|\bi\s+don'?t\s+have\s+(direct\s+)?access\b/i.test(text||"");
+}
 /* chatHistory stores client-only metadata like apId so Regen can recreate
    the exact project/prompt that was active at send time. That metadata must
    never reach provider APIs: OpenAI-format backends can reject unknown
@@ -3558,7 +3575,17 @@ async function runCodingAgentRound(sessionId){
         mySession.emptyRetried=true;
         con.body.innerHTML=renderMd("Let me try that again.");
         msgs.push(msg);
-        msgs.push({role:"user",content:"That came back empty - you didn't actually answer. If this isn't a repo task, just answer directly in plain text instead of leaving the reply blank."});
+        msgs.push({role:"user",content:"That came back empty - you didn't actually answer. This is not a sign you lack tool access or that anything is broken - you have real, working read_file/write_file/list_files/merge_branch access right now. If this isn't a repo task, just answer directly in plain text instead of leaving the reply blank; if it is, actually call the tool."});
+        return runCodingAgentRound(mySession.id);
+      }
+      /* Capped at one retry per session (mySession.capabilityDenialRetried) -
+         see looksLikeCapabilityDenialText above for what this catches and
+         why it's always wrong. */
+      if(looksLikeCapabilityDenialText(finalText)&&!mySession.capabilityDenialRetried){
+        mySession.capabilityDenialRetried=true;
+        con.body.innerHTML=renderMd("Let me try that again.");
+        msgs.push(msg);
+        msgs.push({role:"user",content:"That's incorrect - you DO have real, working read_file/write_file/list_files/merge_branch tool access in this exact conversation, proven by the actual tool results already above if any tools have run, or simply available to call right now if none have. An earlier empty or malformed reply is not evidence you lack access - it never has been. Stop claiming you can't do this and actually use the tools."});
         return runCodingAgentRound(mySession.id);
       }
       /* Capped at one retry per session (mySession.fakeToolRetried) since
@@ -3596,7 +3623,7 @@ async function runCodingAgentRound(sessionId){
       contBtn2.style.cssText="margin-top:8px";
       contBtn2.onclick=function(){
         contBtn2.disabled=true;contBtn2.textContent="…";
-        codingAgentActive={messages:msgs,id:++codingAgentSeq,autoContinue:codingModeActive||!!mySession.autoContinue,fakeToolRetried:false,emptyRetried:false};
+        codingAgentActive={messages:msgs,id:++codingAgentSeq,autoContinue:codingModeActive||!!mySession.autoContinue,fakeToolRetried:false,emptyRetried:false,capabilityDenialRetried:false};
         runCodingAgentRound(codingAgentActive.id);
       };
       con.wrap.appendChild(contBtn2);
