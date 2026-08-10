@@ -216,6 +216,39 @@ async function handleGitHubOp(body, env, oauthToken) {
         return { success: true, files };
       }
 
+      case "list_all_files": {
+        // list_files only shows one directory at a time, which forces a
+        // caller that doesn't already know the exact layout into a long
+        // chain of list_files/read_file guesses (a real user report: the
+        // coding agent hit repeated 404s trying plausible-looking paths
+        // like PhotoUpload.js before finding the real PhotoUpload.jsx).
+        // The Git Trees API returns the whole repo's file paths in one
+        // call - recursive=1 walks every subdirectory server-side, so a
+        // caller can search/filter locally instead of exploring
+        // directory-by-directory.
+        let treeBranch = branch;
+        try {
+          treeBranch = treeBranch || await getDefaultBranch(owner, repo, headers);
+        } catch (e) {
+          return { error: e.message };
+        }
+        const branchRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/branches/${encodeURIComponent(treeBranch)}`, { headers });
+        if (!branchRes.ok) return { error: `Failed to look up branch ${treeBranch}: ${await describeError(branchRes)}` };
+        const branchData = await branchRes.json();
+        const treeRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/trees/${branchData.commit.sha}?recursive=1`, { headers });
+        if (!treeRes.ok) return { error: `Failed to list repository tree: ${await describeError(treeRes)}` };
+        const treeData = await treeRes.json();
+        let allPaths = (treeData.tree || []).filter(e => e.type === "blob").map(e => e.path);
+        if (path && path !== ".") {
+          const prefix = path.replace(/\/$/, "") + "/";
+          allPaths = allPaths.filter(p => p === path || p.startsWith(prefix));
+        }
+        const total = allPaths.length;
+        const LIST_ALL_CAP = 500;
+        const truncated = !!treeData.truncated || total > LIST_ALL_CAP;
+        return { success: true, files: allPaths.slice(0, LIST_ALL_CAP), total, truncated };
+      }
+
       case "merge_branch": {
         if (!branch) return { error: "Missing branch" };
 

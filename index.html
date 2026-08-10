@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.150</span></span>
+      <span class="wm">ai-router <span>v5.151</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.150</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.151</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1272,6 +1272,7 @@ var REPO_TOOLS=[
   {type:"function","function":{name:"read_file",description:"Read a file from the connected GitHub repository. Returns file content.",parameters:{type:"object",properties:{path:{type:"string",description:"File path relative to repo root"}},required:["path"]}}},
   {type:"function","function":{name:"write_file",description:"Write or update a file in the connected GitHub repository. Creates a commit on a branch (never commits straight to the repo's default branch unless the user explicitly asked for that).",parameters:{type:"object",properties:{path:{type:"string",description:"File path"},content:{type:"string",description:"Full file content"},message:{type:"string",description:"Commit message"},branch:{type:"string",description:"Branch to commit to. NEVER use \"main\"/\"master\" unless the user explicitly asked you to change the default branch directly - otherwise use a short descriptive working-branch name. The branch is created automatically from the repo's default branch if it doesn't already exist."}},required:["path","content","message"]}}},
   {type:"function","function":{name:"list_files",description:"List files in a directory of the connected repository. Omit path (or use \".\") to list the repo root.",parameters:{type:"object",properties:{path:{type:"string",description:"Directory path, relative to repo root. Optional - omit or use \".\" for the repo root."}},required:[]}}},
+  {type:"function","function":{name:"list_all_files",description:"List every file path in the whole repository (or under a given path prefix) in a single call, instead of walking directories one by one with list_files. Use this FIRST when you need to find where something lives, or before guessing a file's exact name/extension/location (e.g. checking .js vs .jsx) - it avoids failed read_file attempts on paths that don't actually exist. Results may be capped for very large repos (see truncated/total in the response).",parameters:{type:"object",properties:{path:{type:"string",description:"Optional path prefix to filter to (e.g. \"frontend/src\") - omit for the whole repository."},branch:{type:"string",description:"Branch to list from. Defaults to the repo's default branch if omitted."}},required:[]}}},
   {type:"function","function":{name:"merge_branch",description:"Merge a branch into the connected repository's default branch via a pull request (creates one if it doesn't already exist, then merges it). This is a significant, hard-to-reverse action on the default branch - only call this when the user explicitly asked you to merge/ship/land the change, never automatically right after a write_file. Always requires explicit user approval before anything happens.",parameters:{type:"object",properties:{branch:{type:"string",description:"The branch to merge into the default branch"},title:{type:"string",description:"Pull request title / merge commit title"},message:{type:"string",description:"Pull request description / merge commit message"},merge_method:{type:"string",description:"How to merge",enum:["merge","squash","rebase"]}},required:["branch"]}}},
   {type:"function","function":{name:"run_tests",description:"Trigger the regression test suite (tests/regression.js) via GitHub Actions on a given branch. Returns a run_id you must then poll with get_test_status until status is 'completed'.",parameters:{type:"object",properties:{branch:{type:"string",description:"Branch to run tests on. Defaults to the repo default branch if omitted."}},required:[]}}},
   {type:"function","function":{name:"get_test_status",description:"Poll the status of a GitHub Actions test run started by run_tests. Pass the run_id returned by run_tests. Returns status ('queued'/'in_progress'/'completed'), conclusion ('success'/'failure'), and a log_tail with test output once completed. Keep calling until status is 'completed'.",parameters:{type:"object",properties:{run_id:{type:"number",description:"The run_id returned by run_tests"}},required:["run_id"]}}}
@@ -3005,6 +3006,7 @@ function displayToolExecution(toolName,input,result,containerId){
   if(toolName==="read_file"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Reading: "+esc(input.path)+"</div>";}
   else if(toolName==="write_file"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Writing: "+esc(input.path)+" (branch: "+esc(input.branch||"?")+")</div><div style='font-size:10px;color:var(--mu)'>"+esc(input.message)+"</div>";}
   else if(toolName==="list_files"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Listing: "+esc(input.path)+"</div>";}
+  else if(toolName==="list_all_files"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Listing whole repo"+(input.path?" under "+esc(input.path):"")+"</div>";}
   else if(toolName==="merge_branch"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Merging: "+esc(input.branch||"?")+" into default branch</div>";}
   else if(toolName==="run_tests"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Triggering tests"+(input.branch?" on "+esc(input.branch):"")+"</div>";}
   else if(toolName==="get_test_status"){
@@ -3060,6 +3062,7 @@ function formatToolCallLine(toolName,toolInput){
   if(toolName==="read_file")return "read_file "+(toolInput.path||"");
   if(toolName==="write_file")return "write_file "+(toolInput.path||"")+(toolInput.branch?" → "+toolInput.branch:"");
   if(toolName==="list_files")return "list_files "+(toolInput.path&&toolInput.path!=="."?toolInput.path:".");
+  if(toolName==="list_all_files")return "list_all_files"+(toolInput.path?" "+toolInput.path:"");
   if(toolName==="merge_branch")return "merge_branch "+(toolInput.branch||"");
   if(toolName==="run_tests")return "run_tests"+(toolInput.branch?" "+toolInput.branch:"");
   if(toolName==="get_test_status")return "get_test_status #"+toolInput.run_id;
@@ -3073,6 +3076,7 @@ function formatToolResultEntries(toolName,toolInput,result){
     entries.push({kind:"ok",text:"committed "+((result.commit||"").slice(0,7)||"(no sha)")+" on "+(result.branch||toolInput.branch||"")});
     if(toolInput.content)entries.push({kind:"diff",text:toolInput.content});
   }else if(toolName==="list_files")entries.push({kind:"ok",text:(result.files||[]).length+" entries"});
+  else if(toolName==="list_all_files")entries.push({kind:"ok",text:(result.files||[]).length+" of "+(result.total||(result.files||[]).length)+" file(s)"+(result.truncated?" (truncated)":"")});
   else if(toolName==="merge_branch")entries.push({kind:"ok",text:"merged via PR #"+result.prNumber+" ("+result.prUrl+")"});
   else if(toolName==="run_tests")entries.push({kind:"ok",text:"run #"+result.run_id+" started"+(result.html_url?" ("+result.html_url+")":"")});
   else if(toolName==="get_test_status")entries.push({kind:"ok",text:"status="+result.status+(result.conclusion?" conclusion="+result.conclusion:"")});
@@ -3143,6 +3147,10 @@ async function executeRepoToolRaw(toolName,toolInput){
       var lres=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"list_files",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path})});
       var ldata=await lres.json();
       return ldata.success?{success:true,files:ldata.files}:{error:ldata.error};
+    }else if(toolName==="list_all_files"){
+      var lares=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"list_all_files",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path,branch:toolInput.branch})});
+      var ladata=await lares.json();
+      return ladata.success?{success:true,files:ladata.files,total:ladata.total,truncated:ladata.truncated}:{error:ladata.error};
     }else if(toolName==="merge_branch"){
       var mres=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"merge_branch",owner:ghRepoOwner,repo:ghRepoName,branch:toolInput.branch,title:toolInput.title,message:toolInput.message,merge_method:toolInput.merge_method})});
       var mdata=await mres.json();
@@ -3203,6 +3211,10 @@ async function executeToolCall(toolName,toolArgs,renderStatus,logTarget){
     var listRes=await executeRepoTool("list_files",toolArgs);
     displayToolExecution("list_files",toolArgs,listRes,logTarget);
     return{toolResult:listRes.success?JSON.stringify(listRes.files):(listRes.error||"Failed to list files")};
+  }else if(toolName==="list_all_files"){
+    var listAllRes=await executeRepoTool("list_all_files",toolArgs);
+    displayToolExecution("list_all_files",toolArgs,listAllRes,logTarget);
+    return{toolResult:listAllRes.success?JSON.stringify({files:listAllRes.files,total:listAllRes.total,truncated:listAllRes.truncated}):(listAllRes.error||"Failed to list repository files")};
   }else if(toolName==="merge_branch"){
     renderStatus('<span style="color:var(--mu);font-size:13px">⚡ Waiting for approval to merge: '+esc(toolArgs.branch||"")+'&#8230;</span>');
     var approvedMerge=await confirmGithubMerge(toolArgs);
@@ -3258,18 +3270,25 @@ var CODING_AGENT_MODEL_LABEL="Qwen3 Coder 480B";
 /* Caps an auto-continuing session (see looksLikeAutoContinueRequest) so a
    model that never stops calling tools on a huge repo can't run away
    unattended forever - it pauses and asks for an explicit Continue past
-   this many automatic rounds, same as the normal per-round default. */
-var CODING_AGENT_MAX_AUTO_ROUNDS=25;
+   this many automatic rounds, same as the normal per-round default. A real
+   user report: a full repo review/audit routinely needs more than 25 file
+   reads on anything beyond a small project, so the cap itself (not a stuck
+   loop - that's caught separately by the repeat-round guard below) was
+   forcing an unwanted manual Continue tap mid-task. Raised well past what
+   a real audit needs; the repeat-round guard is what actually protects
+   against a runaway loop, not this number. */
+var CODING_AGENT_MAX_AUTO_ROUNDS=60;
 var codingAgentActive=null;
 var codingAgentSeq=0;
 function codingAgentSystemPrompt(){
   var sys="You are a focused coding agent with direct read/write access to the connected GitHub repository ("+ghRepoOwner+"/"+ghRepoName+").\n\n";
   sys+="1. Use read_file(path) to examine existing code before making changes\n";
-  sys+="2. Use list_files(path) to explore repository structure\n";
+  sys+="2. Use list_files(path) to explore one directory at a time, or list_all_files([path]) to get every file path in the whole repo (or a subtree) in a single call\n";
   sys+="3. Use write_file(path, content, message, branch) to make changes - includes automatic git commit\n";
   sys+="4. Always provide COMPLETE working code in write_file calls - not snippets\n";
   sys+="5. NEVER set branch to \"main\"/\"master\" unless the user explicitly asked you to change the default branch directly - use a short descriptive working-branch name instead, it's created automatically from the default branch if it doesn't exist\n";
-  sys+="6. Use merge_branch(branch, title, message) to land a working branch into the default branch via a pull request - only call this when the user explicitly asked you to merge/ship/land the change. Never chain it automatically right after a write_file just because the write succeeded.\n\n";
+  sys+="6. Use merge_branch(branch, title, message) to land a working branch into the default branch via a pull request - only call this when the user explicitly asked you to merge/ship/land the change. Never chain it automatically right after a write_file just because the write succeeded.\n";
+  sys+="7. Before guessing a file's exact name/extension/location (e.g. guessing between .js and .jsx, or which directory something lives in), call list_all_files first instead of trying read_file paths one at a time and hitting 404s - it's one call for the whole repo and tells you exactly what's really there.\n\n";
   sys+="ASSUMPTION:\n";
   sys+="- If the user is asking for coding/debugging help and a GitHub repo is connected, treat that repo as the default codebase even if they don't explicitly say \"GitHub\" or \"repo\".\n";
   sys+="- If they're clearly asking about pasted code, a generic programming concept, or some other project, answer directly without touching repo tools.\n";
@@ -3291,7 +3310,7 @@ function codingAgentSystemPrompt(){
   if(ghRepoOwner==="solmasta"&&(ghRepoNameLower==="ai-router"||ghRepoNameLower==="openai-router")){
     sys+="THIS REPO IS THE APP YOU'RE RUNNING IN - its own real structure, not a guess:\n";
     sys+="- index.html is the ENTIRE frontend: markup, CSS, and all JS in two inline <script> blocks, each wrapped in its own IIFE. A plain top-level function is NOT reachable as window.foo unless explicitly assigned (window.foo=function(){...}) - inline onclick=\"...\" handlers run in global scope and need that, or they silently no-op.\n";
-    sys+="- Several Cloudflare Workers back it, each with its own wrangler config: openai-router.js (DeepInfra models + free web search), openrouter-worker.js (OpenRouter), github-ops-worker.js (this repo's own read_file/write_file/list_files - the tools you're using right now), drive-auth-worker.js (Google Drive OAuth).\n";
+    sys+="- Several Cloudflare Workers back it, each with its own wrangler config: openai-router.js (DeepInfra models + free web search), openrouter-worker.js (OpenRouter), github-ops-worker.js (this repo's own read_file/write_file/list_files/list_all_files - the tools you're using right now), drive-auth-worker.js (Google Drive OAuth).\n";
     sys+="- tests/regression.js is a Playwright suite covering flows that have actually broken before. You CAN run it via run_tests(branch) and poll with get_test_status(run_id) - call run_tests, then call get_test_status in a loop (waiting ~30 s between calls) until status is 'completed', then report pass/fail and show any failure output from log_tail. If your change touches a flow the suite covers, update the test in the same write_file call rather than letting it drift.\n";
     sys+="- Bump the version string in BOTH spots (header \".wm span\" and the Settings modal title, both currently \"v5.x\") with every user-visible change, in the same commit.\n";
     sys+="- run_tests(branch) and get_test_status(run_id) let you trigger and observe the GitHub Actions regression suite directly from here - after writing code, run the tests, poll until completed, then report results.\n";
@@ -3299,6 +3318,7 @@ function codingAgentSystemPrompt(){
   }
   sys+="Work in clear concrete steps, but keep going on your own until the request is complete or you need user input/approval; only pause early if the user explicitly asks for one step at a time.\n";
   sys+="If the request is ambiguous or you're missing information needed to proceed safely (which file, which branch, what exact behavior), ask a clarifying question instead of guessing.\n";
+  sys+="When that clarifying question has a small set of clear, concrete options (e.g. \"which of these two approaches\", \"which file did you mean\") - ask the question in plain text as normal, then list each option on its own, wrapped in <choice>exact option text</choice> tags (2-4 options). The app renders these as tappable buttons; tapping one sends that exact text back as the next message, no typing needed. Only use this for genuinely discrete choices, never for open-ended questions.\n";
   /* codingAgentDenialSeen is set once this tab's agent has ever wrongly
      claimed it lacks tool access (see looksLikeCapabilityDenialText) - that
      denial's own in-round retry correction doesn't carry into the NEXT
@@ -3337,6 +3357,7 @@ function summarizeCodingStep(toolName,toolArgs,ok){
   if(toolName==="read_file")return ok?"I checked "+(toolArgs.path||"that file")+".":"I couldn't read "+(toolArgs.path||"that file")+".";
   if(toolName==="write_file")return ok?"I updated "+(toolArgs.path||"that file")+(toolArgs.branch?" on "+toolArgs.branch:"")+".":"I couldn't update "+(toolArgs.path||"that file")+".";
   if(toolName==="list_files")return toolArgs.path&&toolArgs.path!=="."?(ok?"I looked through "+toolArgs.path+".":"I couldn't inspect "+toolArgs.path+"."):(ok?"I looked through the repository files.":"I couldn't inspect the repository files.");
+  if(toolName==="list_all_files")return ok?"I mapped out the whole repo"+(toolArgs.path?" under "+toolArgs.path:"")+".":"I couldn't list the repository's files.";
   if(toolName==="merge_branch")return ok?"I merged "+(toolArgs.branch||"that branch")+".":"I couldn't merge "+(toolArgs.branch||"that branch")+".";
   return ok?"I finished the next repo step.":"I couldn't finish the next repo step.";
 }
@@ -3522,6 +3543,11 @@ async function runCodingAgentRound(sessionId){
           var listRes=await executeRepoTool("list_files",toolArgs);
           toolResult=listRes.success?JSON.stringify(listRes.files):(listRes.error||"Failed to list files");
           lineText=summarizeCodingStep(toolName,toolArgs,listRes.success);
+        }else if(toolName==="list_all_files"){
+          con.body.innerHTML=renderMd("I'm mapping out the whole repo"+(toolArgs.path?" under "+toolArgs.path:"")+".");
+          var listAllRes2=await executeRepoTool("list_all_files",toolArgs);
+          toolResult=listAllRes2.success?JSON.stringify({files:listAllRes2.files,total:listAllRes2.total,truncated:listAllRes2.truncated}):(listAllRes2.error||"Failed to list repository files");
+          lineText=summarizeCodingStep(toolName,toolArgs,listAllRes2.success);
         }else if(toolName==="merge_branch"){
           con.body.innerHTML=renderMd("I need approval before I merge "+(toolArgs.branch||"that branch")+".");
           var approvedMerge=await confirmGithubMerge(toolArgs);
@@ -3632,7 +3658,20 @@ async function runCodingAgentRound(sessionId){
         var contBtn=document.createElement("button");
         contBtn.className="cta";contBtn.textContent="Continue";
         contBtn.style.cssText="margin-top:8px";
-        contBtn.onclick=function(){contBtn.disabled=true;contBtn.textContent="…";runCodingAgentRound(mySession.id);};
+        /* A real user report: after auto-continue paused (hit the round
+           cap, or the stuck-repeat guard above), tapping Continue only
+           granted ONE more round on the same exhausted mySession.autoRoundCount
+           - since that count was never reset, the very next tool-calling
+           round immediately failed the same auto-continue check again and
+           right back to a manual Continue tap, forever, for the rest of
+           the session. Continue is supposed to mean "keep going on your
+           own again," not "do exactly one more step then ask me again
+           every single time" - reset the round budget so it actually
+           resumes real automation. Still safe against a genuinely stuck
+           loop: mySession.lastRoundSignature isn't touched here, so the
+           very next round re-checks against it and pauses again on its
+           own if the same failing call repeats, same as it always did. */
+        contBtn.onclick=function(){contBtn.disabled=true;contBtn.textContent="…";mySession.autoContinue=true;mySession.autoRoundCount=0;runCodingAgentRound(mySession.id);};
         con.wrap.appendChild(contBtn);
       }
     }else{
@@ -3680,6 +3719,8 @@ async function runCodingAgentRound(sessionId){
         msgs.push({role:"user",content:"That wasn't a real tool call - it was tool-call syntax written out as plain text, so nothing actually ran. Use the real function-calling mechanism now: emit an actual tool_calls entry for the tool you need instead of writing tool_code, print(read_file(...)), <tool_call>, or similar as text."});
         return runCodingAgentRound(mySession.id);
       }
+      var choiceOptions=extractChoiceOptions(finalText);
+      finalText=stripChoiceTags(finalText);
       con.body.innerHTML=renderMd(finalText||"(no response)");
       chatHistory.push({role:"assistant",content:finalText,modelLabel:CODING_AGENT_MODEL_LABEL});
       autoSave();
@@ -3705,6 +3746,7 @@ async function runCodingAgentRound(sessionId){
         runCodingAgentRound(codingAgentActive.id);
       };
       con.wrap.appendChild(contBtn2);
+      renderChoiceButtons(con.wrap,choiceOptions);
     }
   }catch(e){
     con.body.innerHTML='I hit an error and could not continue: '+esc(e.message);
@@ -3753,6 +3795,7 @@ function getModelSystemPrompt(ap){
      reaching for something that was never offered in the first place. */
   sys+="\nYou only have the tools explicitly defined for this conversation, if any - never invent or attempt to call a tool/function that wasn't given to you (e.g. a weather, stock, or other lookup you don't actually have). If you need real-time information you don't have and no search results were already provided above, say so plainly instead of pretending to call a tool.\n";
   sys+="\nIf you notice a durable fact about the user worth remembering for future conversations (a preference, an ongoing project, important context) - not something only relevant to this one message - wrap it in <memory>fact here</memory> tags. Use this sparingly, only for things genuinely worth remembering long-term. The user will be asked to approve before it's actually saved.\n";
+  sys+="\nWhen you ask the user to choose between a small set of clear, concrete options (e.g. \"which of these two approaches\", \"which file did you mean\") - ask the question in plain text as normal, then list each option on its own, wrapped in <choice>exact option text</choice> tags (2-4 options). The app renders these as tappable buttons; tapping one sends that exact text back as the next message, no typing needed. Only use this for genuinely discrete choices, never for open-ended questions.\n";
   /* Was previously offered on raw message count alone (8+ messages, see
      the call site) regardless of what the conversation actually was -
      fired just as readily for idle small talk as for an actual recurring
@@ -4639,6 +4682,48 @@ function stripMemoryTags(text){return text.replace(/<memory>[\s\S]*?<\/memory>\s
    payload to capture, just a yes/no signal. */
 function hasProjectSuggestTag(responseText){return /<project_suggest\s*\/?>/i.test(responseText||"");}
 function stripProjectSuggestTags(text){return text.replace(/<project_suggest\s*\/?>\s*/gi,"");}
+/* A real user report: when the model needs the user to pick between clear
+   options before it can proceed, it just asks in plain text and the user
+   has to type a reply back out - slower and more error-prone than picking
+   from a fixed set of choices, and inconsistent with how this very chat
+   interface (Claude Code) presents a multiple-choice question. Same
+   self-flagging tag pattern as <memory>/<project_suggest/> above: the
+   model wraps each option in its own <choice> tag, and the app renders
+   them as buttons the user can tap - one tap sends that option's exact
+   text as the next message, no typing required. */
+function extractChoiceOptions(responseText){
+  var out=[];var re=/<choice>([\s\S]*?)<\/choice>/g;var m;
+  while((m=re.exec(responseText))!==null){
+    var t=m[1].trim();if(t)out.push(t);
+  }
+  return out;
+}
+function stripChoiceTags(text){return text.replace(/<choice>[\s\S]*?<\/choice>\s*/g,"");}
+/* Shared by the main chat and the coding agent - appends a row of tappable
+   option buttons to any given container. Clicking one fills the compose
+   box with that option's exact text and sends it through the normal send()
+   pipeline, so it's indistinguishable from the user having typed and sent
+   it themselves: it inherits whatever routing (Coding tab, auto-continue,
+   the dedicated coding agent) a real typed reply would have gotten, rather
+   than needing separate continuation logic per surface. */
+function renderChoiceButtons(container,choices){
+  if(!choices||!choices.length)return;
+  var wrap=document.createElement("div");
+  wrap.style.cssText="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px";
+  choices.forEach(function(choiceText){
+    var btn=document.createElement("button");
+    btn.textContent=choiceText;
+    btn.style.cssText="padding:8px 10px;background:var(--up);border:1px solid var(--br);color:var(--tx);border-radius:4px;font-size:12px;cursor:pointer;text-align:left;transition:background .15s";
+    btn.addEventListener("click",function(){
+      if(sending)return;
+      wrap.querySelectorAll("button").forEach(function(b){b.disabled=true;b.style.opacity="0.6";b.style.cursor="default";});
+      document.getElementById("prompt").value=choiceText;
+      send();
+    });
+    wrap.appendChild(btn);
+  });
+  container.appendChild(wrap);
+}
 function showMemorySuggestion(text){
   var notice=document.createElement("div");
   notice.style.cssText="padding:8px 12px;margin:8px 0;background:rgba(139,140,247,0.08);border-left:3px solid var(--ac);border-radius:4px;font-size:12px;color:var(--tx)";
@@ -5790,7 +5875,7 @@ async function sendOverseerChatMsg(){
   if(overseerHasTools){
     sys+="\n\nYou have full operational privileges on the user's behalf: create_project, switch_model (change which model is active in the main chat), and remember - use them directly the moment the user's request calls for it, no permission needed.";
     if(overseerHasRepoTools){
-      sys+=" You also have direct repository access to "+ghRepoOwner+"/"+ghRepoName+": read_file, write_file, list_files, merge_branch. Use them directly instead of just describing what to do - the user still approves every write_file and merge_branch before it actually happens. These only apply to "+ghRepoOwner+"/"+ghRepoName+" - if the user is talking about a different or new project, don't use them against this repo.";
+      sys+=" You also have direct repository access to "+ghRepoOwner+"/"+ghRepoName+": read_file, write_file, list_files, list_all_files, merge_branch. Use list_all_files instead of guessing a file's exact path/extension. Use them directly instead of just describing what to do - the user still approves every write_file and merge_branch before it actually happens. These only apply to "+ghRepoOwner+"/"+ghRepoName+" - if the user is talking about a different or new project, don't use them against this repo.";
     }
   }
   var msgs=[{role:"system",content:sys}].concat(overseerState.strategyChat.slice(0,-1)).concat([{role:"user",content:text}]);
@@ -6471,10 +6556,13 @@ async function doSendRequest(userContent,isRegen,ap){
     full=stripMemoryTags(full);
     var suggestsProject=hasProjectSuggestTag(full);
     full=stripProjectSuggestTags(full);
+    var choiceOptions=extractChoiceOptions(full);
+    full=stripChoiceTags(full);
     speakText(full);
 
     asstMsg.wrap.classList.remove("ma2");
     asstMsg.body.innerHTML=renderMd(full||(isRegen?"(no response)":triedFallback?"\u26a0\ufe0f No response from "+esc(currentModel.label)+" either - try rephrasing or pick a different model.":"(empty response)"));
+    renderChoiceButtons(asstMsg.wrap,choiceOptions);
     chatHistory.push({role:"assistant",content:full,modelLabel:currentModel.label});
     showNextStepPrompt();
     memSuggestions.forEach(function(t){showMemorySuggestion(t);});

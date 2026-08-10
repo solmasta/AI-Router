@@ -820,7 +820,7 @@ function assert(cond, label) {
   await page.unroute('**/*');
   const genericCodeToolNames = ((lastGenericCodeBody && lastGenericCodeBody.tools) || []).map((t) => t.function.name);
   assert(!!lastGenericCodeBody, 'a generic coding question reaches the dedicated coding agent when GitHub is connected');
-  assert(genericCodeToolNames.indexOf('read_file') >= 0 && genericCodeToolNames.indexOf('write_file') >= 0 && genericCodeToolNames.indexOf('list_files') >= 0, `a generic coding question gets repo tools through the dedicated coding agent when GitHub is connected (got tools: ${JSON.stringify(genericCodeToolNames)})`);
+  assert(genericCodeToolNames.indexOf('read_file') >= 0 && genericCodeToolNames.indexOf('write_file') >= 0 && genericCodeToolNames.indexOf('list_files') >= 0 && genericCodeToolNames.indexOf('list_all_files') >= 0, `a generic coding question gets repo tools through the dedicated coding agent when GitHub is connected (got tools: ${JSON.stringify(genericCodeToolNames)})`);
 
   console.log('\n-- a genuinely code/github-relevant message routes to the dedicated coding agent, not the main chat model --');
   // Repo work (read_file/write_file/list_files/merge_branch) always runs
@@ -895,6 +895,64 @@ function assert(cond, label) {
   await sendMsg('Continue with the next step: Verify results');
   await page.unroute('**/*');
   assert(continuationRoundCodingAgentHits === 4, `4 consecutive rounds (1 seed message + 3 "Continue with the next step" follow-ups) all reached the dedicated coding agent, not just the first couple (got ${continuationRoundCodingAgentHits})`);
+
+  console.log('\n-- list_all_files lists the whole repo in one call instead of directory-by-directory guessing --');
+  // A real user report: the coding agent hit repeated read_file 404s
+  // guessing at plausible file paths/extensions (e.g. .js vs .jsx) before
+  // finding the real one - list_all_files (Git Trees API, recursive) gives
+  // it every path in the repo, or under a prefix, in a single call.
+  let listAllFilesRoundCount = 0;
+  let listAllFilesWorkerBody = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        listAllFilesRoundCount++;
+        if (listAllFilesRoundCount === 1) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', tool_calls: [{ id: 'regtest_list_all', type: 'function', function: { name: 'list_all_files', arguments: JSON.stringify({ path: 'frontend/src' }) } }] } }] }),
+          });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest found it via list_all_files' } }] }),
+        });
+        return;
+      }
+      if (parsed && parsed.op === 'list_all_files') {
+        listAllFilesWorkerBody = parsed;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ success: true, files: ['frontend/src/App.js', 'frontend/src/index.js'], total: 42, truncated: true }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  // "on your own" matches looksLikeAutoContinueRequest so round 2 (the
+  // final answer) chains automatically instead of stopping after round 1
+  // for a manual Continue tap - this test is about list_all_files wiring,
+  // not the separate auto-continue-detection behavior covered elsewhere.
+  await sendMsg('please find the api config file in this repo on your own');
+  let chatTextAfterListAllFiles = '';
+  for (let i = 0; i < 40; i++) {
+    chatTextAfterListAllFiles = await page.evaluate(() => document.getElementById('chat').textContent);
+    if (chatTextAfterListAllFiles.indexOf('regtest found it via list_all_files') >= 0) break;
+    await page.waitForTimeout(200);
+  }
+  await page.unroute('**/*');
+  assert(!!listAllFilesWorkerBody, 'the coding agent actually calls the list_all_files op against the repo worker, not just read_file/list_files');
+  assert(listAllFilesWorkerBody.path === 'frontend/src', `list_all_files forwards the requested path prefix to the worker (got: ${JSON.stringify(listAllFilesWorkerBody)})`);
+  assert(chatTextAfterListAllFiles.indexOf('regtest found it via list_all_files') >= 0, `the final answer renders after the list_all_files round completes (rounds seen: ${listAllFilesRoundCount}, tail: ${chatTextAfterListAllFiles.slice(-400)})`);
+  assert(chatTextAfterListAllFiles.indexOf('mapped out the whole repo') >= 0, `the round summary reflects the list_all_files step, not a generic fallback (got tail: ${chatTextAfterListAllFiles.slice(-300)})`);
 
   await page.evaluate(() => {
     document.getElementById('ghwPath').textContent = 'test';
@@ -1937,9 +1995,22 @@ function assert(cond, label) {
   // busy state for the whole chain now, not just the first round.
   await page.fill('#prompt', 'please go through every file in the repo on your own without doing one by one, and let me know when you are done');
   await page.click('#sendBtn');
-  await page.waitForTimeout(300);
-  const sendBtnTextMidChain = await page.textContent('#sendBtn');
-  assert(sendBtnTextMidChain.indexOf('Send') === -1, `Send stays in its busy state mid-chain (after round 1, before round 2 has fired) instead of falsely reporting idle (got "${sendBtnTextMidChain}", rounds so far: ${autoContinueRoundCount})`);
+  // Polls for the busy label instead of snapshotting at one fixed delay -
+  // sending=true is set synchronously on click, well before round 1 even
+  // starts, so this should resolve almost immediately under normal
+  // conditions; polling (rather than a single 300ms snapshot) absorbs
+  // occasional scheduling jitter this deep into a long-running suite
+  // without weakening what's actually being checked - it still exits the
+  // instant busy state is observed, long before round 2 could plausibly
+  // have completed and gone idle again.
+  let sendBtnTextMidChain = '';
+  let sawBusyState = false;
+  for (let i = 0; i < 10; i++) {
+    sendBtnTextMidChain = await page.textContent('#sendBtn');
+    if (sendBtnTextMidChain.indexOf('Send') === -1) { sawBusyState = true; break; }
+    await page.waitForTimeout(50);
+  }
+  assert(sawBusyState, `Send stays in its busy state mid-chain (after round 1, before round 2 has fired) instead of falsely reporting idle (got "${sendBtnTextMidChain}" after ~500ms, rounds so far: ${autoContinueRoundCount})`);
   let chatTextAfterAutoContinue = '';
   for (let i = 0; i < 60; i++) {
     chatTextAfterAutoContinue = await page.evaluate(() => document.getElementById('chat').textContent);
@@ -1995,7 +2066,7 @@ function assert(cond, label) {
     await page.waitForTimeout(200);
   }
   await page.unroute('**/*');
-  assert(stuckRoundCount <= 3, `a round repeating the exact same failing tool call pauses auto-continue within a couple of rounds instead of chaining all the way to the 25-round cap (got ${stuckRoundCount} rounds)`);
+  assert(stuckRoundCount <= 3, `a round repeating the exact same failing tool call pauses auto-continue within a couple of rounds instead of chaining all the way to the auto-round cap (got ${stuckRoundCount} rounds)`);
   assert(chatTextWhileStuck.indexOf('paused instead of repeating it automatically') >= 0, `a note explains why auto-continue paused instead of just silently offering Continue (got: ${chatTextWhileStuck.slice(-300)})`);
   const stuckContinueVisible = await page.evaluate(() => !!document.querySelector('#chat .msg.ma3 button.cta'));
   assert(stuckContinueVisible, 'a manual Continue button is still offered after pausing, so the user can push through if they want to');
