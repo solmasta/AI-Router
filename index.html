@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.147</span></span>
+      <span class="wm">ai-router <span>v5.148</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.147</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.148</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -773,6 +773,17 @@ var codingModeActive=false;
    connection changed later. null means this tab has never run a coding turn
    yet, so there's nothing to compare against. */
 var codingTabRepo=null;
+/* Set once this tab's coding agent has ever produced a capability-denial
+   reply ("I don't actually have access...") that contradicted its own real
+   tool calls - see looksLikeCapabilityDenialText. The in-round retry alone
+   only corrects the model for the rest of THAT round; a brand new round
+   (next user message, or even tapping Continue - both rebuild the system
+   prompt from scratch) forgets the correction entirely and the model is
+   free to deny again from a clean slate. Persisting this per-tab, like
+   codingTabRepo, lets codingAgentSystemPrompt() keep reminding the model
+   for the rest of the conversation instead of relying on a one-shot
+   after-the-fact retry that a stubborn model can just repeat past. */
+var codingAgentDenialSeen=false;
 var MK="ai_memories";
 var memories=[];
 var DLK="ai_doclibrary";
@@ -3269,6 +3280,15 @@ function codingAgentSystemPrompt(){
   }
   sys+="Work in clear concrete steps, but keep going on your own until the request is complete or you need user input/approval; only pause early if the user explicitly asks for one step at a time.\n";
   sys+="If the request is ambiguous or you're missing information needed to proceed safely (which file, which branch, what exact behavior), ask a clarifying question instead of guessing.\n";
+  /* codingAgentDenialSeen is set once this tab's agent has ever wrongly
+     claimed it lacks tool access (see looksLikeCapabilityDenialText) - that
+     denial's own in-round retry correction doesn't carry into the NEXT
+     round (a new user message or even Continue rebuilds this prompt from
+     scratch), so without this the same denial just recurs every other
+     turn. Baking the reminder into the prompt itself, for the rest of the
+     conversation, fixes it at the source instead of only reacting after
+     the fact each time. */
+  if(codingAgentDenialSeen)sys+="\nIMPORTANT: earlier in this conversation you incorrectly claimed you lacked tool access or that your actions were hypothetical, contradicting real tool calls you had already made. That claim was always false - you have real, working read_file/write_file/list_files/merge_branch/run_tests/get_test_status access right now, in this exact conversation. Do not repeat that denial; just use the tools.\n";
   sys+="Show your reasoning in <think> tags.";
   return sys;
 }
@@ -3583,6 +3603,9 @@ async function runCodingAgentRound(sessionId){
          why it's always wrong. */
       if(looksLikeCapabilityDenialText(finalText)&&!mySession.capabilityDenialRetried){
         mySession.capabilityDenialRetried=true;
+        /* Persists past this round - see codingAgentDenialSeen above and
+           its use in codingAgentSystemPrompt(). */
+        codingAgentDenialSeen=true;
         con.body.innerHTML=renderMd("Let me try that again.");
         msgs.push(msg);
         msgs.push({role:"user",content:"That's incorrect - you DO have real, working read_file/write_file/list_files/merge_branch tool access in this exact conversation, proven by the actual tool results already above if any tools have run, or simply available to call right now if none have. An earlier empty or malformed reply is not evidence you lack access - it never has been. Stop claiming you can't do this and actually use the tools."});
@@ -4289,7 +4312,7 @@ function tabTitleFor(hist){
 }
 function currentTabSnapshot(){
   var ov=Object.assign({},overseerState,{modelsUsed:Array.from(overseerState.modelsUsed)});
-  return{title:tabTitleFor(chatHistory),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive,codingRepo:codingTabRepo};
+  return{title:tabTitleFor(chatHistory),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive,codingRepo:codingTabRepo,codingDenialSeen:codingAgentDenialSeen};
 }
 function syncActiveTabFromLiveState(){
   if(!openTabs.length)return;
@@ -4331,6 +4354,7 @@ function applyTabAsLiveState(t){
   declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   codingModeActive=!!t.codingMode;
   codingTabRepo=t.codingRepo||null;
+  codingAgentDenialSeen=!!t.codingDenialSeen;
   updateCodingModeUI();
 }
 /* The systemToggle bar right under the header already shows contextual
@@ -4405,6 +4429,7 @@ function createNewTab(isCoding){
   declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   codingModeActive=!!isCoding;
   codingTabRepo=null;
+  codingAgentDenialSeen=false;
   updateCodingModeUI();
   if(isCoding)applyCodingEmptyStateText();
   renderTabBar();
@@ -6491,6 +6516,7 @@ document.getElementById("clearBtn").addEventListener("click",function(){
   undoData={messages:chatHistory.slice(),backend:activeBackend,modelId:currentModel.id,modelLabel:currentModel.label};
   chatHistory=[];clearAttach();localStorage.removeItem(pk(AUTOSAVE_KEY));localStorage.removeItem(pk("ai_draft"));
   sessionId=Date.now().toString();responseCount=0;summarizing=false;
+  codingTabRepo=null;codingAgentDenialSeen=false;
   clearActiveWproj();stopOverseerMonitoring();overseerState=defaultOverseerState();
   preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">🤖</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';
