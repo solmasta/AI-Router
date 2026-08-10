@@ -1,4 +1,6 @@
-# openai-router
+# AI-Router
+
+(repo renamed from `openai-router` - the worker folder `workers/openai-router-chat/` keeps its old name since that's a separately-deployed Cloudflare Worker service, unaffected by the repo rename.)
 
 Single-file PWA (`index.html`) - all frontend logic lives in two inline
 `<script>` blocks. Backed by several Cloudflare Workers, each in its own
