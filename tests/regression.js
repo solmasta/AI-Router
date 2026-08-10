@@ -94,6 +94,12 @@
      without opening the Connect modal, previously-connected repos are
      offered as quick "recent" picks when reconnecting, and a repo saved
      without OAuth/write-secret auth gets an auth-specific Coding-tab guard
+   - once OAuth is connected, "Browse your repos" lists the account's
+     actual GitHub repos (fetched directly from GitHub's API with the
+     OAuth token - only offered under OAuth, since the legacy write-secret
+     path never hands the browser a token to call it with), supports a
+     client-side filter, and picking one fills owner/repo the same way a
+     manual entry would
    - a fresh deploy that only changes index.html (the common case, which
      never touches sw.js's own bytes) still applies itself automatically -
      no tap required - and defers cleanly instead of reloading mid-request
@@ -1143,6 +1149,56 @@ function assert(cond, label) {
   await page.waitForTimeout(400);
   const codingIndicatorGoneAfterSwitch = await page.evaluate(() => document.getElementById('activePromptName').textContent.indexOf('Coding') === -1);
   assert(codingIndicatorGoneAfterSwitch, 'switching to a non-Coding tab clears the Coding indicator again');
+
+  console.log('\n-- Browse your repos: pick a connected GitHub account\'s repo from a real list instead of typing owner/name --');
+  // Real request: let the user pick from a dropdown of their own repos
+  // instead of typing owner/name from memory. Only available once OAuth
+  // is connected (already true at this point in the suite) - the legacy
+  // write-secret path never hands the browser a usable token to call
+  // GitHub's API with directly.
+  await page.click('#settingsBtn'); await page.waitForTimeout(150);
+  await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
+  const browseBtnVisible = await page.evaluate(() => !document.getElementById('ghBrowseReposBtn').classList.contains('hidden'));
+  assert(browseBtnVisible, '"Browse your repos" is offered once GitHub OAuth is connected');
+  let repoListRequestAuth = '';
+  await page.route('https://api.github.com/user/repos**', async (route) => {
+    repoListRequestAuth = route.request().headers().authorization || '';
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        { full_name: 'solmasta/AI-Router', owner: { login: 'solmasta' }, name: 'AI-Router', private: false },
+        { full_name: 'solmasta/regtest-other-repo', owner: { login: 'solmasta' }, name: 'regtest-other-repo', private: true },
+        { full_name: 'someorg/unrelated-thing', owner: { login: 'someorg' }, name: 'unrelated-thing', private: false },
+      ]),
+    });
+  });
+  await page.click('#ghBrowseReposBtn');
+  let repoBrowserRows = [];
+  for (let i = 0; i < 30; i++) {
+    repoBrowserRows = await page.evaluate(() => Array.from(document.querySelectorAll('#ghRepoBrowserList button')).map((b) => b.textContent.trim()));
+    if (repoBrowserRows.length) break;
+    await page.waitForTimeout(200);
+  }
+  await page.unroute('https://api.github.com/user/repos**');
+  assert(repoListRequestAuth.indexOf('Bearer ') === 0, `the repo list request carries the OAuth bearer token (got "${repoListRequestAuth}")`);
+  assert(repoBrowserRows.length === 3, `all 3 mocked repos render as rows (got ${repoBrowserRows.length}: ${JSON.stringify(repoBrowserRows)})`);
+  assert(repoBrowserRows.some((r) => r.indexOf('solmasta/regtest-other-repo') >= 0), 'a private repo still renders (with a lock indicator, but not excluded)');
+  await page.fill('#ghRepoBrowserSearch', 'regtest-other');
+  await page.waitForTimeout(150);
+  const filteredRows = await page.evaluate(() => Array.from(document.querySelectorAll('#ghRepoBrowserList button')).map((b) => b.textContent.trim()));
+  assert(filteredRows.length === 1 && filteredRows[0].indexOf('regtest-other-repo') >= 0, `typing a filter narrows the list client-side without refetching (got ${JSON.stringify(filteredRows)})`);
+  await page.locator('#ghRepoBrowserList button').first().click();
+  await page.waitForTimeout(150);
+  const ownerFilledFromBrowser = await page.inputValue('#ghOwnerInput');
+  const repoFilledFromBrowser = await page.inputValue('#ghRepoInput');
+  assert(ownerFilledFromBrowser === 'solmasta' && repoFilledFromBrowser === 'regtest-other-repo', `clicking a repo row fills the owner/repo inputs the same way a manual entry would (got "${ownerFilledFromBrowser}/${repoFilledFromBrowser}")`);
+  const browserCollapsedAfterPick = await page.evaluate(() => document.getElementById('ghRepoBrowser').classList.contains('hidden'));
+  assert(browserCollapsedAfterPick, 'picking a repo collapses the browser panel instead of leaving it open');
+  // Restore the real repo connection for the rest of the suite.
+  await page.fill('#ghOwnerInput', 'solmasta');
+  await page.fill('#ghRepoInput', 'AI-Router');
+  await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
 
   console.log('\n-- profile: create, isolate --');
   await page.click('#settingsBtn'); await page.waitForTimeout(150);

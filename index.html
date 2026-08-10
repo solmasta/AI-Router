@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.143</span></span>
+      <span class="wm">ai-router <span>v5.144</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -492,6 +492,11 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
     <p style="color:var(--mu);font-size:13px;line-height:1.5;margin:0 0 12px">Choose which repo the coding agent should use here. Repo access turns on once GitHub OAuth is connected or the legacy write secret is entered. Then coding/debugging requests default to this repo unless you clearly ask about some other code. Every write commits directly to the repo, but you'll be asked to approve each one before it happens.</p>
     <button class="bp" id="ghOauthConnectBtn" style="width:100%;margin-bottom:6px">Connect via GitHub OAuth</button>
     <div id="ghOauthStatus" style="font-size:11px;color:var(--mu);margin-bottom:12px"></div>
+    <button class="bg hidden" id="ghBrowseReposBtn" style="width:100%;margin-bottom:8px">Browse your repos</button>
+    <div id="ghRepoBrowser" class="hidden" style="margin-bottom:12px">
+      <input type="text" id="ghRepoBrowserSearch" class="fi" placeholder="Filter your repos&#8230;" autocomplete="off" style="width:100%;box-sizing:border-box;margin-bottom:6px">
+      <div id="ghRepoBrowserList" style="max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:4px"></div>
+    </div>
     <div style="font-size:11px;color:var(--mu);margin-bottom:10px;border-top:1px solid var(--br);padding-top:10px">Or use the legacy write secret (requires GITHUB_TOKEN + WRITE_SECRET set on the github-ops-worker):</div>
     <input type="text" id="ghOwnerInput" class="fi" placeholder="Repo owner, e.g. solmasta" autocomplete="off" style="width:100%;margin-bottom:8px;box-sizing:border-box">
     <input type="text" id="ghRepoInput" class="fi" placeholder="Repo name, e.g. AI-Router" autocomplete="off" style="width:100%;box-sizing:border-box">
@@ -594,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.143</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.144</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -963,6 +968,18 @@ function updateGithubStatus(){
   if(ob)ob.textContent=oauthConnected?"Reconnect GitHub OAuth":"Connect via GitHub OAuth";
   var ost=document.getElementById("ghOauthStatus");
   if(ost)ost.textContent=oauthConnected?"✓ OAuth token stored":"No OAuth token - connect above or enter write secret below";
+  /* Browsing needs a client-side token to call GitHub's API directly with
+     (the legacy write-secret path never gives the browser one - the PAT
+     stays server-side on github-ops-worker) - only offered once OAuth is
+     actually connected. Collapsed and cleared on disconnect so it can't
+     show a stale list next to a token that's no longer there. */
+  var bb=document.getElementById("ghBrowseReposBtn");
+  if(bb)bb.classList.toggle("hidden",!oauthConnected);
+  if(!oauthConnected){
+    var rb=document.getElementById("ghRepoBrowser");
+    if(rb)rb.classList.add("hidden");
+    myGithubRepos=null;
+  }
   updateGithubSaveBtnLabel();
   if(codingModeActive&&document.getElementById("emptyState"))applyCodingEmptyStateText();
 }
@@ -1100,6 +1117,63 @@ function renderRecentRepos(){
       document.getElementById("ghRepoInput").value=repo;
     });
     ul.appendChild(btn);
+  });
+}
+/* Lets the user pick from their actual GitHub repos instead of typing
+   owner/name from memory - only available once OAuth is connected, since
+   that's the only auth mode that hands the browser a usable token at all
+   (the legacy write-secret path keeps its PAT server-side on
+   github-ops-worker, on purpose, so there's nothing to call GitHub's API
+   with directly here). GitHub's REST API supports CORS for authenticated
+   requests, so this calls api.github.com directly - no new worker needed.
+   Cached in memory per modal-open (not persisted) so re-typing the search
+   filter doesn't re-fetch every keystroke; null means "not loaded yet". */
+var myGithubRepos=null;
+async function toggleGithubRepoBrowser(){
+  var panel=document.getElementById("ghRepoBrowser");
+  var wasHidden=panel.classList.contains("hidden");
+  panel.classList.toggle("hidden");
+  if(wasHidden&&myGithubRepos===null)await loadMyGithubRepos();
+}
+async function loadMyGithubRepos(){
+  var listEl=document.getElementById("ghRepoBrowserList");
+  listEl.innerHTML='<div style="font-size:12px;color:var(--mu);padding:6px 2px">Loading your repos&#8230;</div>';
+  var token=await getGhAccessToken();
+  if(!token){
+    listEl.innerHTML='<div style="font-size:12px;color:var(--er);padding:6px 2px">Could not get a valid OAuth token - reconnect GitHub OAuth above and try again.</div>';
+    return;
+  }
+  try{
+    var res=await fetch("https://api.github.com/user/repos?sort=updated&per_page=100&affiliation=owner,collaborator,organization_member",{headers:{"Authorization":"Bearer "+token,"Accept":"application/vnd.github+json"}});
+    if(!res.ok)throw new Error("HTTP "+res.status);
+    var data=await res.json();
+    myGithubRepos=data.map(function(r){return{fullName:r.full_name,owner:r.owner&&r.owner.login,name:r.name,private:!!r.private};});
+    renderMyGithubRepoList(myGithubRepos);
+  }catch(e){
+    listEl.innerHTML='<div style="font-size:12px;color:var(--er);padding:6px 2px">Couldn\'t load your repos ('+esc(e.message)+'). <a href="#" id="ghRepoBrowserRetry" style="color:var(--ac)">Retry</a></div>';
+    var retryLink=document.getElementById("ghRepoBrowserRetry");
+    if(retryLink)retryLink.addEventListener("click",function(ev){ev.preventDefault();loadMyGithubRepos();});
+  }
+}
+function renderMyGithubRepoList(repos){
+  var listEl=document.getElementById("ghRepoBrowserList");
+  listEl.innerHTML="";
+  if(!repos.length){
+    listEl.innerHTML='<div style="font-size:12px;color:var(--mu);padding:6px 2px">No matching repos.</div>';
+    return;
+  }
+  repos.forEach(function(r){
+    var btn=document.createElement("button");
+    btn.className="bg";
+    btn.style.cssText="text-align:left;font-size:12.5px;padding:7px 10px;display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box";
+    btn.innerHTML=(r.private?'<span style="opacity:.6" title="Private">&#128274;</span> ':"")+esc(r.fullName);
+    btn.addEventListener("click",function(){
+      document.getElementById("ghOwnerInput").value=r.owner;
+      document.getElementById("ghRepoInput").value=r.name;
+      updateGithubSaveBtnLabel();
+      document.getElementById("ghRepoBrowser").classList.add("hidden");
+    });
+    listEl.appendChild(btn);
   });
 }
 function disconnectGithub(){
@@ -5221,6 +5295,15 @@ document.getElementById("githubConnectBtn").addEventListener("click",function(){
 });
 document.getElementById("ghOauthConnectBtn").addEventListener("click",function(){
   ghOAuthConnect();
+});
+document.getElementById("ghBrowseReposBtn").addEventListener("click",function(){
+  toggleGithubRepoBrowser();
+});
+document.getElementById("ghRepoBrowserSearch").addEventListener("input",function(){
+  if(!myGithubRepos)return;
+  var q=this.value.trim().toLowerCase();
+  var filtered=q?myGithubRepos.filter(function(r){return r.fullName.toLowerCase().indexOf(q)>=0;}):myGithubRepos;
+  renderMyGithubRepoList(filtered);
 });
 document.getElementById("githubSaveBtn").addEventListener("click",function(){
   var owner=document.getElementById("ghOwnerInput").value.trim();
