@@ -858,6 +858,14 @@ function assert(cond, label) {
   // each auto-continue round then restarted the whole file from scratch
   // with no memory of the truncated attempt, which read as a stuck loop.
   assert(lastCodingAgentBody.max_tokens >= 8000, `the coding agent gets enough max_tokens for a real file write, not just a trivial one (got ${lastCodingAgentBody.max_tokens})`);
+  // A real transcript: asked to "upgrade the graphics", the agent wrote a
+  // whole parallel set of EnhancedHeader.css/EnhancedSidebar.css/etc. next
+  // to the real Header.css/Sidebar.css the components actually import -
+  // real commits, zero visible effect, since nothing pointed at the new
+  // files. The system prompt must tell it to edit the file actually in use
+  // instead of shadowing it with a differently-named duplicate.
+  const codingAgentSystemMsg = (lastCodingAgentBody.messages || []).find((m) => m.role === 'system');
+  assert(!!codingAgentSystemMsg && (codingAgentSystemMsg.content || '').indexOf('never create a differently-named parallel file') >= 0, 'the coding agent is told to edit the real in-use file instead of shadowing it with a parallel duplicate that nothing imports');
   // list_files used to require a path, so the model had no legitimate way
   // to ask for "the whole repo" - it had to guess a path or get an error
   // either way. Confirm the tool's own schema no longer forces one.

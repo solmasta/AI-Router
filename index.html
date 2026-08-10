@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.154</span></span>
+      <span class="wm">ai-router <span>v5.155</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.154</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.155</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3316,7 +3316,8 @@ function codingAgentSystemPrompt(){
   sys+="- Don't add error handling, fallbacks, or validation for scenarios that can't actually happen - trust existing guarantees, only validate at real boundaries (user input, external APIs).\n";
   sys+="- Read enough of the surrounding file first to match its existing naming, style, and conventions instead of imposing your own.\n";
   sys+="- Watch for security issues you might introduce (XSS, injection, secrets in code) - if you notice one in what you just wrote, fix it before moving on.\n";
-  sys+="- No half-finished implementations - a change either works end to end or it isn't done yet.\n\n";
+  sys+="- No half-finished implementations - a change either works end to end or it isn't done yet.\n";
+  sys+="- When asked to improve/fix/upgrade/enhance something that already exists (a component's styling, a page, a feature), edit that EXACT file in place - never create a differently-named parallel file (e.g. EnhancedHeader.css next to Header.css, PhotoItemV2.jsx next to PhotoItem.jsx) as a substitute for editing the real one. A file nothing imports has zero effect no matter how good its content is - the user sees no change, even though a commit happened. If you do intentionally add a genuinely new file, that same round or the very next one must also write the change that imports/wires it into whatever renders it, or the write doesn't count as done. When unsure a file you're about to touch is the one actually in use, read the component that imports it (or grep for the class/file name) rather than assuming.\n\n";
   /* Repo was renamed from openai-router to AI-Router - still matching the
      old name too (GitHub keeps renamed repos reachable under it) so this
      doesn't silently lose the app's self-awareness for anyone who saved
