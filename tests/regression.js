@@ -2731,6 +2731,59 @@ function assert(cond, label) {
   assert(chatTextAfterSecondGarbledCycle.indexOf('happened 2 times now in this conversation') >= 0, `the escalation note still appears on the second cycle even though neither retry's own response matched the stalling regex (chat tail: ${chatTextAfterSecondGarbledCycle.slice(-400)})`);
   await page.click('#newTabBtn'); await page.waitForTimeout(400);
 
+  console.log('\n-- long coding-agent sessions trim old tool-result content instead of letting context grow forever --');
+  // A real user report: a 100+-round session degraded into garbled,
+  // truncated, glitchy replies (a stray "<|im_start|>" token leaking into
+  // the output) as the accumulated tool-result content grew far past
+  // anything the model could stay coherent over - msgs is mutated in
+  // place across every round of one auto-continuing session with nothing
+  // ever trimmed. 9 consecutive read_file rounds (each returning content
+  // over the truncate threshold) should leave the OLDEST tool result
+  // truncated once there are more than CODING_AGENT_KEEP_RECENT_TOOL_RESULTS
+  // (8) of them, while the most recent ones stay untouched.
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  let trimTestRoundCount = 0;
+  let trimTestFinalBody = null;
+  const trimTestBigContent = 'X'.repeat(500);
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    const url = req.url();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        trimTestRoundCount++;
+        if (trimTestRoundCount <= 9) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: '', tool_calls: [{ id: 'call_trim_' + trimTestRoundCount, type: 'function', function: { name: 'read_file', arguments: JSON.stringify({ path: 'file' + trimTestRoundCount + '.js' }) } }] } }] }),
+          });
+          return;
+        }
+        trimTestFinalBody = parsed;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest trim test final answer' } }] }) });
+        return;
+      }
+      if (url.indexOf('github-ops-worker') >= 0 && parsed && parsed.op === 'read_file') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, content: trimTestBigContent }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please review every file in the repo one at a time');
+  for (let i = 0; i < 90 && trimTestFinalBody === null; i++) await page.waitForTimeout(300);
+  await page.unroute('**/*');
+  assert(trimTestRoundCount === 10, `test setup: 9 tool-calling rounds plus a final answer round all auto-chained (got ${trimTestRoundCount} rounds)`);
+  const trimTestToolMsgs = ((trimTestFinalBody && trimTestFinalBody.messages) || []).filter((m) => m.role === 'tool');
+  assert(trimTestToolMsgs.length === 9, `test setup: 9 tool-result messages are present in the final round's request (got ${trimTestToolMsgs.length})`);
+  const trimTestOldestToolMsg = trimTestToolMsgs[0];
+  const trimTestNewestToolMsg = trimTestToolMsgs[trimTestToolMsgs.length - 1];
+  assert(typeof trimTestOldestToolMsg.content === 'string' && trimTestOldestToolMsg.content.indexOf('truncated to keep context manageable') >= 0, `the oldest tool result gets its content truncated once the session has more tool results than the keep-recent budget (got: ${(trimTestOldestToolMsg.content || '').slice(0, 150)})`);
+  assert(trimTestNewestToolMsg.content === trimTestBigContent, 'the most recent tool result keeps its full original content, not truncated');
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+
   console.log('\n-- transient HTTP errors from the coding agent offer a Retry button instead of a dead end --');
   // 429/500/502/503 already got a Retry button that re-enters the same
   // session without starting a new chatHistory turn. A real user report
