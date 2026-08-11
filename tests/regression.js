@@ -1079,6 +1079,46 @@ function assert(cond, label) {
   const oneTabLeftToast = await page.textContent('#msgToastText');
   assert(oneTabLeftToast.indexOf('1 tab left') >= 0, `closing down to the last tab explicitly confirms "1 tab left" rather than looking like a wipe (got "${oneTabLeftToast}")`);
 
+  console.log('\n-- a fast double-tap on one tab\'s close button only removes that one tab, not two --');
+  // A real user report: deleting a tab sometimes "takes out" more than the
+  // one tab. renderTabBar() rebuilds the whole bar (and every pill's
+  // screen position) synchronously inside closeTab - a second physical tap
+  // that lands right after the first can land on whatever now occupies
+  // that same spot once the bar has already reflowed, closing a second,
+  // unintended tab. Two back-to-back clicks on the same X (no wait between
+  // them, simulating a double-tap) should only ever close one tab.
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+  const tabCountBeforeDoubleTap = await page.evaluate(() => document.querySelectorAll('#tabBar .tabpill').length);
+  assert(tabCountBeforeDoubleTap === 4, `test setup: 4 tabs open before the double-tap check (got ${tabCountBeforeDoubleTap})`);
+  const doubleTapTarget = page.locator('#tabBar .tabpill').nth(1).locator('.tpx');
+  await Promise.all([doubleTapTarget.click().catch(() => {}), doubleTapTarget.click().catch(() => {})]);
+  await page.waitForTimeout(400);
+  const tabCountAfterDoubleTap = await page.evaluate(() => document.querySelectorAll('#tabBar .tabpill').length);
+  assert(tabCountAfterDoubleTap === 3, `a fast double-tap on one X removes exactly one tab, not two (got ${tabCountAfterDoubleTap} remaining, expected 3)`);
+  await page.waitForTimeout(600); // let the close-guard cooldown fully clear before the next test touches a tab X
+  while ((await page.evaluate(() => document.querySelectorAll('#tabBar .tabpill').length)) > 1) {
+    await page.locator('#tabBar .tabpill').first().locator('.tpx').click();
+    await page.waitForTimeout(600);
+  }
+
+  console.log('\n-- a fresh, still-empty Coding tab keeps showing "Coding" instead of reverting to a generic "New chat" --');
+  // A real user report: making a Coding tab, then doing anything else,
+  // made it look like a plain tab had replaced it - tabTitleFor() derived
+  // every empty tab's title as "New chat" regardless of codingMode, so the
+  // very first autoSave/tab-switch after creation (well before any message
+  // is sent) silently relabeled the pill from "💻 Coding" to "💻 New chat",
+  // indistinguishable from an ordinary tab except for the icon.
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+  const codingTabTitleAfterSwitch = await page.evaluate(() => Array.from(document.querySelectorAll('#tabBar .tabpill .tpt')).map((e) => e.textContent));
+  assert(codingTabTitleAfterSwitch.indexOf('💻 Coding') >= 0, `an empty Coding tab keeps its distinct "Coding" label after switching away from it, not a generic "New chat" (got: ${JSON.stringify(codingTabTitleAfterSwitch)})`);
+  while ((await page.evaluate(() => document.querySelectorAll('#tabBar .tabpill').length)) > 1) {
+    await page.locator('#tabBar .tabpill').first().locator('.tpx').click();
+    await page.waitForTimeout(600);
+  }
+
   console.log('\n-- closing the active tab mid-send is blocked with a clear toast instead of silently doing nothing --');
   // sending only reflects the ACTIVE tab's own in-flight request - it used
   // to block closing ANY tab (even unrelated background ones) with zero

@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.165</span></span>
+      <span class="wm">ai-router <span>v5.166</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.165</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.166</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -755,6 +755,15 @@ var AUTOSAVE_KEY="ai_autosave";
 var RECENT_KEY="ai_recent";
 var TABS_KEY="ai_tabs";
 var openTabs=[],activeTabIndex=0;
+/* Guards closeTab against a fast double-tap on the same X - a real report
+   showed closing one tab sometimes took out two. renderTabBar() rebuilds
+   the whole bar (and every pill's screen position) synchronously inside
+   closeTab, so a second physical tap that lands microseconds after the
+   first can land on whatever NOW occupies that same spot once the bar has
+   already reflowed - not the tab the user actually meant to close a
+   second time. A short cooldown after any close blocks that second tap
+   outright instead of letting it land on a moving target. */
+var tabCloseGuardUntil=0;
 /* A Coding tab always routes every message straight to the dedicated
    coding agent (see doSendRequest's gate below) instead of relying on
    analyzeTask/looksLikeContinuationRequest to guess whether a given
@@ -4682,15 +4691,22 @@ function loadAutoSave(){
 }
 
 /* ---- Multi-tab conversations ---- */
-function tabTitleFor(hist){
+/* isCoding's fallback used to always be "New chat" regardless - a fresh
+   Coding tab's pill read "💻 Coding" for exactly as long as it took for
+   ANY autoSave/tab-switch to re-snapshot it (which happens well before the
+   first message, e.g. the moment you switch to another tab), at which
+   point it silently relabeled itself "💻 New chat" - visually
+   indistinguishable from an ordinary tab except for the icon, which read
+   as "my Coding tab turned into a different tab" in a real report. */
+function tabTitleFor(hist,isCoding){
   var firstUser=(hist||[]).find(function(m){return m.role==="user";});
-  if(!firstUser)return "New chat";
+  if(!firstUser)return isCoding?"Coding":"New chat";
   var raw=typeof firstUser.content==="string"?firstUser.content:((firstUser.content&&firstUser.content.find&&firstUser.content.find(function(c){return c.type==="text";})||{}).text||"New chat");
   return raw.slice(0,24)+(raw.length>24?"...":"");
 }
 function currentTabSnapshot(){
   var ov=Object.assign({},overseerState,{modelsUsed:Array.from(overseerState.modelsUsed)});
-  return{title:tabTitleFor(chatHistory),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive,codingRepo:codingTabRepo,codingDenialSeen:codingAgentDenialSeen,codingFakeToolSeen:codingAgentFakeToolSeen,codingStallSeen:codingAgentStallSeen,codingStallCycles:codingAgentStallCycles};
+  return{title:tabTitleFor(chatHistory,codingModeActive),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive,codingRepo:codingTabRepo,codingDenialSeen:codingAgentDenialSeen,codingFakeToolSeen:codingAgentFakeToolSeen,codingStallSeen:codingAgentStallSeen,codingStallCycles:codingAgentStallCycles};
 }
 function syncActiveTabFromLiveState(){
   if(!openTabs.length)return;
@@ -4767,7 +4783,12 @@ function renderTabBar(){
     pill.appendChild(span);
     var x=document.createElement("span");
     x.className="tpx";x.textContent="✕";
-    x.addEventListener("click",function(e){e.stopPropagation();closeTab(i);});
+    x.addEventListener("click",function(e){
+      e.stopPropagation();
+      if(Date.now()<tabCloseGuardUntil)return;
+      tabCloseGuardUntil=Date.now()+200;
+      closeTab(i);
+    });
     pill.appendChild(x);
     pill.addEventListener("click",function(){switchToTab(i);});
     bar.appendChild(pill);
