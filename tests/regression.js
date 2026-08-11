@@ -1149,6 +1149,15 @@ function assert(cond, label) {
   assert(codingTabAgentHit, 'a completely generic message with zero repo/code keywords still reaches the dedicated coding agent inside a Coding tab');
   const chatTextInCodingTab = await page.evaluate(() => document.getElementById('chat').textContent);
   assert(chatTextInCodingTab.indexOf('regtest coding tab reply') >= 0, "the coding agent's reply actually renders in the Coding tab");
+  // A real user report: the "🤖 Agent switched to X" banner (a second,
+  // separate instance of the same bug class as the "Switch to X" button
+  // fixed below) kept appearing in a Coding tab before every send, even
+  // though runCodingAgentTurn always uses the one fixed
+  // CODING_AGENT_MODEL_ID regardless of what the per-message auto-router
+  // picked. This send is not the tab's first message (chatHistory.length>1
+  // by now from the guard exchange above), so switchToBestModel() would
+  // have fired here pre-fix.
+  assert(chatTextInCodingTab.indexOf('Agent switched to') === -1, 'the per-message auto-router never shows its "Agent switched to X" banner in a Coding tab');
 
   console.log('\n-- a model-switch recommendation never appears in a Coding tab, since the coding work always runs on the fixed agent model regardless --');
   // A real user report: "Switch to X... Switched" kept firing mid-task in
