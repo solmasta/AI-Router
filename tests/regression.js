@@ -2531,6 +2531,55 @@ function assert(cond, label) {
   const persistentStallReminderSeen = !!(persistentStallReminderBody && persistentStallReminderBody.messages && persistentStallReminderBody.messages.some((m) => m.role === 'system' && typeof m.content === 'string' && m.content.indexOf('described what you were about to do instead of actually doing it') >= 0));
   assert(persistentStallReminderSeen, `a fresh message in the same tab carries a persistent reminder not to repeat the stalling mistake, not just a one-shot in-round retry (got system messages: ${JSON.stringify((persistentStallReminderBody && persistentStallReminderBody.messages || []).filter((m) => m.role === 'system').map((m) => (m.content || '').slice(0, 80)))})`);
 
+  console.log('\n-- tapping Continue after a stall refreshes the system prompt with the persistent reminder, not the stale pre-stall one --');
+  // The persistent-reminder test above only proves a brand NEW outer
+  // message picks up the reminder - but Continue re-enters the SAME
+  // long tool-calling chain by reusing the existing msgs array, whose
+  // system prompt (msgs[0]) was built back when the chain started,
+  // before any stall had happened. A real user report showed the
+  // stalling pattern recurring several Continues later in one long
+  // session despite the one-shot retry having already fired once -
+  // the correction never reached later rounds because msgs[0] was
+  // never refreshed. A fresh Coding tab resets codingAgentStallSeen to
+  // false, guaranteeing this send's system prompt starts with no
+  // reminder, so any reminder seen in round 3 can only have come from
+  // the Continue-time refresh.
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  let continueRefreshRoundCount = 0;
+  let continueRefreshFinalBody = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        continueRefreshRoundCount++;
+        if (continueRefreshRoundCount <= 2) {
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: "I'll make sure to check the repo. Let me verify the current state first." } }] }) });
+          return;
+        }
+        continueRefreshFinalBody = parsed;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest answer after continue refresh' } }] }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please check the repo status');
+  let continueRefreshBtn = null;
+  for (let i = 0; i < 60; i++) {
+    const btn = page.locator('#chat .msg.ma3 button:has-text("Continue")').last();
+    if (await btn.count()) { continueRefreshBtn = btn; break; }
+    await page.waitForTimeout(200);
+  }
+  assert(!!continueRefreshBtn, 'test setup: a Continue button appears after the one-shot stall retry is exhausted');
+  await continueRefreshBtn.click();
+  for (let i = 0; i < 60 && continueRefreshFinalBody === null; i++) await page.waitForTimeout(200);
+  await page.unroute('**/*');
+  const continueRefreshReminderSeen = !!(continueRefreshFinalBody && continueRefreshFinalBody.messages && continueRefreshFinalBody.messages.some((m) => m.role === 'system' && typeof m.content === 'string' && m.content.indexOf('described what you were about to do instead of actually doing it') >= 0));
+  assert(continueRefreshReminderSeen, `tapping Continue after a stall refreshes the system prompt to include the persistent stalling reminder, not the stale pre-stall one (got system messages: ${JSON.stringify((continueRefreshFinalBody && continueRefreshFinalBody.messages || []).filter((m) => m.role === 'system').map((m) => (m.content || '').slice(0, 80)))})`);
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+
   console.log('\n-- transient HTTP errors from the coding agent offer a Retry button instead of a dead end --');
   // 429/500/502/503 already got a Retry button that re-enters the same
   // session without starting a new chatHistory turn. A real user report

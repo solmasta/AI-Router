@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.157</span></span>
+      <span class="wm">ai-router <span>v5.158</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.157</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.158</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3825,6 +3825,19 @@ async function runCodingAgentRound(sessionId){
       contBtn2.style.cssText="margin-top:8px";
       contBtn2.onclick=function(){
         contBtn2.disabled=true;contBtn2.textContent="…";
+        /* Continue hands out a fresh one-shot retry budget for stalling/
+           fake-tool-call/capability-denial below, but msgs[0] is still the
+           system prompt built back at the ORIGINAL outer send - if one of
+           those already happened earlier in this same long tool-calling
+           chain, the correction only ever reached the model as a one-off
+           in-round nudge, never as a standing reminder for whatever comes
+           after this Continue tap. A real user report showed the stalling
+           pattern recurring several Continues later in one long session
+           despite the one-shot retry having already fired once. Refreshing
+           msgs[0] here picks up whatever codingAgent*Seen flags are true
+           right now, so this new session inherits the same standing
+           warning a brand new outer message would get. */
+        if(msgs[0]&&msgs[0].role==="system")msgs[0]={role:"system",content:codingAgentSystemPrompt()};
         codingAgentActive={messages:msgs,id:++codingAgentSeq,autoContinue:codingModeActive||!!mySession.autoContinue,fakeToolRetried:false,emptyRetried:false,capabilityDenialRetried:false,stallRetried:false};
         runCodingAgentRound(codingAgentActive.id);
       };
