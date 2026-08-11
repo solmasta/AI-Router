@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.163</span></span>
+      <span class="wm">ai-router <span>v5.164</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.163</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.164</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3503,6 +3503,18 @@ function looksLikeStallingIntentText(text){
   if(/```|\bhere'?s\b|\bi'?ve\b|\bi\s+have\b|\bfound\b|\bcompleted\b/i.test(t))return false;
   return /^(let me (check|verify|see|look|try|redo|make sure|review)|i'?ll (make sure|check|verify|look|redo|ensure|review)|i will (make sure|check|verify|look|redo|ensure|review)|(i'?m |i am )?going to (check|verify|look|redo|make sure))\b/i.test(t);
 }
+/* A real transcript: a long session's OAuth access token expired mid-task
+   and the refresh silently failed, so every subsequent tool call came back
+   with a "not authenticated"/"Unauthorized" error from executeRepoToolRaw
+   or the github-ops-worker itself - but nothing treated that error as
+   different from any other tool failure (a missing file, say), so the
+   model was left to keep trying against a wall for dozens more rounds
+   instead of the session stopping and saying plainly "reconnect GitHub."
+   No corrective retry can fix a credential problem, so this is checked
+   separately from and takes priority over the four retry detectors above. */
+function looksLikeAuthFailureText(text){
+  return /not authenticated|unauthorized/i.test(text||"");
+}
 /* chatHistory stores client-only metadata like apId so Regen can recreate
    the exact project/prompt that was active at send time. That metadata must
    never reach provider APIs: OpenAI-format backends can reject unknown
@@ -3658,6 +3670,7 @@ async function runCodingAgentRound(sessionId,toolChoice){
     if(choice.finish_reason==="tool_calls"&&msg.tool_calls&&msg.tool_calls.length){
       msgs.push(msg);
       var plainLines=[];
+      var authFailureThisRound=false;
       for(var i=0;i<msg.tool_calls.length;i++){
         var tc=msg.tool_calls[i];
         var toolName=tc["function"].name;
@@ -3728,6 +3741,7 @@ async function runCodingAgentRound(sessionId,toolChoice){
           }
           displayToolExecution("get_test_status",toolArgs,gsRes2);
         }
+        if(looksLikeAuthFailureText(toolResult))authFailureThisRound=true;
         plainLines.push(lineText);
         msgs.push({role:"tool",tool_call_id:tc.id,content:toolResult||"No result"});
       }
@@ -3742,6 +3756,21 @@ async function runCodingAgentRound(sessionId,toolChoice){
          just found (e.g. claiming it can't see the repo at all). */
       chatHistory.push({role:"assistant",content:roundSummary,modelLabel:CODING_AGENT_MODEL_LABEL});
       autoSave();
+      if(authFailureThisRound){
+        /* Ending the session outright (not offering Retry/Continue) is
+           deliberate - unlike a rate limit or a transient 5xx, nothing about
+           tapping a button in THIS session fixes an expired/revoked
+           credential. The user has to go reconnect in Settings first, then
+           send a fresh message, which re-enters through the normal
+           hasCodingAgentAccess() gate in doSendRequest. */
+        var authGuardText=getCodingGuardText();
+        con.body.innerHTML=renderMd(roundSummary+"\n\n"+authGuardText);
+        con.wrap.scrollIntoView({behavior:"smooth",block:"end"});
+        chatHistory.push({role:"assistant",content:authGuardText,modelLabel:null});
+        autoSave();
+        codingAgentActive=null;
+        return;
+      }
       /* Auto-continue used to chain blindly up to CODING_AGENT_MAX_AUTO_ROUNDS
          with no check that each round actually made progress - a tool call
          that keeps failing the same way (e.g. a token that expired
@@ -3816,6 +3845,14 @@ async function runCodingAgentRound(sessionId,toolChoice){
            own if the same failing call repeats, same as it always did. */
         contBtn.onclick=function(){contBtn.disabled=true;contBtn.textContent="…";mySession.autoContinue=true;mySession.autoRoundCount=0;runCodingAgentRound(mySession.id);};
         con.wrap.appendChild(contBtn);
+        /* renderCodingConsole's own scrollIntoView ran when this bubble was
+           still just a "working on the next step…" placeholder, before the
+           round's actual fetch/tool calls (which can take a while) added the
+           real summary and this button - a real report showed the button
+           ending up scrolled out of view below the Terminal panel by the
+           time it actually appeared, since nothing re-scrolled once the
+           bubble's real, taller content (and the button) landed. */
+        con.wrap.scrollIntoView({behavior:"smooth",block:"end"});
       }
     }else{
       var rawContent=(msg.content||"").replace(/<think>[\s\S]*?<\/think>\s*/g,"").trim();
@@ -3951,6 +3988,11 @@ async function runCodingAgentRound(sessionId,toolChoice){
       };
       con.wrap.appendChild(contBtn2);
       renderChoiceButtons(con.wrap,choiceOptions);
+      /* Same reasoning as the tool_calls branch's Continue button above -
+         renderCodingConsole's scrollIntoView ran back when this bubble was
+         still an empty placeholder, before this round's reply and (on a
+         repeat stall) the escalation note and this button existed. */
+      con.wrap.scrollIntoView({behavior:"smooth",block:"end"});
     }
   }catch(e){
     con.body.innerHTML='I hit an error and could not continue: '+esc(e.message);

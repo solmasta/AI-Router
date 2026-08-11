@@ -2784,6 +2784,51 @@ function assert(cond, label) {
   assert(trimTestNewestToolMsg.content === trimTestBigContent, 'the most recent tool result keeps its full original content, not truncated');
   await page.click('#newTabBtn'); await page.waitForTimeout(400);
 
+  console.log('\n-- a tool call that fails because auth actually broke mid-session stops the coding agent instead of narrate-looping forever --');
+  // A real user report: an OAuth token expired partway through a long
+  // session and github-ops-worker started returning a real "not
+  // authenticated" error on every tool call, but nothing treated that
+  // differently from any other tool failure (a missing file, say) - the
+  // model was left to keep trying against a wall for many more rounds,
+  // narrating without ever calling a tool, before the app's own guard
+  // eventually caught up. No corrective retry can fix a credential
+  // problem, so an auth-failure tool result should end the session
+  // immediately with the reconnect guard text, on the very first round.
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  let authFailRoundCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    const url = req.url();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        authFailRoundCount++;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: '', tool_calls: [{ id: 'call_authfail_' + authFailRoundCount, type: 'function', function: { name: 'read_file', arguments: JSON.stringify({ path: 'package.json' }) } }] } }] }),
+        });
+        return;
+      }
+      if (url.indexOf('github-ops-worker') >= 0 && parsed && parsed.op === 'read_file') {
+        await route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ error: 'Not authenticated - connect via GitHub OAuth in Settings, or set a write secret before reading, writing, or merging.' }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please review the repo');
+  await page.waitForTimeout(1500);
+  await page.unroute('**/*');
+  assert(authFailRoundCount === 1, `the session stops after the very first tool call instead of continuing to retry against a broken credential (got ${authFailRoundCount} model round(s))`);
+  const authFailChatText = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(authFailChatText.indexOf("repo access isn't authenticated yet") >= 0, `the reconnect guard text is shown once the auth failure is detected (chat tail: ${authFailChatText.slice(-300)})`);
+  assert(authFailChatText.indexOf('This has happened') === -1, 'the stall-cycle escalation note (meant for narration loops, not credential failures) does not also show up here');
+  const authFailContinueBtnCount = await page.locator('#chat .msg.ma3 button').count();
+  assert(authFailContinueBtnCount === 0, `no Retry/Continue button is offered - reconnecting has to happen in Settings, not by tapping something in this dead session (got ${authFailContinueBtnCount} button(s))`);
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+
   console.log('\n-- transient HTTP errors from the coding agent offer a Retry button instead of a dead end --');
   // 429/500/502/503 already got a Retry button that re-enters the same
   // session without starting a new chatHistory turn. A real user report
