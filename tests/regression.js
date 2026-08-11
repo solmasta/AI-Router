@@ -2679,6 +2679,56 @@ function assert(cond, label) {
   await page.unroute('**/*');
   const chatTextAfterSecondStallCycle = await page.evaluate(() => document.getElementById('chat').textContent);
   assert(chatTextAfterSecondStallCycle.indexOf('happened 2 times now in this conversation') >= 0, `a clear note appears once the exhausted-retry stall cycle has happened a second time in the same tab, instead of just another silent Continue button (chat tail: ${chatTextAfterSecondStallCycle.slice(-400)})`);
+
+  console.log('\n-- the repeat-cycle counter still climbs even when the failing retry comes back with completely different, non-matching wording --');
+  // A real user report: as a long session dragged on, the model's
+  // non-progress replies degraded into increasingly garbled/truncated
+  // text ("I'm still working on reviewing and fixing the Pic", a stray
+  // "<|im_start|>" token) that didn't match ANY of the four corrective-
+  // retry regexes - the OLD counter only incremented when this round's
+  // own wording matched the stalling pattern specifically, so it silently
+  // stopped climbing (and the escalation note stopped appearing) the
+  // moment the wording drifted, even though the underlying "still no tool
+  // call" problem never went away. The counter must key off "a retry just
+  // fired and we're still here", not "does this exact text match".
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  let garbledCycleRoundCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        garbledCycleRoundCount++;
+        // Round 1 (and round 3, after Continue) trip the stall detector so
+        // the one-shot retry fires; round 2 (and round 4) - the retry's
+        // own response - come back as unrelated garbled text that matches
+        // none of the four regexes, simulating the reported degradation.
+        const content = (garbledCycleRoundCount % 2 === 1)
+          ? "I'll check the repo now. Let me verify the file first."
+          : 'I\'m still working on reviewing and fixing the Pic';
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content } }] }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please review the repo');
+  let firstGarbledContinueBtn = null;
+  for (let i = 0; i < 60; i++) {
+    const btn = page.locator('#chat .msg.ma3 button:has-text("Continue")').last();
+    if (await btn.count()) { firstGarbledContinueBtn = btn; break; }
+    await page.waitForTimeout(200);
+  }
+  assert(!!firstGarbledContinueBtn, 'test setup: a Continue button appears after the first garbled-retry cycle');
+  const chatTextAfterFirstGarbledCycle = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(chatTextAfterFirstGarbledCycle.indexOf('happened') === -1, 'no escalation note yet after only one garbled-retry cycle');
+  await firstGarbledContinueBtn.click();
+  for (let i = 0; i < 60 && garbledCycleRoundCount < 4; i++) await page.waitForTimeout(200);
+  await page.waitForTimeout(500);
+  await page.unroute('**/*');
+  const chatTextAfterSecondGarbledCycle = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(chatTextAfterSecondGarbledCycle.indexOf('happened 2 times now in this conversation') >= 0, `the escalation note still appears on the second cycle even though neither retry's own response matched the stalling regex (chat tail: ${chatTextAfterSecondGarbledCycle.slice(-400)})`);
   await page.click('#newTabBtn'); await page.waitForTimeout(400);
 
   console.log('\n-- transient HTTP errors from the coding agent offer a Retry button instead of a dead end --');
