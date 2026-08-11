@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.161</span></span>
+      <span class="wm">ai-router <span>v5.162</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.161</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.162</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -805,13 +805,19 @@ var codingAgentStallSeen=false;
    to repeat the stalling pattern, but says nothing to the USER when the
    model keeps doing it anyway despite the reminder - a real user report
    showed the exact same "Let me try that again." -> stalls again -> Continue
-   -> "Let me try that again." cycle repeat 5-6+ times in a row, each
+   -> "Let me try that again." cycle repeat many times in a row, each
    Continue tap handing out a fresh one-shot retry that just gets burned
-   again. This counts how many times the one-shot retry has already been
-   exhausted by a repeat stall IN THIS TAB (not reset by Continue, unlike
-   mySession.stallRetried) so a clear note can be surfaced once it's
-   happened more than once, instead of silently offering the same doomed
-   Continue button forever. */
+   again. This counts how many times ANY of the four corrective retries
+   (empty/capability-denial/fake-tool-call/stalling) has already been
+   exhausted by a repeat non-tool-call round IN THIS TAB (not reset by
+   Continue, unlike mySession.xRetried) so a clear note can be surfaced
+   once it's happened more than once, instead of silently offering the
+   same doomed Continue button forever. Deliberately keyed on "did a
+   retry just fire and still land back here" (thisRoundFollowsACorrective
+   Retry) rather than re-matching this round's own wording against one
+   specific regex - a long session's replies can degrade into
+   increasingly garbled or differently-worded non-progress text that
+   slips past whichever single pattern caught the original failure. */
 var codingAgentStallCycles=0;
 var MK="ai_memories";
 var memories=[];
@@ -3607,6 +3613,15 @@ async function runCodingAgentRound(sessionId,toolChoice){
     var data=await res.json();
     var choice=(data.choices||[])[0]||{};
     var msg=choice.message||{};
+    /* Read-then-clear, unconditionally, before branching on this round's
+       outcome - true only when the PREVIOUS round was one of the four
+       corrective retries firing. Must be cleared here regardless of
+       whether THIS round turns out to be a real tool_calls success or
+       another plain-text round: a retry that succeeds (calls a tool) goes
+       down the tool_calls branch below and must not leave this flag set
+       for some unrelated later plain-text round to wrongly inherit. */
+    var thisRoundFollowsACorrectiveRetry=!!mySession.awaitingRetryRound;
+    mySession.awaitingRetryRound=false;
     var thinkMatch=(msg.content||"").match(/<think>([\s\S]*?)<\/think>/);
     if(thinkMatch)displayThinkingProcess(thinkMatch[1]);
     if(choice.finish_reason==="tool_calls"&&msg.tool_calls&&msg.tool_calls.length){
@@ -3788,6 +3803,7 @@ async function runCodingAgentRound(sessionId,toolChoice){
          would make THAT case worse, not better. */
       if(!rawContent&&!mySession.emptyRetried){
         mySession.emptyRetried=true;
+        mySession.awaitingRetryRound=true;
         con.body.innerHTML=renderMd("Let me try that again.");
         msgs.push(msg);
         msgs.push({role:"user",content:"That came back empty - you didn't actually answer. This is not a sign you lack tool access or that anything is broken - you have real, working read_file/write_file/list_files/merge_branch access right now. If this isn't a repo task, just answer directly in plain text instead of leaving the reply blank; if it is, actually call the tool."});
@@ -3798,6 +3814,7 @@ async function runCodingAgentRound(sessionId,toolChoice){
          why it's always wrong. */
       if(looksLikeCapabilityDenialText(finalText)&&!mySession.capabilityDenialRetried){
         mySession.capabilityDenialRetried=true;
+        mySession.awaitingRetryRound=true;
         /* Persists past this round - see codingAgentDenialSeen above and
            its use in codingAgentSystemPrompt(). */
         codingAgentDenialSeen=true;
@@ -3815,6 +3832,7 @@ async function runCodingAgentRound(sessionId,toolChoice){
          at the top of this function. */
       if(looksLikeFakeToolCallText(finalText)&&!mySession.fakeToolRetried){
         mySession.fakeToolRetried=true;
+        mySession.awaitingRetryRound=true;
         /* Persists past this round - see codingAgentFakeToolSeen above and
            its use in codingAgentSystemPrompt(). */
         codingAgentFakeToolSeen=true;
@@ -3827,6 +3845,7 @@ async function runCodingAgentRound(sessionId,toolChoice){
          looksLikeStallingIntentText above for what this catches and why. */
       if(looksLikeStallingIntentText(finalText)&&!mySession.stallRetried){
         mySession.stallRetried=true;
+        mySession.awaitingRetryRound=true;
         /* Persists past this round - see codingAgentStallSeen above and
            its use in codingAgentSystemPrompt(). */
         codingAgentStallSeen=true;
@@ -3835,12 +3854,20 @@ async function runCodingAgentRound(sessionId,toolChoice){
         msgs.push({role:"user",content:"You described what you're about to do instead of actually doing it, and didn't call a tool this round. Don't narrate the plan - call the real read_file/write_file/list_files/list_all_files/merge_branch/run_tests/get_test_status tool for the very next step right now."});
         return runCodingAgentRound(mySession.id,"required");
       }
-      /* The one-shot retry above already fired for this session and didn't
-         fix it - see codingAgentStallCycles above for why this still gets
-         tracked and surfaced instead of just falling through to a silent
-         Continue button that would hand out yet another doomed retry. */
-      var stalledAfterOwnRetry=looksLikeStallingIntentText(finalText)&&mySession.stallRetried;
-      if(stalledAfterOwnRetry)codingAgentStallCycles++;
+      /* One of the four corrective retries above fired last round, and
+         we're STILL landing here with no tool call this round - that's
+         "the retry didn't fix it," full stop, regardless of which of the
+         four detectors (if any) this round's actual wording happens to
+         match. A real user report showed the model degrading into
+         increasingly garbled, truncated, or differently-worded
+         non-progress replies as a long session dragged on ("I'm still
+         working on reviewing and fixing the Pic", a stray "<|im_start|>"
+         token) - each new variant slipped past whichever single regex
+         had caught the original failure, so re-checking against just
+         that one pattern silently stopped counting real repeats. Checking
+         "did a retry just fire" instead of "does this exact text match"
+         catches all of it. */
+      if(thisRoundFollowsACorrectiveRetry)codingAgentStallCycles++;
       var choiceOptions=extractChoiceOptions(finalText);
       finalText=stripChoiceTags(finalText);
       con.body.innerHTML=renderMd(finalText||"(no response)");
@@ -3864,10 +3891,10 @@ async function runCodingAgentRound(sessionId,toolChoice){
          so seeing it again means the reminder alone isn't fixing it. A
          plain Continue button here would just hand out another doomed
          retry with no indication anything's actually wrong. */
-      if(stalledAfterOwnRetry&&codingAgentStallCycles>=2){
+      if(thisRoundFollowsACorrectiveRetry&&codingAgentStallCycles>=2){
         var stallCycleNote=document.createElement("div");
         stallCycleNote.style.cssText="font-size:11.5px;color:var(--mu);margin-top:8px";
-        stallCycleNote.textContent="This has happened "+codingAgentStallCycles+" times now in this conversation - the model keeps describing a step instead of actually taking it, even after being corrected. Continuing may just repeat the same pattern; try rephrasing your request, or start a fresh message instead.";
+        stallCycleNote.textContent="This has happened "+codingAgentStallCycles+" times now in this conversation - the model keeps coming back without actually calling a tool, even after being corrected. Continuing may just repeat the same pattern; try rephrasing your request, or start a fresh message instead.";
         con.wrap.appendChild(stallCycleNote);
       }
       var contBtn2=document.createElement("button");
