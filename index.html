@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.162</span></span>
+      <span class="wm">ai-router <span>v5.163</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.162</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.163</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3517,6 +3517,36 @@ function sanitizeMessagesForProvider(messages){
     return clean;
   });
 }
+/* The coding agent's msgs array (see runCodingAgentRound) is mutated
+   in place across every round of one auto-continuing session - unlike
+   the main chat, which rebuilds its own context fresh per outer message,
+   a single Coding-tab task can chain dozens of rounds (read_file/
+   list_files/list_all_files results, each carrying full file content or
+   a whole directory listing) with nothing ever trimmed. A real user
+   report showed a 100+-round session degrading into garbled, truncated,
+   glitchy replies (a stray "<|im_start|>" token leaking into the output)
+   as the accumulated tool-result content grew far past anything the
+   model could stay coherent over - the actual root cause behind the
+   repeated stalling this session already patched around, not just
+   another symptom of it. Truncating the CONTENT of old tool-result
+   messages (never removing or reordering any message) keeps every
+   tool_call_id pairing intact - the model still sees exactly what tools
+   it called and in what order, just not the full multi-KB payload of
+   ones from many steps ago that it has almost certainly moved past. */
+var CODING_AGENT_KEEP_RECENT_TOOL_RESULTS=8;
+var CODING_AGENT_TOOL_RESULT_TRUNCATE_LEN=400;
+function trimCodingAgentToolHistory(msgs){
+  var toolIndexes=[];
+  for(var i=0;i<msgs.length;i++){if(msgs[i].role==="tool")toolIndexes.push(i);}
+  var cutoff=toolIndexes.length-CODING_AGENT_KEEP_RECENT_TOOL_RESULTS;
+  for(var j=0;j<cutoff;j++){
+    var m=msgs[toolIndexes[j]];
+    if(m._trimmed||typeof m.content!=="string"||m.content.length<=CODING_AGENT_TOOL_RESULT_TRUNCATE_LEN)continue;
+    var originalLen=m.content.length;
+    m.content=m.content.slice(0,CODING_AGENT_TOOL_RESULT_TRUNCATE_LEN)+"\n\n[...truncated to keep context manageable - "+originalLen+" chars originally. Call the tool again if you need the full content.]";
+    m._trimmed=true;
+  }
+}
 /* toolChoice defaults to "auto" (the model can freely answer in plain text
    or call a tool) for every normal round. The three stall/fake-tool-call/
    capability-denial retries below pass "required" instead - forcing an
@@ -3528,6 +3558,7 @@ async function runCodingAgentRound(sessionId,toolChoice){
   if(!codingAgentActive||(sessionId!==undefined&&sessionId!==codingAgentActive.id))return;
   var mySession=codingAgentActive;
   var msgs=mySession.messages;
+  trimCodingAgentToolHistory(msgs);
   var con=renderCodingConsole();
   try{
     /* A real transcript: a write_file call for a several-KB CSS file kept
