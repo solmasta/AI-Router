@@ -2578,6 +2578,43 @@ function assert(cond, label) {
   await page.unroute('**/*');
   const continueRefreshReminderSeen = !!(continueRefreshFinalBody && continueRefreshFinalBody.messages && continueRefreshFinalBody.messages.some((m) => m.role === 'system' && typeof m.content === 'string' && m.content.indexOf('described what you were about to do instead of actually doing it') >= 0));
   assert(continueRefreshReminderSeen, `tapping Continue after a stall refreshes the system prompt to include the persistent stalling reminder, not the stale pre-stall one (got system messages: ${JSON.stringify((continueRefreshFinalBody && continueRefreshFinalBody.messages || []).filter((m) => m.role === 'system').map((m) => (m.content || '').slice(0, 80)))})`);
+
+  console.log('\n-- a second exhausted stall-retry cycle in the same tab surfaces a clear note instead of another silent Continue button --');
+  // A real user report: the same "Let me try that again." -> stalls again
+  // -> Continue -> "Let me try that again." cycle repeated 5-6+ times in a
+  // row in one long session - each Continue tap grants its own one-shot
+  // retry (by design, so a single bad round doesn't poison the rest of the
+  // conversation), but nothing told the USER that repeatedly tapping
+  // Continue wasn't actually going anywhere. This continues from the
+  // Continue button rendered by the test just above (round 3's real
+  // answer), forcing a second full stall-and-exhausted-retry cycle.
+  let secondStallCycleRoundCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        secondStallCycleRoundCount++;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: "I'll check the repo now. Let me verify the file first." } }] }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  let secondCycleContinueBtn = null;
+  for (let i = 0; i < 60; i++) {
+    const btn = page.locator('#chat .msg.ma3 button:has-text("Continue")').last();
+    if (await btn.count()) { secondCycleContinueBtn = btn; break; }
+    await page.waitForTimeout(200);
+  }
+  assert(!!secondCycleContinueBtn, 'test setup: the earlier Continue button from the first cycle is still there to tap');
+  await secondCycleContinueBtn.click();
+  for (let i = 0; i < 60 && secondStallCycleRoundCount < 2; i++) await page.waitForTimeout(200);
+  await page.waitForTimeout(500);
+  await page.unroute('**/*');
+  const chatTextAfterSecondStallCycle = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(chatTextAfterSecondStallCycle.indexOf('happened 2 times now in this conversation') >= 0, `a clear note appears once the exhausted-retry stall cycle has happened a second time in the same tab, instead of just another silent Continue button (chat tail: ${chatTextAfterSecondStallCycle.slice(-400)})`);
   await page.click('#newTabBtn'); await page.waitForTimeout(400);
 
   console.log('\n-- transient HTTP errors from the coding agent offer a Retry button instead of a dead end --');
