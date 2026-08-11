@@ -2303,6 +2303,7 @@ function assert(cond, label) {
   // round 2 returns a real answer, which should render normally.
   let fakeToolCallRoundCount = 0;
   let secondRoundSawCorrectiveNudge = false;
+  let fakeToolCallRetryToolChoice = null;
   await page.route('**/*', async (route) => {
     const req = route.request();
     if (req.method() === 'POST' && req.postData()) {
@@ -2319,6 +2320,7 @@ function assert(cond, label) {
           return;
         }
         secondRoundSawCorrectiveNudge = (parsed.messages || []).some(m => m.role === 'user' && typeof m.content === 'string' && m.content.indexOf("wasn't a real tool call") >= 0);
+        fakeToolCallRetryToolChoice = parsed.tool_choice;
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -2339,6 +2341,11 @@ function assert(cond, label) {
   await page.unroute('**/*');
   assert(fakeToolCallRoundCount === 2, `fake pseudo-code triggers exactly one automatic retry round (got ${fakeToolCallRoundCount} rounds)`);
   assert(secondRoundSawCorrectiveNudge, 'the retry round includes a corrective nudge telling the model to make a real tool call instead of writing it as text');
+  // A wording nudge alone was not enough - a real user report showed the
+  // retry itself sometimes narrating again instead of calling a tool.
+  // tool_choice:"required" forces the API to reject a plain-text answer
+  // for this one retry round, rather than just asking nicely.
+  assert(fakeToolCallRetryToolChoice === 'required', `the retry round forces tool_choice:"required" so the model can't just narrate again (got ${JSON.stringify(fakeToolCallRetryToolChoice)})`);
   assert(chatTextAfterFakeToolCallRetry.indexOf('tool_code') === -1, 'the fake pseudo-code from round 1 never renders as the final answer');
   assert(chatTextAfterFakeToolCallRetry.indexOf('regtest real answer after retry') >= 0, 'the real answer from the retry round renders once it comes back');
 
@@ -2425,6 +2432,7 @@ function assert(cond, label) {
   // shown to the user as if it were an accurate status report.
   let capabilityDenialRoundCount = 0;
   let capabilityDenialCorrectiveNudgeSeen = false;
+  let capabilityDenialRetryToolChoice = null;
   await page.route('**/*', async (route) => {
     const req = route.request();
     if (req.method() === 'POST' && req.postData()) {
@@ -2441,6 +2449,7 @@ function assert(cond, label) {
           return;
         }
         capabilityDenialCorrectiveNudgeSeen = (parsed.messages || []).some((m) => m.role === 'user' && typeof m.content === 'string' && m.content.indexOf('DO have real, working') >= 0);
+        capabilityDenialRetryToolChoice = parsed.tool_choice;
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -2461,6 +2470,7 @@ function assert(cond, label) {
   await page.unroute('**/*');
   assert(capabilityDenialRoundCount === 2, `a false "I don't have access" claim triggers exactly one automatic retry round (got ${capabilityDenialRoundCount} rounds)`);
   assert(capabilityDenialCorrectiveNudgeSeen, 'the retry round includes a corrective nudge telling the model it does have real tool access');
+  assert(capabilityDenialRetryToolChoice === 'required', `the retry round forces tool_choice:"required" so the model can't just deny access again in plain text (got ${JSON.stringify(capabilityDenialRetryToolChoice)})`);
   assert(chatTextAfterCapabilityDenialRetry.indexOf("don't actually have the ability") === -1, 'the false denial from round 1 never renders as the final answer');
   assert(chatTextAfterCapabilityDenialRetry.indexOf('regtest real answer after capability-denial retry') >= 0, 'the real answer from the retry round renders once it comes back');
 
@@ -2474,6 +2484,7 @@ function assert(cond, label) {
   // whole time.
   let stallRoundCount = 0;
   let stallCorrectiveNudgeSeen = false;
+  let stallRetryToolChoice = null;
   await page.route('**/*', async (route) => {
     const req = route.request();
     if (req.method() === 'POST' && req.postData()) {
@@ -2490,6 +2501,7 @@ function assert(cond, label) {
           return;
         }
         stallCorrectiveNudgeSeen = (parsed.messages || []).some((m) => m.role === 'user' && typeof m.content === 'string' && m.content.indexOf("didn't call a tool this round") >= 0);
+        stallRetryToolChoice = parsed.tool_choice;
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -2510,6 +2522,7 @@ function assert(cond, label) {
   await page.unroute('**/*');
   assert(stallRoundCount === 2, `a stalling, tool-call-free reply triggers exactly one automatic retry round (got ${stallRoundCount} rounds)`);
   assert(stallCorrectiveNudgeSeen, 'the retry round includes a corrective nudge telling the model to call a tool instead of narrating the plan');
+  assert(stallRetryToolChoice === 'required', `the retry round forces tool_choice:"required" so the model can't just stall again in plain text (got ${JSON.stringify(stallRetryToolChoice)})`);
   assert(chatTextAfterStallRetry.indexOf('redo everything') === -1, 'the stalling reply from round 1 never renders as the final answer');
   assert(chatTextAfterStallRetry.indexOf('regtest real answer after stall retry') >= 0, 'the real answer from the retry round renders once it comes back');
 
@@ -2537,6 +2550,50 @@ function assert(cond, label) {
   await page.unroute('**/*');
   const persistentStallReminderSeen = !!(persistentStallReminderBody && persistentStallReminderBody.messages && persistentStallReminderBody.messages.some((m) => m.role === 'system' && typeof m.content === 'string' && m.content.indexOf('described what you were about to do instead of actually doing it') >= 0));
   assert(persistentStallReminderSeen, `a fresh message in the same tab carries a persistent reminder not to repeat the stalling mistake, not just a one-shot in-round retry (got system messages: ${JSON.stringify((persistentStallReminderBody && persistentStallReminderBody.messages || []).filter((m) => m.role === 'system').map((m) => (m.content || '').slice(0, 80)))})`);
+
+  console.log('\n-- a provider that rejects tool_choice:"required" falls back to a normal retry instead of dead-ending --');
+  // Not every OpenAI-compatible provider necessarily accepts "required" -
+  // if it comes back HTTP 400, the retry should fall back to a plain
+  // "auto" round instead of showing a dead-end error and killing the
+  // session over a parameter the provider just doesn't support.
+  let requiredFallbackRoundCount = 0;
+  let requiredFallbackSawRequired = false;
+  let requiredFallbackToolChoiceOnRetry = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        requiredFallbackRoundCount++;
+        if (requiredFallbackRoundCount === 1) {
+          await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'tool_code\nprint(list_files())' } }] }) });
+          return;
+        }
+        if (requiredFallbackRoundCount === 2) {
+          requiredFallbackSawRequired = parsed.tool_choice === 'required';
+          await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'tool_choice value "required" is not supported' }) });
+          return;
+        }
+        requiredFallbackToolChoiceOnRetry = parsed.tool_choice;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest recovered after required rejected' } }] }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please check the repo one more time');
+  let chatTextAfterRequiredFallback = '';
+  for (let i = 0; i < 60; i++) {
+    chatTextAfterRequiredFallback = await page.evaluate(() => document.getElementById('chat').textContent);
+    if (chatTextAfterRequiredFallback.indexOf('regtest recovered after required rejected') >= 0) break;
+    await page.waitForTimeout(200);
+  }
+  await page.unroute('**/*');
+  assert(requiredFallbackSawRequired, 'test setup: the retry round actually requested tool_choice:"required"');
+  assert(requiredFallbackToolChoiceOnRetry !== 'required', `after a 400 rejecting "required", the fallback round drops back to "auto" instead of repeating the same rejected value (got ${JSON.stringify(requiredFallbackToolChoiceOnRetry)})`);
+  assert(chatTextAfterRequiredFallback.indexOf('I hit an error and could not continue') === -1, 'a 400 rejecting tool_choice:"required" does not show the dead-end error message');
+  assert(chatTextAfterRequiredFallback.indexOf('regtest recovered after required rejected') >= 0, 'the session recovers and renders the real answer once it falls back to "auto"');
 
   console.log('\n-- tapping Continue after a stall refreshes the system prompt with the persistent reminder, not the stale pre-stall one --');
   // The persistent-reminder test above only proves a brand NEW outer

@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.160</span></span>
+      <span class="wm">ai-router <span>v5.161</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.160</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.161</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3511,7 +3511,14 @@ function sanitizeMessagesForProvider(messages){
     return clean;
   });
 }
-async function runCodingAgentRound(sessionId){
+/* toolChoice defaults to "auto" (the model can freely answer in plain text
+   or call a tool) for every normal round. The three stall/fake-tool-call/
+   capability-denial retries below pass "required" instead - forcing an
+   actual tool_calls entry structurally, rather than just asking nicely in
+   the corrective nudge and hoping the model complies this time. A
+   sentence telling the model to call the tool is not the same thing as
+   the API refusing to let it answer in plain text at all. */
+async function runCodingAgentRound(sessionId,toolChoice){
   if(!codingAgentActive||(sessionId!==undefined&&sessionId!==codingAgentActive.id))return;
   var mySession=codingAgentActive;
   var msgs=mySession.messages;
@@ -3528,7 +3535,7 @@ async function runCodingAgentRound(sessionId){
        as plain text either. 1500 tokens is barely 6,000 characters even
        before escaping overhead - nowhere near enough for a real source
        file. Raised well past what a normal file write needs. */
-    var res=await fetch(DI_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:CODING_AGENT_MODEL_ID,messages:sanitizeMessagesForProvider(msgs),tools:REPO_TOOLS,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:8000})});
+    var res=await fetch(DI_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:CODING_AGENT_MODEL_ID,messages:sanitizeMessagesForProvider(msgs),tools:REPO_TOOLS,tool_choice:toolChoice||"auto",temperature:temperature,stream:false,max_tokens:8000})});
     if(!res.ok){
       if(res.status===429){
         /* Rate-limited: keep the session alive so the Retry button below
@@ -3582,6 +3589,15 @@ async function runCodingAgentRound(sessionId){
           runCodingAgentRound(sid);
         };})(mySession.id,con);
         con.wrap.appendChild(retryBtn5xx);
+      }else if(res.status===400&&toolChoice==="required"&&!mySession.requiredToolChoiceRejected){
+        /* Not every OpenAI-compatible provider/model accepts
+           tool_choice:"required" even when it accepts "auto" - rather than
+           dead-ending a retry attempt over a parameter the provider just
+           doesn't support, fall back to a normal "auto" round once. Guarded
+           by requiredToolChoiceRejected so a genuinely bad request can't
+           loop forever retrying the same 400. */
+        mySession.requiredToolChoiceRejected=true;
+        return runCodingAgentRound(mySession.id);
       }else{
         con.body.innerHTML='<span style="color:var(--er)">I hit an error and could not continue (HTTP '+res.status+').</span>';
         codingAgentActive=null;
@@ -3765,7 +3781,11 @@ async function runCodingAgentRound(sessionId){
          can still come back with genuinely nothing instead of a plain
          reply. Same one-shot retry pattern as the fake-tool-call case
          below, since there's no fallback model to switch to here (unlike
-         the main chat's pickFallbackModel). */
+         the main chat's pickFallbackModel). Deliberately NOT forced to
+         tool_choice:"required" like the other three retries - an empty
+         reply to a non-repo conversational message is legitimately
+         supposed to come back as plain text, and forcing a tool call here
+         would make THAT case worse, not better. */
       if(!rawContent&&!mySession.emptyRetried){
         mySession.emptyRetried=true;
         con.body.innerHTML=renderMd("Let me try that again.");
@@ -3784,7 +3804,7 @@ async function runCodingAgentRound(sessionId){
         con.body.innerHTML=renderMd("Let me try that again.");
         msgs.push(msg);
         msgs.push({role:"user",content:"That's incorrect - you DO have real, working read_file/write_file/list_files/merge_branch tool access in this exact conversation, proven by the actual tool results already above if any tools have run, or simply available to call right now if none have. An earlier empty or malformed reply is not evidence you lack access - it never has been. Stop claiming you can't do this and actually use the tools."});
-        return runCodingAgentRound(mySession.id);
+        return runCodingAgentRound(mySession.id,"required");
       }
       /* Capped at one retry per session (mySession.fakeToolRetried) since
          there's no fallback model to switch to here (unlike the main
@@ -3801,7 +3821,7 @@ async function runCodingAgentRound(sessionId){
         con.body.innerHTML=renderMd("Let me try that again using the actual tool.");
         msgs.push(msg);
         msgs.push({role:"user",content:"That wasn't a real tool call - it was tool-call syntax written out as plain text, so nothing actually ran. Use the real function-calling mechanism now: emit an actual tool_calls entry for the tool you need instead of writing tool_code, print(read_file(...)), <tool_call>, or similar as text."});
-        return runCodingAgentRound(mySession.id);
+        return runCodingAgentRound(mySession.id,"required");
       }
       /* Capped at one retry per session (mySession.stallRetried) - see
          looksLikeStallingIntentText above for what this catches and why. */
@@ -3813,7 +3833,7 @@ async function runCodingAgentRound(sessionId){
         con.body.innerHTML=renderMd("Let me try that again.");
         msgs.push(msg);
         msgs.push({role:"user",content:"You described what you're about to do instead of actually doing it, and didn't call a tool this round. Don't narrate the plan - call the real read_file/write_file/list_files/list_all_files/merge_branch/run_tests/get_test_status tool for the very next step right now."});
-        return runCodingAgentRound(mySession.id);
+        return runCodingAgentRound(mySession.id,"required");
       }
       /* The one-shot retry above already fired for this session and didn't
          fix it - see codingAgentStallCycles above for why this still gets
