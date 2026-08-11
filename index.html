@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.164</span></span>
+      <span class="wm">ai-router <span>v5.165</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.164</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.165</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3322,6 +3322,11 @@ var CODING_AGENT_MODEL_LABEL="Qwen3 Coder 480B";
    a real audit needs; the repeat-round guard is what actually protects
    against a runaway loop, not this number. */
 var CODING_AGENT_MAX_AUTO_ROUNDS=60;
+/* See the 429 branch in runCodingAgentRound - caps how many times a rate
+   limit auto-retries itself (honoring each response's own Retry-After)
+   before falling back to a manual, clearly-labeled Retry so a genuinely
+   sustained outage doesn't just hammer a dead key forever unattended. */
+var CODING_AGENT_MAX_AUTO_RATE_LIMIT_RETRIES=5;
 var codingAgentActive=null;
 var codingAgentSeq=0;
 function codingAgentSystemPrompt(){
@@ -3600,27 +3605,45 @@ async function runCodingAgentRound(sessionId,toolChoice){
            visible countdown instead of inviting an immediate re-tap. */
         var retryAfterHdr=parseInt(res.headers.get("Retry-After")||"",10);
         var retryWaitSec=(retryAfterHdr>0&&retryAfterHdr<=60)?retryAfterHdr:6;
-        con.body.innerHTML='<span style="color:var(--er)">Rate-limited by the API \u2013 retrying immediately won\u2019t help until the limit clears.</span>';
+        /* A real report: DeepInfra's own Retry-After on this model is
+           often just 1-2s (a short per-second burst limit, not a real
+           quota outage), but this used to always stop and wait for a tap
+           even once the countdown reached zero - on a busy session that
+           meant re-tapping Retry every few seconds, which reads as "the
+           coding agent is constantly rate-limited" even though each
+           individual limit clears almost immediately. Auto-retry once the
+           countdown elapses, the same way any well-behaved API client
+           honors Retry-After on its own - capped at
+           CODING_AGENT_MAX_AUTO_RATE_LIMIT_RETRIES so a genuinely sustained
+           outage (the account actually out of quota, not just a momentary
+           burst) still falls back to a manual, clearly-labeled Retry
+           instead of hammering a dead key forever in the background. */
+        mySession.autoRateLimitRetries=(mySession.autoRateLimitRetries||0)+1;
+        var autoRetryAllowed=mySession.autoRateLimitRetries<=CODING_AGENT_MAX_AUTO_RATE_LIMIT_RETRIES;
+        con.body.innerHTML=autoRetryAllowed
+          ?'<span style="color:var(--er)">Rate-limited by the API \u2013 retrying automatically once the limit clears.</span>'
+          :'<span style="color:var(--er)">Still rate-limited by the API after '+(mySession.autoRateLimitRetries-1)+' automatic retries \u2013 this looks like a sustained limit, not a momentary burst.</span>';
         var retryBtn429=document.createElement("button");
         retryBtn429.className="ba";retryBtn429.disabled=true;retryBtn429.textContent="Retry in "+retryWaitSec+"s";
         retryBtn429.style.cssText="margin-top:8px";
         con.wrap.appendChild(retryBtn429);
+        var doRetry429=(function(sid,c){return function(){
+          retryBtn429.disabled=true;retryBtn429.textContent="\u2026";
+          c.body.innerHTML='<span class="cur">\u2587</span> working on the next step\u2026';
+          runCodingAgentRound(sid);
+        };})(mySession.id,con);
         var retryCountdown=retryWaitSec;
         var retryTimer=setInterval(function(){
           retryCountdown--;
           if(retryCountdown<=0){
             clearInterval(retryTimer);
-            retryBtn429.disabled=false;retryBtn429.textContent="Retry";
+            if(autoRetryAllowed){doRetry429();}
+            else{retryBtn429.disabled=false;retryBtn429.textContent="Retry";}
           }else{
             retryBtn429.textContent="Retry in "+retryCountdown+"s";
           }
         },1000);
-        retryBtn429.onclick=(function(sid,c){return function(){
-          clearInterval(retryTimer);
-          retryBtn429.disabled=true;retryBtn429.textContent="\u2026";
-          c.body.innerHTML='<span class="cur">\u2587</span> working on the next step\u2026';
-          runCodingAgentRound(sid);
-        };})(mySession.id,con);
+        retryBtn429.onclick=function(){clearInterval(retryTimer);doRetry429();};
       }else if(res.status===500||res.status===503||res.status===502||res.status===504||res.status===522||res.status===523||res.status===524){
         /* Transient server/gateway error - keep session alive and offer
            Retry. 522/523/524 are Cloudflare's own connection-timeout/
