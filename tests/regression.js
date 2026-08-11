@@ -866,6 +866,13 @@ function assert(cond, label) {
   // instead of shadowing it with a differently-named duplicate.
   const codingAgentSystemMsg = (lastCodingAgentBody.messages || []).find((m) => m.role === 'system');
   assert(!!codingAgentSystemMsg && (codingAgentSystemMsg.content || '').indexOf('never create a differently-named parallel file') >= 0, 'the coding agent is told to edit the real in-use file instead of shadowing it with a parallel duplicate that nothing imports');
+  // A real transcript: the agent repeatedly wrote a sentence describing the
+  // next step ("Let me check X") with no accompanying tool call, over and
+  // over - the existing reminder only ever kicked in reactively, AFTER a
+  // stall had already happened once in that tab. This instruction is
+  // baked into every coding-agent system prompt from the start, not just
+  // after the fact.
+  assert(!!codingAgentSystemMsg && (codingAgentSystemMsg.content || '').indexOf("don't write a sentence describing what you're about to do and then stop without calling anything") >= 0, 'the coding agent is proactively told to call the tool in the same turn instead of just narrating the next step, from the very first round - not only after a stall has already happened once');
   // list_files used to require a path, so the model had no legitimate way
   // to ask for "the whole repo" - it had to guess a path or get an error
   // either way. Confirm the tool's own schema no longer forces one.

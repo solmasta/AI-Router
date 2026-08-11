@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.159</span></span>
+      <span class="wm">ai-router <span>v5.160</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.159</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.160</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3326,7 +3326,8 @@ function codingAgentSystemPrompt(){
   sys+="4. Always provide COMPLETE working code in write_file calls - not snippets\n";
   sys+="5. NEVER set branch to \"main\"/\"master\" unless the user explicitly asked you to change the default branch directly - use a short descriptive working-branch name instead, it's created automatically from the default branch if it doesn't exist. Pick that name ONCE per task and reuse the exact same branch for every write_file in it - if the user wants it all pushed/merged together, splitting related changes across different branch names defeats that even if every individual write succeeds.\n";
   sys+="6. Use merge_branch(branch, title, message) to land a working branch into the default branch via a pull request - only call this when the user explicitly asked you to merge/ship/land the change. Never chain it automatically right after a write_file just because the write succeeded.\n";
-  sys+="7. Before guessing a file's exact name/extension/location (e.g. guessing between .js and .jsx, or which directory something lives in), call list_all_files first instead of trying read_file paths one at a time and hitting 404s - it's one call for the whole repo and tells you exactly what's really there.\n\n";
+  sys+="7. Before guessing a file's exact name/extension/location (e.g. guessing between .js and .jsx, or which directory something lives in), call list_all_files first instead of trying read_file paths one at a time and hitting 404s - it's one call for the whole repo and tells you exactly what's really there.\n";
+  sys+="8. When you're about to take a concrete next step (reading, writing, listing, etc.), call the tool in that same turn - don't write a sentence describing what you're about to do and then stop without calling anything. A description with no accompanying tool call does nothing; the user only sees real progress from the tool call itself, never from the sentence describing it.\n\n";
   sys+="ASSUMPTION:\n";
   sys+="- If the user is asking for coding/debugging help and a GitHub repo is connected, treat that repo as the default codebase even if they don't explicitly say \"GitHub\" or \"repo\".\n";
   sys+="- If they're clearly asking about pasted code, a generic programming concept, or some other project, answer directly without touching repo tools.\n";
