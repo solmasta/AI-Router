@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.156</span></span>
+      <span class="wm">ai-router <span>v5.157</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -599,7 +599,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.156</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.157</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -792,6 +792,15 @@ var codingAgentDenialSeen=false;
    separate sends in the same Coding tab, each one silently failing to
    actually write the file it claimed to (looksLikeFakeToolCallText). */
 var codingAgentFakeToolSeen=false;
+/* Same problem, same fix, for a THIRD one-shot in-round retry: a model
+   that just narrates intent ("I'll make sure X is committed. Let me check
+   the current state and redo everything...") without emitting a tool_calls
+   entry at all - no fake tool-call syntax, no capability denial, no empty
+   reply, just talk. A real user report showed this recurring across many
+   separate sends/Continues in the same Coding tab (Terminal panel staying
+   completely empty the whole time), and each occurrence got its own silent
+   one-shot retry with no memory of the pattern already having happened. */
+var codingAgentStallSeen=false;
 var MK="ai_memories";
 var memories=[];
 var DLK="ai_doclibrary";
@@ -3353,6 +3362,12 @@ function codingAgentSystemPrompt(){
      the rest of the conversation, silently never writing the file it
      claims to have written. */
   if(codingAgentFakeToolSeen)sys+="\nIMPORTANT: earlier in this conversation you wrote out tool-call syntax as literal text (things like <tool_call>, <function=...>, or print(write_file(...))) instead of actually invoking the tool - that produced no real effect, even though it looked like a completed action. Always use the real function-calling mechanism for read_file/write_file/list_files/list_all_files/merge_branch/run_tests/get_test_status - never write their syntax out as plain text.\n";
+  /* Same persistence problem as codingAgentDenialSeen/codingAgentFakeToolSeen
+     above, for the third one-shot in-round retry: replying with only a
+     statement of intent ("I'll check X, let me redo Y...") and no tool
+     call at all. Without this, a model that stalls once keeps stalling
+     every other round, and the Terminal panel just stays empty. */
+  if(codingAgentStallSeen)sys+="\nIMPORTANT: earlier in this conversation you described what you were about to do instead of actually doing it, with no tool call that round. Don't narrate a plan - call the real read_file/write_file/list_files/list_all_files/merge_branch/run_tests/get_test_status tool for the next concrete step instead of just saying you will.\n";
   sys+="Show your reasoning in <think> tags.";
   return sys;
 }
@@ -3451,6 +3466,23 @@ function looksLikeFakeToolCallText(text){
    trust as accurate. */
 function looksLikeCapabilityDenialText(text){
   return /\bi\s+(don'?t|do\s+not)\s+(actually\s+)?have\s+(the\s+)?(ability|access)\b|\bi\s+can'?t\s+actually\b|\bi\s+haven'?t\s+actually\s+(performed|made|created|done)\b|\bwere\s+hypothetical\b|\bi\s+don'?t\s+have\s+(direct\s+)?access\b/i.test(text||"");
+}
+/* A real transcript: a plain-text reply that's just a short statement of
+   intent ("I'll make sure all the UI enhancements are properly committed.
+   Let me check the current state and redo everything...") with zero tool
+   call this round and zero actual content otherwise - no findings, no
+   code, no completed step, just talk about what's about to happen. Unlike
+   the fake-tool-call case, there's no invented tool syntax to point at;
+   unlike capability denial, it's not even claiming anything is broken -
+   it just never gets to the tool call. Scoped tight (short text, starts
+   with the stalling phrase, no code fence or "here's"/"I've"/"found" that
+   would mark it as an actual answer) to avoid flagging a genuinely short
+   but real reply. */
+function looksLikeStallingIntentText(text){
+  var t=(text||"").trim();
+  if(!t||t.length>220)return false;
+  if(/```|\bhere'?s\b|\bi'?ve\b|\bi\s+have\b|\bfound\b|\bcompleted\b/i.test(t))return false;
+  return /^(let me (check|verify|see|look|try|redo|make sure|review)|i'?ll (make sure|check|verify|look|redo|ensure|review)|i will (make sure|check|verify|look|redo|ensure|review)|(i'?m |i am )?going to (check|verify|look|redo|make sure))\b/i.test(t);
 }
 /* chatHistory stores client-only metadata like apId so Regen can recreate
    the exact project/prompt that was active at send time. That metadata must
@@ -3758,6 +3790,18 @@ async function runCodingAgentRound(sessionId){
         msgs.push({role:"user",content:"That wasn't a real tool call - it was tool-call syntax written out as plain text, so nothing actually ran. Use the real function-calling mechanism now: emit an actual tool_calls entry for the tool you need instead of writing tool_code, print(read_file(...)), <tool_call>, or similar as text."});
         return runCodingAgentRound(mySession.id);
       }
+      /* Capped at one retry per session (mySession.stallRetried) - see
+         looksLikeStallingIntentText above for what this catches and why. */
+      if(looksLikeStallingIntentText(finalText)&&!mySession.stallRetried){
+        mySession.stallRetried=true;
+        /* Persists past this round - see codingAgentStallSeen above and
+           its use in codingAgentSystemPrompt(). */
+        codingAgentStallSeen=true;
+        con.body.innerHTML=renderMd("Let me try that again.");
+        msgs.push(msg);
+        msgs.push({role:"user",content:"You described what you're about to do instead of actually doing it, and didn't call a tool this round. Don't narrate the plan - call the real read_file/write_file/list_files/list_all_files/merge_branch/run_tests/get_test_status tool for the very next step right now."});
+        return runCodingAgentRound(mySession.id);
+      }
       var choiceOptions=extractChoiceOptions(finalText);
       finalText=stripChoiceTags(finalText);
       con.body.innerHTML=renderMd(finalText||"(no response)");
@@ -3781,7 +3825,7 @@ async function runCodingAgentRound(sessionId){
       contBtn2.style.cssText="margin-top:8px";
       contBtn2.onclick=function(){
         contBtn2.disabled=true;contBtn2.textContent="…";
-        codingAgentActive={messages:msgs,id:++codingAgentSeq,autoContinue:codingModeActive||!!mySession.autoContinue,fakeToolRetried:false,emptyRetried:false,capabilityDenialRetried:false};
+        codingAgentActive={messages:msgs,id:++codingAgentSeq,autoContinue:codingModeActive||!!mySession.autoContinue,fakeToolRetried:false,emptyRetried:false,capabilityDenialRetried:false,stallRetried:false};
         runCodingAgentRound(codingAgentActive.id);
       };
       con.wrap.appendChild(contBtn2);
@@ -4460,7 +4504,7 @@ function tabTitleFor(hist){
 }
 function currentTabSnapshot(){
   var ov=Object.assign({},overseerState,{modelsUsed:Array.from(overseerState.modelsUsed)});
-  return{title:tabTitleFor(chatHistory),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive,codingRepo:codingTabRepo,codingDenialSeen:codingAgentDenialSeen,codingFakeToolSeen:codingAgentFakeToolSeen};
+  return{title:tabTitleFor(chatHistory),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive,codingRepo:codingTabRepo,codingDenialSeen:codingAgentDenialSeen,codingFakeToolSeen:codingAgentFakeToolSeen,codingStallSeen:codingAgentStallSeen};
 }
 function syncActiveTabFromLiveState(){
   if(!openTabs.length)return;
@@ -4504,6 +4548,7 @@ function applyTabAsLiveState(t){
   codingTabRepo=t.codingRepo||null;
   codingAgentDenialSeen=!!t.codingDenialSeen;
   codingAgentFakeToolSeen=!!t.codingFakeToolSeen;
+  codingAgentStallSeen=!!t.codingStallSeen;
   updateCodingModeUI();
 }
 /* The systemToggle bar right under the header already shows contextual
@@ -4580,6 +4625,7 @@ function createNewTab(isCoding){
   codingTabRepo=null;
   codingAgentDenialSeen=false;
   codingAgentFakeToolSeen=false;
+  codingAgentStallSeen=false;
   updateCodingModeUI();
   if(isCoding)applyCodingEmptyStateText();
   renderTabBar();
@@ -6735,7 +6781,7 @@ document.getElementById("clearBtn").addEventListener("click",function(){
   undoData={messages:chatHistory.slice(),backend:activeBackend,modelId:currentModel.id,modelLabel:currentModel.label};
   chatHistory=[];clearAttach();localStorage.removeItem(pk(AUTOSAVE_KEY));localStorage.removeItem(pk("ai_draft"));
   sessionId=Date.now().toString();responseCount=0;summarizing=false;
-  codingTabRepo=null;codingAgentDenialSeen=false;codingAgentFakeToolSeen=false;
+  codingTabRepo=null;codingAgentDenialSeen=false;codingAgentFakeToolSeen=false;codingAgentStallSeen=false;
   clearActiveWproj();stopOverseerMonitoring();overseerState=defaultOverseerState();
   preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">🤖</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';

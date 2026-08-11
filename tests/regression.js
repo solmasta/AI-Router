@@ -2457,6 +2457,80 @@ function assert(cond, label) {
   assert(chatTextAfterCapabilityDenialRetry.indexOf("don't actually have the ability") === -1, 'the false denial from round 1 never renders as the final answer');
   assert(chatTextAfterCapabilityDenialRetry.indexOf('regtest real answer after capability-denial retry') >= 0, 'the real answer from the retry round renders once it comes back');
 
+  console.log('\n-- a coding-agent reply that only narrates intent, with no tool call, gets one automatic retry instead of being shown as-is --');
+  // A real user report: the model kept replying with pure statements of
+  // intent ("I'll make sure all the UI enhancements are properly
+  // committed to the repository. Let me check the current state and redo
+  // everything...") and no tool_calls entry at all - not fake tool-call
+  // syntax, not a capability denial, just talk, over and over ("Let me
+  // try that again") with the Terminal panel staying completely empty the
+  // whole time.
+  let stallRoundCount = 0;
+  let stallCorrectiveNudgeSeen = false;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        stallRoundCount++;
+        if (stallRoundCount === 1) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: "I'll make sure all the UI enhancements are properly committed. Let me check the current state and redo everything." } }] }),
+          });
+          return;
+        }
+        stallCorrectiveNudgeSeen = (parsed.messages || []).some((m) => m.role === 'user' && typeof m.content === 'string' && m.content.indexOf("didn't call a tool this round") >= 0);
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest real answer after stall retry' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please commit the UI enhancements to the repo');
+  let chatTextAfterStallRetry = '';
+  for (let i = 0; i < 60; i++) {
+    chatTextAfterStallRetry = await page.evaluate(() => document.getElementById('chat').textContent);
+    if (chatTextAfterStallRetry.indexOf('regtest real answer after stall retry') >= 0) break;
+    await page.waitForTimeout(200);
+  }
+  await page.unroute('**/*');
+  assert(stallRoundCount === 2, `a stalling, tool-call-free reply triggers exactly one automatic retry round (got ${stallRoundCount} rounds)`);
+  assert(stallCorrectiveNudgeSeen, 'the retry round includes a corrective nudge telling the model to call a tool instead of narrating the plan');
+  assert(chatTextAfterStallRetry.indexOf('redo everything') === -1, 'the stalling reply from round 1 never renders as the final answer');
+  assert(chatTextAfterStallRetry.indexOf('regtest real answer after stall retry') >= 0, 'the real answer from the retry round renders once it comes back');
+
+  console.log('\n-- once a stalling reply has happened, later rounds carry a persistent reminder, not just a one-shot in-round retry --');
+  let persistentStallReminderBody = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        persistentStallReminderBody = parsed;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest fresh session answer after stall' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please check yet another file in the repo');
+  for (let i = 0; i < 40 && persistentStallReminderBody === null; i++) await page.waitForTimeout(200);
+  await page.unroute('**/*');
+  const persistentStallReminderSeen = !!(persistentStallReminderBody && persistentStallReminderBody.messages && persistentStallReminderBody.messages.some((m) => m.role === 'system' && typeof m.content === 'string' && m.content.indexOf('described what you were about to do instead of actually doing it') >= 0));
+  assert(persistentStallReminderSeen, `a fresh message in the same tab carries a persistent reminder not to repeat the stalling mistake, not just a one-shot in-round retry (got system messages: ${JSON.stringify((persistentStallReminderBody && persistentStallReminderBody.messages || []).filter((m) => m.role === 'system').map((m) => (m.content || '').slice(0, 80)))})`);
+
   console.log('\n-- transient HTTP errors from the coding agent offer a Retry button instead of a dead end --');
   // 429/500/502/503 already got a Retry button that re-enters the same
   // session without starting a new chatHistory turn. A real user report
