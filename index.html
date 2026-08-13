@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.172</span></span>
+      <span class="wm">ai-router <span>v5.173</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -601,7 +601,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.172</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.173</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -3412,6 +3412,22 @@ async function executeToolCall(toolName,toolArgs,renderStatus,logTarget){
    continuity with whatever the user was actually talking to. */
 var CODING_AGENT_MODEL_ID="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo";
 var CODING_AGENT_MODEL_LABEL="Qwen3 Coder 480B";
+/* A real user report: they wanted to manually pick which tool-capable
+   model actually drives a given Coding tab (DeepInfra vs OpenRouter,
+   whichever model they trust for that project) instead of always the one
+   fixed default above - and once they picked one, didn't want anything in
+   the app quietly switching it back, the way Overseer's auto-select does
+   for the main chat. null means "use the fixed default"; set means "this
+   tab's repo work always uses exactly this model+backend, full stop" -
+   nothing in the coding-agent path ever overrides it once set, matching
+   that expectation. Tab-scoped (see currentTabSnapshot/loadTabIntoLiveState
+   and createNewTab's reset) the same way codingAgentActiveBranch is - a
+   fresh Coding tab starts back on the trusted default rather than quietly
+   inheriting whatever model a different, unrelated task was using. */
+var codingAgentModelOverride=null;
+function getCodingAgentModel(){
+  return codingAgentModelOverride||{id:CODING_AGENT_MODEL_ID,label:CODING_AGENT_MODEL_LABEL,backend:"deepinfra"};
+}
 /* Caps an auto-continuing session (see looksLikeAutoContinueRequest) so a
    model that never stops calling tools on a huge repo can't run away
    unattended forever - it pauses and asks for an explicit Continue past
@@ -3521,7 +3537,7 @@ function renderCodingConsole(){
      separate persona. Model shown as the same secondary .modelTag
      indicator the main chat uses. */
   var lspan=document.createElement("span");lspan.textContent="Overseer";label.appendChild(lspan);
-  var mtag=document.createElement("span");mtag.className="modelTag";mtag.textContent=CODING_AGENT_MODEL_LABEL;label.appendChild(mtag);
+  var mtag=document.createElement("span");mtag.className="modelTag";mtag.textContent=getCodingAgentModel().label;label.appendChild(mtag);
   var body=document.createElement("div");body.className="body";body.innerHTML='<span class="cur">▇</span> working on the next step&#8230;';
   wrap.appendChild(label);wrap.appendChild(body);
   document.getElementById("chat").appendChild(wrap);
@@ -3718,7 +3734,8 @@ async function runCodingAgentRound(sessionId,toolChoice){
        as plain text either. 1500 tokens is barely 6,000 characters even
        before escaping overhead - nowhere near enough for a real source
        file. Raised well past what a normal file write needs. */
-    var res=await fetch(DI_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:CODING_AGENT_MODEL_ID,messages:sanitizeMessagesForProvider(msgs),tools:REPO_TOOLS,tool_choice:toolChoice||"auto",temperature:temperature,stream:false,max_tokens:8000})});
+    var codingModel=getCodingAgentModel();
+    var res=await fetch(BACKENDS[codingModel.backend].url,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:codingModel.id,messages:sanitizeMessagesForProvider(msgs),tools:REPO_TOOLS,tool_choice:toolChoice||"auto",temperature:temperature,stream:false,max_tokens:8000})});
     if(!res.ok){
       if(res.status===429){
         /* Rate-limited: keep the session alive so the Retry button below
@@ -3906,7 +3923,7 @@ async function runCodingAgentRound(sessionId,toolChoice){
          user moves on to a different message instead of tapping
          Continue, and ends up flatly contradicting what the coding agent
          just found (e.g. claiming it can't see the repo at all). */
-      chatHistory.push({role:"assistant",content:roundSummary,modelLabel:CODING_AGENT_MODEL_LABEL});
+      chatHistory.push({role:"assistant",content:roundSummary,modelLabel:codingModel.label});
       autoSave();
       if(authFailureThisRound){
         /* Ending the session outright (not offering Retry/Continue) is
@@ -4091,7 +4108,7 @@ async function runCodingAgentRound(sessionId,toolChoice){
       var choiceOptions=extractChoiceOptions(finalText);
       finalText=stripChoiceTags(finalText);
       con.body.innerHTML=renderMd(finalText||"(no response)");
-      chatHistory.push({role:"assistant",content:finalText,modelLabel:CODING_AGENT_MODEL_LABEL});
+      chatHistory.push({role:"assistant",content:finalText,modelLabel:codingModel.label});
       autoSave();
       /* Whether the model happens to call a tool or just replies in plain
          text this round isn't a reliable "I'm truly done" signal - it's
@@ -4228,9 +4245,41 @@ async function loadBackend(){
      If a model really is gone, the send itself surfaces a clear error
      instead of it silently vanishing from the picker. */
 }
-function setModel(m){currentModel=m;document.getElementById("modelBtnLabel").textContent=m.label;}
+/* Guarded by codingModeActive on purpose - the Overseer chat side panel
+   can still call the switch_model tool (or suggest a switch) while a
+   Coding tab is the one on screen, and that must keep currentModel in
+   sync for whenever the user goes back to a non-coding tab, but must NOT
+   repaint the model button while it's actually showing the Coding tab's
+   own model (see getCodingAgentModel/mkCard). A real user asked for
+   exactly this: pick a model for repo work and never have anything else
+   in the app switch it back on them. */
+function setModel(m){currentModel=m;if(!codingModeActive)document.getElementById("modelBtnLabel").textContent=m.label;}
 function renderModelList(){
   var list=document.getElementById("modelList");list.innerHTML="";
+  /* The DeepInfra/OpenRouter backend-switch tabs drive the MAIN chat's
+     activeBackend - meaningless (and actively surprising, since tapping
+     one would silently change what the main chat uses later) once the
+     Coding-tab branch below is showing both backends' tool-capable models
+     side by side anyway. */
+  var btabs=document.querySelector(".btabs");
+  if(btabs)btabs.classList.toggle("hidden",codingModeActive);
+  /* A Coding tab picks its model from a different pool than the main chat:
+     every tool-capable model across BOTH backends, not just whichever one
+     happens to be active - a user choosing between DeepInfra and OpenRouter
+     for their coding work shouldn't have to flip the whole app's backend
+     first just to see the other one's options. Grouped by service instead
+     of category so it's obvious which one each card actually calls. */
+  if(codingModeActive){
+    var toolItems=getAllAvailableModels().filter(function(item){return TOOL_MODELS.indexOf(item.model.id)>=0;});
+    var byBackend={};
+    toolItems.forEach(function(item){(byBackend[item.backend]=byBackend[item.backend]||[]).push(item);});
+    Object.keys(BACKENDS).forEach(function(key){
+      if(!byBackend[key]||!byBackend[key].length)return;
+      var h=document.createElement("div");h.className="mch";h.textContent=BACKENDS[key].name;list.appendChild(h);
+      byBackend[key].forEach(function(item){list.appendChild(mkCard(item.model,item.backend));});
+    });
+    return;
+  }
   var favIds=Object.keys(favorites).filter(function(id){return favorites[id];});
   var favMs=favIds.map(function(id){return allModels.find(function(m){return m.id===id;});}).filter(Boolean);
   var sections=[];
@@ -4243,8 +4292,13 @@ function renderModelList(){
     sec.models.forEach(function(m){list.appendChild(mkCard(m));});
   });
 }
-function mkCard(m){
-  var card=document.createElement("div");card.className="mc"+(m.id===currentModel.id?" act":"");
+/* backendForModel is only meaningful (and only passed) in the Coding-tab
+   list above - the main chat's list already only ever shows the single
+   active backend's models, so setModel() doesn't need to be told which
+   backend a card belongs to. */
+function mkCard(m,backendForModel){
+  var activeId=codingModeActive?getCodingAgentModel().id:currentModel.id;
+  var card=document.createElement("div");card.className="mc"+(m.id===activeId?" act":"");
   var isFav=!!favorites[m.id];
   var top=document.createElement("div");top.className="mct";
   var lbl=document.createElement("span");lbl.className="mcl";lbl.textContent=m.label;
@@ -4254,7 +4308,17 @@ function mkCard(m){
   var desc=document.createElement("div");desc.className="mcd";desc.textContent=m.desc;
   card.appendChild(top);card.appendChild(desc);
   star.addEventListener("click",function(e){e.stopPropagation();if(favorites[m.id]){delete favorites[m.id];}else{favorites[m.id]=true;}saveFavs();renderModelList();});
-  card.addEventListener("click",function(e){if(e.target===star||e.target.parentNode===star)return;setModel(m);closeModal("modelModal");renderModelList();});
+  card.addEventListener("click",function(e){
+    if(e.target===star||e.target.parentNode===star)return;
+    /* Setting codingAgentModelOverride here, instead of calling setModel(),
+       is the whole point - a Coding tab's model choice is deliberately
+       separate from (and never touched by) the main chat's model or
+       Overseer's auto-select, which is exactly what a real user asked for:
+       pick a model for repo work and have it actually stick. */
+    if(codingModeActive){codingAgentModelOverride={id:m.id,label:m.label,backend:backendForModel};updateCodingModeUI();}
+    else{setModel(m);}
+    closeModal("modelModal");renderModelList();
+  });
   return card;
 }
 
@@ -4828,7 +4892,7 @@ function tabTitleFor(hist,isCoding){
 }
 function currentTabSnapshot(){
   var ov=Object.assign({},overseerState,{modelsUsed:Array.from(overseerState.modelsUsed)});
-  return{title:tabTitleFor(chatHistory,codingModeActive),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive,codingRepo:codingTabRepo,codingDenialSeen:codingAgentDenialSeen,codingFakeToolSeen:codingAgentFakeToolSeen,codingStallSeen:codingAgentStallSeen,codingStallCycles:codingAgentStallCycles,codingActiveBranch:codingAgentActiveBranch};
+  return{title:tabTitleFor(chatHistory,codingModeActive),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive,codingRepo:codingTabRepo,codingDenialSeen:codingAgentDenialSeen,codingFakeToolSeen:codingAgentFakeToolSeen,codingStallSeen:codingAgentStallSeen,codingStallCycles:codingAgentStallCycles,codingActiveBranch:codingAgentActiveBranch,codingModelOverride:codingAgentModelOverride};
 }
 function syncActiveTabFromLiveState(){
   if(!openTabs.length)return;
@@ -4875,6 +4939,7 @@ function applyTabAsLiveState(t){
   codingAgentStallSeen=!!t.codingStallSeen;
   codingAgentStallCycles=t.codingStallCycles||0;
   codingAgentActiveBranch=t.codingActiveBranch||null;
+  codingAgentModelOverride=t.codingModelOverride||null;
   updateCodingModeUI();
 }
 /* The systemToggle bar right under the header already shows contextual
@@ -4886,6 +4951,12 @@ function applyTabAsLiveState(t){
    both now prepend the Coding prefix themselves. */
 function updateCodingModeUI(){
   updateTerminalPanelVisibility();
+  /* The model button doubles as the Coding tab's own model picker (see
+     renderModelList/mkCard) - it needs to reflect whichever model is
+     ACTUALLY driving repo work right now, not the main chat's currentModel,
+     any time coding mode toggles (tab switch, tab creation, restore). */
+  var mbl=document.getElementById("modelBtnLabel");
+  if(mbl)mbl.textContent=codingModeActive?getCodingAgentModel().label:currentModel.label;
   if(activeWProjId){
     var p=wproj.find(function(x){return x.id===activeWProjId;});
     if(p){setWprojPromptBadge(p);return;}
@@ -4959,6 +5030,7 @@ function createNewTab(isCoding){
   codingAgentStallSeen=false;
   codingAgentStallCycles=0;
   codingAgentActiveBranch=null;
+  codingAgentModelOverride=null;
   updateCodingModeUI();
   if(isCoding)applyCodingEmptyStateText();
   renderTabBar();
@@ -7128,7 +7200,7 @@ document.getElementById("clearBtn").addEventListener("click",function(){
   undoData={messages:chatHistory.slice(),backend:activeBackend,modelId:currentModel.id,modelLabel:currentModel.label};
   chatHistory=[];clearAttach();localStorage.removeItem(pk(AUTOSAVE_KEY));localStorage.removeItem(pk("ai_draft"));
   sessionId=Date.now().toString();responseCount=0;summarizing=false;
-  codingTabRepo=null;codingAgentDenialSeen=false;codingAgentFakeToolSeen=false;codingAgentStallSeen=false;codingAgentStallCycles=0;codingAgentActiveBranch=null;
+  codingTabRepo=null;codingAgentDenialSeen=false;codingAgentFakeToolSeen=false;codingAgentStallSeen=false;codingAgentStallCycles=0;codingAgentActiveBranch=null;codingAgentModelOverride=null;
   clearActiveWproj();stopOverseerMonitoring();overseerState=defaultOverseerState();
   preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">🤖</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';
