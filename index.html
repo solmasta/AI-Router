@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.168</span></span>
+      <span class="wm">ai-router <span>v5.170</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -340,6 +340,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
         <button class="mic vc" id="voiceModeBtn" title="Live voice conversation - listens, sends, and replies aloud automatically">&#128222;</button>
         <button class="ws" id="overseerBtn" title="Overseer status (long-press to chat)">🤖</button>
         <button class="ws" id="brainstormBtn" title="Brainstorming suggestions">💭</button>
+        <button class="ws" id="autoApproveBtn" style="opacity:.6" title="Manual: every repo write/merge waits for your approval. Tap to let the coding agent push and merge on its own.">🔒</button>
         <button class="ws" id="newTabBtn" title="New conversation tab" style="color:var(--ac);font-size:17px;font-weight:400">&#43;</button>
         <button class="ws" id="newCodeTabBtn" title="New Coding tab - every message goes straight to your connected repo" style="color:var(--ac);font-size:15px;font-weight:400">&#128187;</button>
         <div class="ir">
@@ -600,7 +601,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.168</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.170</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -612,6 +613,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
     <div class="sr"><div><div class="slb">Drive folder</div><div class="ssb" id="driveFolderStatus">Auto (finds/creates by name)</div></div><div style="display:flex;gap:6px"><button class="bg" id="driveFolderOpenBtn">Open</button><button class="bg" id="driveFolderSetBtn">Set</button></div></div>
     <div class="sr"><div><div class="slb">GitHub repository</div><div class="ssb" id="githubStatus">Not connected</div></div><div style="display:flex;gap:6px"><button class="bg hidden" id="githubClearBtn">Clear</button><button class="bg" id="githubConnectBtn">Connect</button></div></div>
     <div class="sr"><div><div class="slb">Worker connection test</div><div class="ssb" id="workerTestStatus">Checks whether each backend Worker accepts the app's current secret - useful when a Worker keeps saying "Unauthorized" and it's unclear which one is out of sync</div></div><button class="bg" id="workerTestBtn">Run test</button></div>
+    <div class="sr"><div><div class="slb">App updates</div><div class="ssb" id="checkUpdateStatus">Deploys usually apply automatically within a few minutes - use this if the version above looks out of date</div></div><button class="bg" id="checkUpdateBtn">Check now</button></div>
     <div class="sr"><div><div class="slb">Agent auto-select</div><div class="ssb">Automatically pick the best model for each task</div></div><button class="bg" id="agentToggleBtn">ON</button></div>
     <div class="sr"><div><div class="slb">Overseer monitoring</div><div class="ssb">Track progress, detect stuck situations, suggest next steps</div></div><button class="bg" id="overseerToggleBtn">ON</button></div>
     <div class="sr"><div><div class="slb">Brainstorming mode</div><div class="ssb">Show extra exploratory idea suggestions during conversation. The next-step prompt after each reply always shows, regardless of this setting.</div></div><button class="bg" id="brainstormToggleBtn">ON</button></div>
@@ -1313,23 +1315,34 @@ function disconnectGithub(){
   ghOauthToken=null;ghOauthTokenExpiry=0;ghOauthRefreshToken=null;
   updateGithubStatus();
 }
+/* Auto-approve toggle (compose-bar button, see autoApproveBtn below) - lets
+   write_file/merge_branch skip the per-action confirmation modal and just
+   go straight through, for a user who wants the coding agent to push and
+   merge on its own instead of approving every single step by hand.
+   Deliberately in-memory only, defaulting to false (manual/off) on every
+   fresh load rather than persisted - this gates real commits and merges
+   landing unattended, so it should never silently carry over from a
+   previous session without the user consciously turning it back on. */
+var codingAutoApprove=false;
 /* Per-write confirmation gate - resolves to the branch name to write to on
    approval, or null on decline. Only one write can be pending confirmation
    at a time, which matches how the tool loop actually calls this (awaited,
    one write per tool_call iteration). */
 var pendingGithubWriteResolve=null;
 function confirmGithubWrite(toolArgs){
+  /* Never default a write to "main"/"master" - the model may omit a branch
+     or even ask for one directly, but every write needs an explicit target
+     other than the default branch. In auto-approve mode there's no human
+     looking at this field before it's used, which makes staying off the
+     default branch even more important, not less. */
+  var wantsDefault=/^(main|master)$/i.test((toolArgs.branch||"").trim());
+  var branch=(toolArgs.branch&&!wantsDefault)?toolArgs.branch:"ai-changes";
+  if(codingAutoApprove)return Promise.resolve(branch);
   return new Promise(function(resolve){
     document.getElementById("ghwPath").textContent=(ghRepoOwner||"")+"/"+(ghRepoName||"")+" - "+(toolArgs.path||"");
     document.getElementById("ghwMessage").textContent=toolArgs.message||"(no message)";
     document.getElementById("ghwContent").textContent=toolArgs.content||"";
-    /* Never default this field to "main"/"master" - the model may omit a
-       branch or even ask for one directly, but every write needs an
-       explicit, visible target the user actually looks at and approves.
-       Landing changes straight on the default branch with no review step
-       is exactly the workflow this app's own repo avoids. */
-    var wantsDefault=/^(main|master)$/i.test((toolArgs.branch||"").trim());
-    document.getElementById("ghwBranch").value=(toolArgs.branch&&!wantsDefault)?toolArgs.branch:"ai-changes";
+    document.getElementById("ghwBranch").value=branch;
     pendingGithubWriteResolve=resolve;
     openModal("githubWriteConfirmModal");
   });
@@ -1340,6 +1353,7 @@ function confirmGithubWrite(toolArgs){
    this is a plain approve/deny with nothing editable. */
 var pendingGithubMergeResolve=null;
 function confirmGithubMerge(toolArgs){
+  if(codingAutoApprove)return Promise.resolve(true);
   return new Promise(function(resolve){
     document.getElementById("ghmBranch").textContent=(ghRepoOwner||"")+"/"+(ghRepoName||"")+" - "+(toolArgs.branch||"");
     document.getElementById("ghmTitle").textContent=toolArgs.title||"(default title)";
@@ -6048,6 +6062,15 @@ document.getElementById("agentToggleBtn").addEventListener("click",function(){
   this.textContent=agentAutoSelect?"ON":"OFF";
   this.style.opacity=agentAutoSelect?"1":"0.6";
 });
+document.getElementById("autoApproveBtn").addEventListener("click",function(){
+  codingAutoApprove=!codingAutoApprove;
+  this.textContent=codingAutoApprove?"🔓":"🔒";
+  this.title=codingAutoApprove
+    ?"Auto: the coding agent pushes and merges on its own, no approval prompts. Tap to go back to manual."
+    :"Manual: every repo write/merge waits for your approval. Tap to let the coding agent push and merge on its own.";
+  this.style.opacity=codingAutoApprove?"1":"0.6";
+  showToast(codingAutoApprove?"Auto-push/merge is ON - the coding agent will act without asking.":"Auto-push/merge is OFF - back to approving each write/merge.");
+});
 function setOverseerEnabled(val){
   overseerEnabled=val;
   var btn=document.getElementById("overseerToggleBtn");
@@ -7224,6 +7247,14 @@ var CURRENT_APP_VERSION = (function() {
 })();
 var UPDATE_NOTICE_KEY = 'ai_router_updated_notice';
 var updateApplyQueued = false;
+/* Set once the service worker registration resolves below - kept as a
+   plain global (not local to that .then()) so the manual "Check for
+   updates" button in Settings can also call reg.update() on it, the same
+   nudge the ambient focus/visibility/interval checks already give the
+   browser to look past its own occasional update-check throttling. Stays
+   null if service workers aren't supported/registered at all; callers
+   already guard for that. */
+var swRegistration = null;
 function isSafeToReloadForUpdate() {
   return !(window.isAppBusyForUpdate && window.isAppBusyForUpdate());
 }
@@ -7248,11 +7279,18 @@ function tryApplyUpdate() {
 }
 setInterval(function() { if (updateApplyQueued) tryApplyUpdate(); }, 2000);
 function checkForFreshVersion() {
-  if (!CURRENT_APP_VERSION) return;
-  fetch('./index.html', { cache: 'no-store' }).then(function(r) { return r.text(); }).then(function(html) {
+  /* Returns a promise resolving to whether a newer version was actually
+     found - the ambient auto-checks below (focus/visibility/interval)
+     never look at this, but the manual "Check for updates" button in
+     Settings needs it to tell the user "you're already up to date" instead
+     of just silently doing nothing when there's nothing new. */
+  if (!CURRENT_APP_VERSION) return Promise.resolve(false);
+  return fetch('./index.html', { cache: 'no-store' }).then(function(r) { return r.text(); }).then(function(html) {
     var m = html.match(/<span class="wm">ai-router <span>(v[\d.]+)<\/span><\/span>/);
-    if (m && m[1] !== CURRENT_APP_VERSION) tryApplyUpdate();
-  }).catch(function() {});
+    var found = !!(m && m[1] !== CURRENT_APP_VERSION);
+    if (found) tryApplyUpdate();
+    return found;
+  }).catch(function() { return false; });
 }
 /* Post-reload confirmation only - nothing to tap, just a brief "updated"
    flash so a tech watching it happen knows the app didn't just glitch. */
@@ -7289,6 +7327,7 @@ if ('serviceWorker' in navigator) {
        block is the real safety net either way, so just skip these extra
        SW-lifecycle-tied checks rather than throwing on reg.addEventListener. */
     if (!reg) return;
+    swRegistration = reg;
     reg.addEventListener('updatefound', function() {
       var worker = reg.installing;
       worker.addEventListener('statechange', function() {
@@ -7318,6 +7357,37 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('focus', checkForFreshVersion);
   setInterval(checkForFreshVersion, 5 * 60 * 1000);
 }
+/* Manual fallback for the "Check for updates" row in Settings - the
+   automatic checks above cover focus/visibility/every-5-minutes already,
+   but a real user report was unsure whether a deploy had actually reached
+   them yet ("it doesn't seem like the versions are always pushed") and
+   wanted a way to force the question right now instead of waiting or just
+   trusting it silently happened in the background. */
+function manualCheckForUpdate() {
+  var statusEl = document.getElementById('checkUpdateStatus');
+  var btn = document.getElementById('checkUpdateBtn');
+  if (btn) btn.disabled = true;
+  if (statusEl) statusEl.textContent = 'Checking…';
+  var swUpdate = swRegistration ? swRegistration.update().catch(function() {}) : Promise.resolve();
+  swUpdate.then(function() { return checkForFreshVersion(); }).then(function(found) {
+    if (found) {
+      /* checkForFreshVersion() already called tryApplyUpdate() - if the
+         app is idle that's already mid-reload by now (nothing left to show
+         here), and if it's busy the reload is queued silently. Either way
+         say so explicitly here since this check was a deliberate, manual
+         action - the ambient auto-checks stay silent on purpose, but a
+         button tap deserves a real answer either way, not just eventual
+         page churn with no visible cause. */
+      if (statusEl) statusEl.textContent = isSafeToReloadForUpdate()
+        ? 'Update found - applying now…'
+        : 'Update found - will apply once the current response finishes.';
+    } else if (statusEl) {
+      statusEl.textContent = "You're on the latest version (" + (CURRENT_APP_VERSION || '') + ")";
+    }
+    if (btn) btn.disabled = false;
+  });
+}
+document.getElementById('checkUpdateBtn').addEventListener('click', manualCheckForUpdate);
 </script>
 </body>
 </html>
