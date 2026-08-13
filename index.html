@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.167</span></span>
+      <span class="wm">ai-router <span>v5.168</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -497,10 +497,11 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
       <input type="text" id="ghRepoBrowserSearch" class="fi" placeholder="Filter your repos&#8230;" autocomplete="off" style="width:100%;box-sizing:border-box;margin-bottom:6px">
       <div id="ghRepoBrowserList" style="max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:4px"></div>
     </div>
-    <div style="font-size:11px;color:var(--mu);margin-bottom:10px;border-top:1px solid var(--br);padding-top:10px">Or use the legacy write secret (requires GITHUB_TOKEN + WRITE_SECRET set on the github-ops-worker):</div>
+    <div id="ghLegacySecretIntro" style="font-size:11px;color:var(--mu);margin-bottom:10px;border-top:1px solid var(--br);padding-top:10px">Or use the legacy write secret (requires GITHUB_TOKEN + WRITE_SECRET set on the github-ops-worker):</div>
     <input type="text" id="ghOwnerInput" class="fi" placeholder="Repo owner, e.g. solmasta" autocomplete="off" style="width:100%;margin-bottom:8px;box-sizing:border-box">
     <input type="text" id="ghRepoInput" class="fi" placeholder="Repo name, e.g. AI-Router" autocomplete="off" style="width:100%;box-sizing:border-box">
-    <input type="password" id="ghWriteSecretInput" class="fi" placeholder="Repo secret (legacy - leave blank if using OAuth)" autocomplete="off" style="width:100%;margin-top:8px;box-sizing:border-box">
+    <input type="password" id="ghWriteSecretInput" class="fi hidden" placeholder="Repo secret (legacy - leave blank if using OAuth)" autocomplete="off" style="width:100%;margin-top:8px;box-sizing:border-box">
+    <button class="bg hidden" id="ghShowLegacySecretBtn" style="width:100%;margin-top:8px;font-size:12px">Use a legacy write secret instead</button>
     <div id="ghRecentRepos" class="hidden" style="margin-top:10px">
       <div style="font-size:11px;color:var(--mu);margin-bottom:6px">Recent repos</div>
       <div id="ghRecentReposList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
@@ -599,7 +600,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.167</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.168</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1045,6 +1046,20 @@ function updateGithubStatus(){
     if(rb)rb.classList.add("hidden");
     myGithubRepos=null;
   }
+  /* Once OAuth is actually connected, the legacy write-secret field is
+     dead weight sitting in front of the user every time they open this
+     modal - a real user report specifically asked why it was still there
+     when they only ever use OAuth. Tucked behind an explicit "use it
+     instead" toggle rather than deleted outright, since the legacy path is
+     still a real fallback (e.g. OAuth revoked and not yet reconnected). */
+  var legacyToggle=document.getElementById("ghShowLegacySecretBtn");
+  var legacyRevealed=!!(legacyToggle&&legacyToggle.dataset.revealed==="1");
+  var showLegacy=!oauthConnected||legacyRevealed;
+  var legacyIntro=document.getElementById("ghLegacySecretIntro");
+  var legacyInput=document.getElementById("ghWriteSecretInput");
+  if(legacyIntro)legacyIntro.classList.toggle("hidden",!showLegacy);
+  if(legacyInput)legacyInput.classList.toggle("hidden",!showLegacy);
+  if(legacyToggle)legacyToggle.classList.toggle("hidden",showLegacy);
   updateGithubSaveBtnLabel();
   if(codingModeActive&&document.getElementById("emptyState"))applyCodingEmptyStateText();
 }
@@ -1091,16 +1106,37 @@ async function getGhAccessToken(){
   if(ghOauthToken){
     if(ghOauthTokenExpiry===0||ghOauthTokenExpiry>Date.now())return ghOauthToken;
     // Token has an expiry and it's past - try refreshing
-    var ok=await ghRefreshOauthToken();
+    var ok=await ghRefreshOauthTokenWithRetry();
     if(ok)return ghOauthToken;
     ghOauthToken=null;
+    /* A real user report: mid-conversation, a repo action would fail with
+       an auth error while Settings still said "connected (OAuth)" - the
+       two disagreed because nothing here told the status UI the token had
+       just gone bad. Refreshing it immediately means the very next glance
+       at Settings shows the real state instead of a stale "connected". */
+    updateGithubStatus();
     return null;
   }
   if(ghOauthRefreshToken){
-    var ok2=await ghRefreshOauthToken();
+    var ok2=await ghRefreshOauthTokenWithRetry();
     if(ok2)return ghOauthToken;
+    updateGithubStatus();
   }
   return null;
+}
+/* A single ghRefreshOauthToken() failure is often just a transient network
+   blip (mobile connection dropping in and out, a momentary worker cold
+   start) rather than a genuinely dead refresh token - retrying once before
+   giving up avoids surfacing a scary "not authenticated" error, and the
+   status-bar flip below it, over what would have quietly worked one second
+   later. Only revoked-token failures (handled inside ghRefreshOauthToken
+   itself) are treated as final either way. */
+async function ghRefreshOauthTokenWithRetry(){
+  var ok=await ghRefreshOauthToken();
+  if(ok)return true;
+  if(!ghOauthRefreshToken)return false;
+  await new Promise(function(pr){setTimeout(pr,1000);});
+  return await ghRefreshOauthToken();
 }
 /* The OAuth popup (ghOAuthConnect below) only actually receives its
    result via postMessage when window.opener is real - true on desktop,
@@ -3183,7 +3219,13 @@ async function executeRepoToolRaw(toolName,toolInput){
      when one is actually configured; OAuth-only connections should keep
      working without a blank legacy header hanging around. */
   var oauthToken=await getGhAccessToken();
-  if(!oauthToken&&!ghWriteSecret){return{error:"GitHub not authenticated - connect via GitHub OAuth in Settings, or enter the write secret."};}
+  /* ghOauthRefreshToken still being set here means there WAS a working
+     OAuth connection and getGhAccessToken just failed to renew it (see the
+     retry-then-updateGithubStatus() logic there) rather than the user never
+     having connected at all - worth saying explicitly so this doesn't read
+     as "you forgot to connect" when what actually happened is "your session
+     needs reconnecting". */
+  if(!oauthToken&&!ghWriteSecret){return{error:ghOauthRefreshToken?"Your GitHub session needs reconnecting - open Settings → GitHub and tap Reconnect GitHub OAuth, then try again.":"GitHub not authenticated - connect via GitHub OAuth in Settings, or enter the write secret."};}
   var headers={"Content-Type":"application/json","X-App-Secret":APP_SECRET};
   if(ghWriteSecret)headers["X-Write-Secret"]=ghWriteSecret;
   if(oauthToken)headers["Authorization"]="Bearer "+oauthToken;
@@ -5860,6 +5902,10 @@ document.getElementById("githubConnectBtn").addEventListener("click",function(){
 ["ghOwnerInput","ghRepoInput","ghWriteSecretInput"].forEach(function(id){
   document.getElementById(id).addEventListener("input",updateGithubSaveBtnLabel);
 });
+document.getElementById("ghShowLegacySecretBtn").addEventListener("click",function(){
+  this.dataset.revealed="1";
+  updateGithubStatus();
+});
 document.getElementById("ghOauthConnectBtn").addEventListener("click",function(){
   ghOAuthConnect();
 });
@@ -7099,6 +7145,16 @@ loadAutoSave();
 loadDraft();
 loadGithubConnection();
 processGithubOauthRedirect();
+/* A real user report: the GitHub connection (and other localStorage state)
+   would occasionally just vanish on an installed PWA on iOS/Android, with
+   no action on their part - both platforms are free to evict a web app's
+   local storage under storage pressure unless the app has asked for
+   "persistent" storage, which most browsers grant automatically for an
+   installed/bookmarked PWA once it's been used a bit. Requesting it
+   explicitly on every load costs nothing if already granted, and gives the
+   best chance of avoiding that eviction if it isn't yet. Best-effort only -
+   not every browser implements the API, and the browser can still say no. */
+if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(function(){});
 initTabs();
 loadMemories();
 renderMemoryList();
