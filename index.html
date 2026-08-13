@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.171</span></span>
+      <span class="wm">ai-router <span>v5.172</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -601,7 +601,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.171</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.172</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -831,6 +831,22 @@ var codingAgentStallSeen=false;
    increasingly garbled or differently-worded non-progress text that
    slips past whichever single pattern caught the original failure. */
 var codingAgentStallCycles=0;
+/* A real user report: a long Coding-tab session (24 commits, several stall
+   cycles, a "let's work on something different" detour) ended up split
+   across two different branches - the model created "ui-modernization-
+   update", stalled repeatedly trying to resolve that PR's conflicts, then
+   after enough interruptions lost track of which branch it had already been
+   using and started writing to a brand-new, differently-named branch
+   ("ui-modernization-updates") instead of continuing the one it already
+   had commits and an open PR on. Nothing ever told it "you already picked
+   a branch, stick with it" - the branch name only ever lived inside
+   individual write_file tool_calls buried in chat history, which trimming
+   (see trimCodingAgentToolHistory) or just a long enough conversation can
+   push out of what the model actually sees. Recording it here the moment
+   the first write in a session gets approved, and repeating it as a
+   standing system-prompt reminder (see codingAgentSystemPrompt), means the
+   model doesn't have to remember it on its own for the rest of the task. */
+var codingAgentActiveBranch=null;
 var MK="ai_memories";
 var memories=[];
 var DLK="ai_doclibrary";
@@ -1357,7 +1373,7 @@ function confirmGithubWrite(toolArgs){
      default branch even more important, not less. */
   var wantsDefault=/^(main|master)$/i.test((toolArgs.branch||"").trim());
   var branch=(toolArgs.branch&&!wantsDefault)?toolArgs.branch:"ai-changes";
-  if(codingAutoApprove)return Promise.resolve(branch);
+  if(codingAutoApprove){codingAgentActiveBranch=branch;return Promise.resolve(branch);}
   return new Promise(function(resolve){
     document.getElementById("ghwPath").textContent=(ghRepoOwner||"")+"/"+(ghRepoName||"")+" - "+(toolArgs.path||"");
     document.getElementById("ghwMessage").textContent=toolArgs.message||"(no message)";
@@ -3477,6 +3493,16 @@ function codingAgentSystemPrompt(){
      call at all. Without this, a model that stalls once keeps stalling
      every other round, and the Terminal panel just stays empty. */
   if(codingAgentStallSeen)sys+="\nIMPORTANT: earlier in this conversation you described what you were about to do instead of actually doing it, with no tool call that round. Don't narrate a plan - call the real read_file/write_file/list_files/list_all_files/merge_branch/run_tests/get_test_status tool for the next concrete step instead of just saying you will.\n";
+  /* Instruction 5 above already tells the model to pick one branch name and
+     reuse it, but that only works if it can actually recall its own earlier
+     choice - a real user report showed a long session (dozens of rounds,
+     several stall-recovery detours) losing track of the branch it had
+     already committed to and silently starting a second, differently-named
+     one instead, splitting the work across two branches with only one ever
+     getting merged. Restating the ACTUAL branch name here, once it's known,
+     turns "remember what you picked" into "here it is" - nothing left to
+     forget or reconstruct from possibly-trimmed history. */
+  if(codingAgentActiveBranch)sys+="\nIMPORTANT: this task is already using branch '"+codingAgentActiveBranch+"' - every write_file/merge_branch call from here on must use that exact same branch, not a new or renamed one, unless the user explicitly asks you to start a fresh branch or switch to unrelated work.\n";
   sys+="Show your reasoning in <think> tags.";
   return sys;
 }
@@ -3538,6 +3564,11 @@ async function runCodingAgentTurn(assembledMessages,autoContinue){
        immediately ahead of it. */
     msgs.splice(msgs.length-1,0,{role:"system",content:"REPO CONNECTION CHANGED MID-CONVERSATION: this thread was connected to "+codingTabRepo+" earlier, but is now connected to "+currentRepoKey+" instead. Any earlier claims in this conversation about which repo is connected, its structure, or its contents describe the OLD repo ("+codingTabRepo+") and are no longer accurate - do not repeat them. Treat "+currentRepoKey+" as the only current repo and rely on fresh tool calls against it, not anything said earlier in this thread."});
     showModelSwitchNotice("🔀 Repo connection changed to <strong>"+esc(currentRepoKey)+"</strong> - earlier messages in this tab may still reference "+esc(codingTabRepo)+".");
+    /* A branch name only means something within the repo it was created
+       on - carrying it over to a newly-connected repo would tell the model
+       to write to a branch that has nothing to do with what it's now
+       looking at. */
+    codingAgentActiveBranch=null;
   }
   codingTabRepo=currentRepoKey;
   msgs.unshift({role:"system",content:codingAgentSystemPrompt()});
@@ -3661,6 +3692,19 @@ async function runCodingAgentRound(sessionId,toolChoice){
   var mySession=codingAgentActive;
   var msgs=mySession.messages;
   trimCodingAgentToolHistory(msgs);
+  /* Rebuild the system prompt fresh at the start of EVERY round, not just
+     on a brand-new turn or the stall-specific Continue - codingAgentSystemPrompt()
+     reflects live state (codingAgentActiveBranch, the *Seen flags) that can
+     change mid-task (e.g. the moment a write_file gets approved and picks
+     the working branch), but most rounds in a real session are reached via
+     the plain "Continue" button or an auto-continue chain, neither of which
+     used to touch msgs[0] at all - they just kept reusing whatever prompt
+     was built back when the turn started, before any of that state existed
+     yet. A real user report traced a branch-tracking reminder never
+     reaching the model to exactly this: it was added correctly, but the
+     only rounds that ever saw it were the very first of a turn (too early
+     to know the branch) and the rare stall-recovery Continue. */
+  if(msgs[0]&&msgs[0].role==="system")msgs[0]={role:"system",content:codingAgentSystemPrompt()};
   var con=renderCodingConsole();
   try{
     /* A real transcript: a write_file call for a several-KB CSS file kept
@@ -4079,18 +4123,11 @@ async function runCodingAgentRound(sessionId,toolChoice){
       contBtn2.onclick=function(){
         contBtn2.disabled=true;contBtn2.textContent="…";
         /* Continue hands out a fresh one-shot retry budget for stalling/
-           fake-tool-call/capability-denial below, but msgs[0] is still the
-           system prompt built back at the ORIGINAL outer send - if one of
-           those already happened earlier in this same long tool-calling
-           chain, the correction only ever reached the model as a one-off
-           in-round nudge, never as a standing reminder for whatever comes
-           after this Continue tap. A real user report showed the stalling
-           pattern recurring several Continues later in one long session
-           despite the one-shot retry having already fired once. Refreshing
-           msgs[0] here picks up whatever codingAgent*Seen flags are true
-           right now, so this new session inherits the same standing
-           warning a brand new outer message would get. */
-        if(msgs[0]&&msgs[0].role==="system")msgs[0]={role:"system",content:codingAgentSystemPrompt()};
+           fake-tool-call/capability-denial below - the standing reminders
+           themselves (codingAgent*Seen, codingAgentActiveBranch) get baked
+           into msgs[0] fresh at the top of every runCodingAgentRound call,
+           including the one this triggers, so nothing extra is needed here
+           to make sure this new session inherits them. */
         codingAgentActive={messages:msgs,id:++codingAgentSeq,autoContinue:codingModeActive||!!mySession.autoContinue,fakeToolRetried:false,emptyRetried:false,capabilityDenialRetried:false,stallRetried:false};
         /* Once the stall-cycles note above has actually fired (>=2), we
            have real evidence for THIS conversation that a free "auto" round
@@ -4791,7 +4828,7 @@ function tabTitleFor(hist,isCoding){
 }
 function currentTabSnapshot(){
   var ov=Object.assign({},overseerState,{modelsUsed:Array.from(overseerState.modelsUsed)});
-  return{title:tabTitleFor(chatHistory,codingModeActive),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive,codingRepo:codingTabRepo,codingDenialSeen:codingAgentDenialSeen,codingFakeToolSeen:codingAgentFakeToolSeen,codingStallSeen:codingAgentStallSeen,codingStallCycles:codingAgentStallCycles};
+  return{title:tabTitleFor(chatHistory,codingModeActive),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive,codingRepo:codingTabRepo,codingDenialSeen:codingAgentDenialSeen,codingFakeToolSeen:codingAgentFakeToolSeen,codingStallSeen:codingAgentStallSeen,codingStallCycles:codingAgentStallCycles,codingActiveBranch:codingAgentActiveBranch};
 }
 function syncActiveTabFromLiveState(){
   if(!openTabs.length)return;
@@ -4837,6 +4874,7 @@ function applyTabAsLiveState(t){
   codingAgentFakeToolSeen=!!t.codingFakeToolSeen;
   codingAgentStallSeen=!!t.codingStallSeen;
   codingAgentStallCycles=t.codingStallCycles||0;
+  codingAgentActiveBranch=t.codingActiveBranch||null;
   updateCodingModeUI();
 }
 /* The systemToggle bar right under the header already shows contextual
@@ -4920,6 +4958,7 @@ function createNewTab(isCoding){
   codingAgentFakeToolSeen=false;
   codingAgentStallSeen=false;
   codingAgentStallCycles=0;
+  codingAgentActiveBranch=null;
   updateCodingModeUI();
   if(isCoding)applyCodingEmptyStateText();
   renderTabBar();
@@ -6010,6 +6049,7 @@ function resolveGithubWriteConfirm(approved){
   if(pendingGithubWriteResolve){
     var r=pendingGithubWriteResolve;pendingGithubWriteResolve=null;
     var branchVal=(document.getElementById("ghwBranch").value||"").trim()||"ai-changes";
+    if(approved)codingAgentActiveBranch=branchVal;
     r(approved?branchVal:null);
   }
 }
@@ -7088,7 +7128,7 @@ document.getElementById("clearBtn").addEventListener("click",function(){
   undoData={messages:chatHistory.slice(),backend:activeBackend,modelId:currentModel.id,modelLabel:currentModel.label};
   chatHistory=[];clearAttach();localStorage.removeItem(pk(AUTOSAVE_KEY));localStorage.removeItem(pk("ai_draft"));
   sessionId=Date.now().toString();responseCount=0;summarizing=false;
-  codingTabRepo=null;codingAgentDenialSeen=false;codingAgentFakeToolSeen=false;codingAgentStallSeen=false;codingAgentStallCycles=0;
+  codingTabRepo=null;codingAgentDenialSeen=false;codingAgentFakeToolSeen=false;codingAgentStallSeen=false;codingAgentStallCycles=0;codingAgentActiveBranch=null;
   clearActiveWproj();stopOverseerMonitoring();overseerState=defaultOverseerState();
   preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">🤖</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';
