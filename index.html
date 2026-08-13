@@ -298,7 +298,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.170</span></span>
+      <span class="wm">ai-router <span>v5.171</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -601,7 +601,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.170</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.171</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -1065,6 +1065,26 @@ function updateGithubStatus(){
   updateGithubSaveBtnLabel();
   if(codingModeActive&&document.getElementById("emptyState"))applyCodingEmptyStateText();
 }
+/* A real user question: with the app open in more than one browser tab at
+   once, does connecting/disconnecting GitHub in one leave the others out of
+   sync? Yes, without this - each tab only ever reads the GitHub connection
+   out of localStorage once, at its own load (loadGithubConnection()), and
+   nothing told an already-open tab that another tab just changed it. The
+   'storage' event exists exactly for this: it fires in every OTHER tab
+   sharing the same origin (never the tab that made the write, which already
+   updates its own in-memory state directly), so a reconnect/disconnect in
+   one tab now reaches every other open tab's status display and its actual
+   in-memory ghToken/ghOauthToken/etc within the same page load - no manual
+   reload needed to stop a stale tab from trying to use a connection that
+   was just cleared elsewhere, or missing one that was just added. */
+var GH_STORAGE_SYNC_KEYS=["gh_repo_owner","gh_repo_name","gh_write_secret","gh_oauth_refresh_token","gh_oauth_token"];
+window.addEventListener("storage",function(e){
+  /* e.key is null for a wholesale localStorage.clear() in another tab -
+     treat that as "resync everything" too rather than ignoring it. */
+  if(e.key!==null&&GH_STORAGE_SYNC_KEYS.indexOf(e.key)<0&&GH_STORAGE_SYNC_KEYS.map(pk).indexOf(e.key)<0)return;
+  loadGithubConnection();
+  updateGithubStatus();
+});
 function updateGithubSaveBtnLabel(){
   var btn=document.getElementById("githubSaveBtn");
   if(!btn)return;
