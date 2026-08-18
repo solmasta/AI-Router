@@ -104,7 +104,7 @@ async function handleGitHubOp(body, env, oauthToken) {
   if (!owner || !repo) return { error: "Missing owner or repo" };
 
   // Restrict writes to a caller-supplied owner/repo to a fixed allowlist -
-  // without this, anyone holding the shared secret (see claude-worker's
+  // without this, anyone holding the shared secret (see openai-router.js's
   // /secret comment) could point this worker at any repo the GITHUB_TOKEN
   // can reach, not just the one this project intends to operate on.
   // Supported ALLOWED_REPOS entries:
