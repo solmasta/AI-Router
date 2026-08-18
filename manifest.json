@@ -1,7 +1,7 @@
 {
   "name": "ai-router",
   "short_name": "ai-router",
-  "description": "Open source AI router — Llama, DeepSeek, Mistral via DeepInfra",
+  "description": "AI coding assistant with direct GitHub repo access — read, write, and commit code across DeepInfra, OpenRouter, and OpenAI models",
   "start_url": ".",
   "display": "standalone",
   "background_color": "#0e0f13",
