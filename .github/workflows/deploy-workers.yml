@@ -16,7 +16,7 @@ name: Deploy Cloudflare Workers
 #   WRITE_SECRET            - github-ops-worker only (write_file/merge_branch gate)
 #   DEEPINFRA_KEY           - openai-router-chat
 #   OPENROUTER_KEY          - openrouter-worker
-#   ANTHROPIC_API_KEY       - claude-worker
+#   OPENAI_KEY              - openai-worker
 #   GH_OPS_TOKEN            - github-ops-worker (a GitHub PAT; can't be named
 #                             GITHUB_TOKEN, GitHub reserves that name for the
 #                             token Actions injects automatically)
@@ -105,7 +105,7 @@ jobs:
           APP_SECRET: ${{ secrets.APP_SECRET }}
           OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
 
-  claude-worker:
+  openai-worker:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -115,20 +115,20 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: '4'
-          workingDirectory: workers/claude-worker
+          workingDirectory: workers/openai-worker
       - name: Sync secrets
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: '4'
-          workingDirectory: workers/claude-worker
+          workingDirectory: workers/openai-worker
           secrets: |
             APP_SECRET
-            ANTHROPIC_API_KEY
+            OPENAI_KEY
         env:
           APP_SECRET: ${{ secrets.APP_SECRET }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
 
   github-ops-worker:
     runs-on: ubuntu-latest
