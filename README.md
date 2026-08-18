@@ -4,7 +4,7 @@ A single-file PWA chat client (`index.html`) that talks to three Cloudflare Work
 
 - **DeepInfra** — open-source models (Llama, Qwen, DeepSeek, Mistral, Gemma).
 - **OpenRouter** — uncensored/roleplay models plus a few free ones.
-- **Claude** — Anthropic's Claude models (Opus, Sonnet, Haiku) with your API credits.
+- **OpenAI** — GPT models (GPT-5, GPT-4.1, o3-mini) with your API credits.
 
 Everything the browser needs — markup, CSS, and JS — lives inline in `index.html`. There's no build step and no separate `config.json`/`script.js`/`style.css` to keep in sync; model lists, worker URLs, and system-prompt defaults are all defined directly inside `index.html`'s `<script>` block (`BACKENDS`, `DEFAULT_PROMPTS`).
 
@@ -18,7 +18,7 @@ Everything the browser needs — markup, CSS, and JS — lives inline in `index.
 | `icon-32.png` / `icon-192.png` / `icon-512.png` | App icons |
 | `workers/openai-router-chat/openai-router.js` + `wrangler.jsonc` | Cloudflare Worker — proxies DeepInfra + a free web-search endpoint |
 | `workers/openrouter-worker/openrouter-worker.js` + `wrangler.toml` | Cloudflare Worker — proxies OpenRouter |
-| `workers/claude-worker/claude-worker.js` + `wrangler.jsonc` | Cloudflare Worker — proxies Claude API, converts OpenAI format to Claude format |
+| `workers/openai-worker/openai-worker.js` + `wrangler.jsonc` | Cloudflare Worker — proxies OpenAI's Chat Completions API |
 | `workers/drive-auth/drive-auth-worker.js` + `wrangler.jsonc` | Cloudflare Worker — holds the Google OAuth client secret; exchanges/refreshes Drive access tokens so the app never needs to re-prompt sign-in |
 | `workers/github-ops-worker/github-ops-worker.js` + `wrangler.jsonc` | Cloudflare Worker — proxies GitHub API operations (read/write/list files, merge branches) used by the app's repo tools |
 | `workers/github-oauth-worker/github-oauth-worker.js` + `wrangler.jsonc` | Cloudflare Worker — handles the GitHub OAuth handshake (authorize/callback/refresh) so a user can connect a repo via GitHub login instead of a personal access token |
@@ -48,11 +48,11 @@ Generate a random string (e.g. `openssl rand -hex 32`) — this is `APP_SECRET`.
 4. Add a secret named `APP_SECRET` with the **same** string from step 1.
 5. Deploy and copy the Worker URL.
 
-### 4. Deploy the Claude Worker
+### 4. Deploy the OpenAI Worker
 
 1. Create a third Worker.
-2. Paste the contents of `workers/claude-worker/claude-worker.js`.
-3. Add a secret named `ANTHROPIC_API_KEY` with your [Anthropic API key](https://console.anthropic.com/api/keys).
+2. Paste the contents of `workers/openai-worker/openai-worker.js`.
+3. Add a secret named `OPENAI_KEY` with your [OpenAI API key](https://platform.openai.com/api-keys).
 4. Add a secret named `APP_SECRET` with the **same** string from step 1.
 5. Deploy and copy the Worker URL.
 
@@ -96,14 +96,14 @@ In `index.html`, find these lines near the top of the `<script>` block:
 ```js
 var DI_URL="https://openai-router-chat.lukedorsett.workers.dev";
 var OR_URL="https://openrouter-worker.lukedorsett.workers.dev";
-var CLAUDE_URL="https://claude-worker.lukedorsett.workers.dev";
+var OAI_URL="https://openai-worker.lukedorsett.workers.dev";
 var DRIVE_AUTH_URL="https://drive-auth-worker.lukedorsett.workers.dev";
 var GH_OPS_URL="https://github-ops-worker.lukedorsett.workers.dev";
 var GH_OAUTH_URL="https://github-oauth-worker.lukedorsett.workers.dev";
 var APP_SECRET="CHANGE_ME_APP_SECRET";
 ```
 
-Replace `DI_URL`, `OR_URL`, `CLAUDE_URL`, `DRIVE_AUTH_URL`, `GH_OPS_URL`, and `GH_OAUTH_URL` with your own Worker URLs from steps 2–7, and `APP_SECRET` with the exact string you set as the `APP_SECRET` secret on all Workers.
+Replace `DI_URL`, `OR_URL`, `OAI_URL`, `DRIVE_AUTH_URL`, `GH_OPS_URL`, and `GH_OAUTH_URL` with your own Worker URLs from steps 2–7, and `APP_SECRET` with the exact string you set as the `APP_SECRET` secret on all Workers.
 
 ### 9. Deploy to GitHub Pages
 
@@ -113,16 +113,16 @@ Replace `DI_URL`, `OR_URL`, `CLAUDE_URL`, `DRIVE_AUTH_URL`, `GH_OPS_URL`, and `G
 
 ## Adding models
 
-Edit the `BACKENDS` object inside `index.html`'s `<script>` block — each backend (`deepinfra`, `openrouter`, `claude`) has a `models` array. Any model your provider serves works — use its exact model ID:
+Edit the `BACKENDS` object inside `index.html`'s `<script>` block — each backend (`deepinfra`, `openrouter`, `openai`) has a `models` array. Any model your provider serves works — use its exact model ID:
 
 ```js
 { id:"meta-llama/Meta-Llama-3-8B-Instruct", label:"Llama 3 8B", cat:"Everyday", desc:"..." }
 ```
 
-Claude model IDs: `claude-opus-4-8`, `claude-sonnet-5`, `claude-haiku-4-5-20251001`.
+OpenAI model IDs: `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4o`, `o3-mini`.
 
 ## Security note
 
 All Workers check the `X-App-Secret` header against an `APP_SECRET` secret (set up above) before doing anything else, so a bare Worker URL discovered by a scanner or bot can't spend your API credits without also knowing that string. That said, this repo is public and `APP_SECRET` is embedded in `index.html`'s client-side JS — anyone who actually reads the source (here or via view-source on the live page) can read it too. This raises the bar against casual/automated abuse of the raw URL; it isn't a substitute for real per-user auth. If that's not enough for your usage, consider adding Cloudflare rate limiting on top.
 
-**Claude API key in particular:** Store your Anthropic API key as a Cloudflare secret. Never commit it to the repo or hard-code it in the frontend. The same applies to DeepInfra and OpenRouter keys.
+**Store every provider key as a Cloudflare secret** — `OPENAI_KEY`, `DEEPINFRA_KEY`, `OPENROUTER_KEY`. Never commit them to the repo or hard-code them in the frontend.

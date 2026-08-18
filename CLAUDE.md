@@ -5,7 +5,7 @@
 Single-file PWA (`index.html`) - all frontend logic lives in two inline
 `<script>` blocks. Backed by several Cloudflare Workers, each in its own
 `workers/<name>/` folder alongside its own `wrangler.jsonc`/`.toml` config
-(`workers/openai-router-chat/`, `workers/claude-worker/`,
+(`workers/openai-router-chat/`, `workers/openai-worker/`,
 `workers/openrouter-worker/`, `workers/drive-auth/`,
 `workers/github-ops-worker/`, `workers/github-oauth-worker/`). Keep each Worker's config in its own folder -
 if a Worker's Cloudflare project uses Git auto-deploy, its dashboard "Root
