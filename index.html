@@ -299,7 +299,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 <div class="app">
   <header>
     <div class="hl">
-      <span class="wm">ai-router <span>v5.176</span></span>
+      <span class="wm">ai-router <span>v5.177</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -603,7 +603,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.176</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.177</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
     <div class="sr"><div><div class="slb">Theme</div><div class="ssb">Switch between dark and light mode</div></div><button class="bg" id="themeBtn">&#9790; Light</button></div>
@@ -615,6 +615,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
     <div class="sr"><div><div class="slb">Drive folder</div><div class="ssb" id="driveFolderStatus">Auto (finds/creates by name)</div></div><div style="display:flex;gap:6px"><button class="bg" id="driveFolderOpenBtn">Open</button><button class="bg" id="driveFolderSetBtn">Set</button></div></div>
     <div class="sr"><div><div class="slb">GitHub repository</div><div class="ssb" id="githubStatus">Not connected</div></div><div style="display:flex;gap:6px"><button class="bg hidden" id="githubClearBtn">Clear</button><button class="bg" id="githubConnectBtn">Connect</button></div></div>
     <div class="sr"><div><div class="slb">Worker connection test</div><div class="ssb" id="workerTestStatus">Checks whether each backend Worker accepts the app's current secret - useful when a Worker keeps saying "Unauthorized" and it's unclear which one is out of sync</div></div><button class="bg" id="workerTestBtn">Run test</button></div>
+    <div class="sr"><div><div class="slb">OpenAI key rotation</div><div class="ssb" id="openaiKeyRotateStatus">-</div></div><button class="bg" id="openaiKeyRotatedBtn">Rotated today</button></div>
     <div class="sr"><div><div class="slb">App updates</div><div class="ssb" id="checkUpdateStatus">Deploys usually apply automatically within a few minutes - use this if the version above looks out of date</div></div><button class="bg" id="checkUpdateBtn">Check now</button></div>
     <div class="sr"><div><div class="slb">Agent auto-select</div><div class="ssb">Automatically pick the best model for each task</div></div><button class="bg" id="agentToggleBtn">ON</button></div>
     <div class="sr"><div><div class="slb">Overseer monitoring</div><div class="ssb">Track progress, detect stuck situations, suggest next steps</div></div><button class="bg" id="overseerToggleBtn">ON</button></div>
@@ -1092,6 +1093,69 @@ function updateGithubStatus(){
   updateGithubSaveBtnLabel();
   if(codingModeActive&&document.getElementById("emptyState"))applyCodingEmptyStateText();
 }
+/* ---- OpenAI key rotation reminder ----
+   OpenAI's service account keys only offer a 90-day max lifetime (no
+   longer-lived option), unlike DeepInfra/OpenRouter's keys, which don't
+   expire on a fixed schedule. Without a reminder, the OpenAI backend goes
+   silently "Unauthorized" in ~90 days with nothing in the app pointing at
+   why. OPENAI_KEY_CREATED_DEFAULT is the seed date this was first set up -
+   tap "Rotated today" in Settings after actually creating a new key and
+   updating the OPENAI_KEY secret on GitHub, which overrides it via
+   localStorage so a rotation never needs a code deploy. */
+var OPENAI_KEY_CREATED_DEFAULT="2026-08-19";
+var OPENAI_KEY_LIFETIME_DAYS=90;
+var OPENAI_KEY_WARN_WITHIN_DAYS=14;
+function getOpenaiKeyCreatedDate(){
+  return localStorage.getItem("openai_key_created")||OPENAI_KEY_CREATED_DEFAULT;
+}
+function getOpenaiKeyRotateByDate(){
+  var created=new Date(getOpenaiKeyCreatedDate()+"T00:00:00");
+  return new Date(created.getTime()+OPENAI_KEY_LIFETIME_DAYS*86400000);
+}
+function daysUntilOpenaiKeyRotation(){
+  return Math.ceil((getOpenaiKeyRotateByDate().getTime()-Date.now())/86400000);
+}
+function updateOpenaiKeyRotateUI(){
+  var el=document.getElementById("openaiKeyRotateStatus");
+  if(!el)return;
+  var days=daysUntilOpenaiKeyRotation();
+  var dateStr=getOpenaiKeyRotateByDate().toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"});
+  if(days<0){
+    el.textContent="Expired "+Math.abs(days)+" day"+(Math.abs(days)===1?"":"s")+" ago ("+dateStr+") - OpenAI models will fail until rotated";
+    el.style.color="#f87171";
+  }else if(days<=OPENAI_KEY_WARN_WITHIN_DAYS){
+    el.textContent="Expires in "+days+" day"+(days===1?"":"s")+" ("+dateStr+") - create a new service account key and update GitHub's OPENAI_KEY secret";
+    el.style.color="#f59e0b";
+  }else{
+    el.textContent="Expires "+dateStr+" (OpenAI's max key lifetime is 90 days)";
+    el.style.color="";
+  }
+}
+/* Toasts at most once per calendar day (tracked separately from the
+   underlying rotate-by date) so reopening the app repeatedly during the
+   warning window doesn't nag on every load - Settings still always shows
+   the live countdown for anyone who checks. */
+function maybeShowOpenaiKeyRotateToast(){
+  var days=daysUntilOpenaiKeyRotation();
+  if(days>OPENAI_KEY_WARN_WITHIN_DAYS)return;
+  var today=new Date().toISOString().slice(0,10);
+  if(localStorage.getItem("openai_key_toast_shown_on")===today)return;
+  localStorage.setItem("openai_key_toast_shown_on",today);
+  if(days<0){
+    showToast("Your OpenAI service account key has expired - OpenAI models will fail until you rotate it (Settings → OpenAI key rotation).");
+  }else{
+    showToast("Your OpenAI key expires in "+days+" day"+(days===1?"":"s")+" - rotate it soon (Settings → OpenAI key rotation).");
+  }
+}
+document.getElementById("openaiKeyRotatedBtn").addEventListener("click",function(){
+  if(!confirm("Mark the OpenAI key as rotated today? This resets the 90-day countdown - only tap this after you've actually created a new key and updated the OPENAI_KEY secret on GitHub."))return;
+  var today=new Date();
+  var iso=today.getFullYear()+"-"+String(today.getMonth()+1).padStart(2,"0")+"-"+String(today.getDate()).padStart(2,"0");
+  localStorage.setItem("openai_key_created",iso);
+  localStorage.removeItem("openai_key_toast_shown_on");
+  updateOpenaiKeyRotateUI();
+  showToast("OpenAI key rotation tracked - next reminder in 90 days.");
+});
 /* A real user question: with the app open in more than one browser tab at
    once, does connecting/disconnecting GitHub in one leave the others out of
    sync? Yes, without this - each tab only ever reads the GitHub connection
@@ -7331,6 +7395,8 @@ renderMemoryList();
 loadDocLibrary();
 renderDocLibraryList();
 updateGithubStatus();
+updateOpenaiKeyRotateUI();
+maybeShowOpenaiKeyRotateToast();
 document.getElementById("activeProfileLabel").textContent=activeProfile==="default"?"default":activeProfile;
 hideSplashScreen();
 
