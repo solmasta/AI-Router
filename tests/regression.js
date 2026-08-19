@@ -276,14 +276,25 @@ function assert(cond, label) {
     // finish" then read stale mid-request state and failed for a reason
     // that had nothing to do with app correctness. A dismissed switch-
     // model confirm still has to wait out the same slow rejection
-    // afterward, compounding the delay - 150 * 300ms = 45s gives real
-    // slow-rejection cases room to actually finish either way.
-    for (let i = 0; i < 150; i++) {
+    // afterward, compounding the delay - was raised to 150 * 300ms (45s)
+    // for that reason, then observed exceeding even that under real
+    // sandbox load. 400 * 300ms (2 min) gives real slow-rejection cases
+    // ample room while still catching a genuine hang eventually.
+    //
+    // Failing loudly here (instead of just returning) matters as much as
+    // the budget itself: silently giving up left the app's `sending` flag
+    // still true, which made createNewTab() and other `if(sending)return`
+    // guards silently no-op in whatever test happened to run next -
+    // surfacing as "tab count is 0" or similar assertions with no visible
+    // connection to the real cause. Throwing here instead puts the failure
+    // at its actual source, with a message that says what's actually wrong.
+    for (let i = 0; i < 400; i++) {
       await dismissConfirmIfAny();
       const t = await page.textContent('#sendBtn');
       if (t.indexOf('Send') >= 0) return;
       await page.waitForTimeout(300);
     }
+    throw new Error('waitForSendDone: #sendBtn never returned to "Send" after 120s - a send is genuinely stuck (or the sandbox network proxy is unusually slow to reject the expected-to-fail worker request). Check the last message sent for what triggered it.');
   }
   async function sendMsg(text) {
     await page.fill('#prompt', text);
@@ -1126,12 +1137,14 @@ function assert(cond, label) {
   // happens" report.
   await page.click('#newTabBtn'); await page.waitForTimeout(400);
   let releaseSlowSend = null;
+  let slowSendCaptured = false;
   await page.route('**/*', async (route) => {
     const req = route.request();
     if (req.method() === 'POST' && req.postData()) {
       let parsed = null;
       try { parsed = JSON.parse(req.postData()); } catch (e) {}
       if (parsed && parsed.stream === true) {
+        slowSendCaptured = true;
         await new Promise((resolve) => { releaseSlowSend = resolve; });
         await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"choices":[{"delta":{"content":"regtest slow reply"}}]}\n\ndata: [DONE]\n\n' });
         return;
@@ -1141,7 +1154,22 @@ function assert(cond, label) {
   });
   await page.fill('#prompt', 'regtest message that stays in flight');
   await page.click('#sendBtn');
-  await page.waitForTimeout(400);
+  // Wait for the route handler to actually have captured this request
+  // (slowSendCaptured/releaseSlowSend set) instead of a fixed delay - a
+  // fixed wait here raced against the mocked fetch actually reaching
+  // Playwright's route layer under real sandbox network/proxy jitter.
+  // Losing that race left releaseSlowSend still null when this test called
+  // it below, silently no-op'ing (`if (releaseSlowSend)` guard) - by the
+  // time the real request DID arrive moments later, it set up its own
+  // fresh unresolved promise nothing would ever call, hanging the send
+  // forever (not just slowly) and cascading into every later test that
+  // checks the app's `sending` flag (tab creation, the Coding-tab guard,
+  // etc.) with failures that looked completely unrelated to the real cause.
+  for (let i = 0; i < 50; i++) {
+    if (slowSendCaptured) break;
+    await page.waitForTimeout(100);
+  }
+  if (!slowSendCaptured) throw new Error('mid-send close-block test: the mocked stream:true request never reached the route handler within 5s - cannot safely proceed.');
   const tabCountBeforeBlockedClose = await page.evaluate(() => document.querySelectorAll('#tabBar .tabpill').length);
   await page.locator('#tabBar .tabpill.act .tpx').click();
   await page.waitForTimeout(200);
