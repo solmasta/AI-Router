@@ -4,15 +4,12 @@
    Chromium build available. Exits non-zero on any failed assertion.
 
    Covers the flows that have actually broken in this app before:
-   - basic send + Overseer status bar
+   - basic send
    - a send error keeping the message in history (Regen stays usable,
      tabs/storage don't silently lose the message)
    - a send that fails while the tab was hidden auto-retries once on its
      own the moment the tab becomes visible again, instead of leaving the
      user to notice the error and tap Regen themselves
-   - a next-step suggestion prompt always appears after a send ends, no
-     matter how - success, error, or an aborted stream - and regardless of
-     the separate brainstorming-mode toggle
    - vision model auto-switch on image attach, and auto-restore after
    - memory add/delete
    - tab creation, per-tab isolation, and switching back
@@ -21,15 +18,6 @@
      "1 tab left" when the tab bar itself disappears; closing the active
      tab mid-send is blocked with a clear toast instead of doing nothing
    - profile creation and data isolation
-   - Overseer chat: long-press opens it, sends reach the model with the
-     Overseer's own dedicated system prompt (not the main chat one)
-   - Overseer chat can also drive repo tool_calls (e.g. write_file) directly,
-     through the same TOOL_MODELS gate and approval dialogs as the main
-     chat, with its own tool-execution notices in the Overseer's chat log
-   - the Overseer chat's own code-signal keywords are word-boundary matched
-     (not substring - "react" inside "overreacted" doesn't count) and
-     require more than one incidental hit before granting repo tools for
-     a message that isn't actually about the connected repo
    - all repo/coding work (read_file/write_file/list_files/merge_branch)
      runs on one fixed dedicated coding agent model, independent of
      whatever the main chat is using - a repo-flavored message no longer
@@ -69,8 +57,8 @@
      expired Drive session instead of silently failing
    - "Open" deep-links straight to the Drive folder by id, falling back to
      a name search only when no id is known yet
-   - App-control tools (create_project/remember/switch_model) execute
-     immediately on a model tool_call, with real observable side effects
+   - App-control tools (create_project/remember) execute immediately on a
+     model tool_call, with real observable side effects
    - hardcoded app-structure knowledge only appears in the coding agent's
      own system prompt when GitHub is connected to this actual repo, not
      some other repo - checked under both the current repo name and the
@@ -80,16 +68,11 @@
      system-prompt text lives only in the dedicated coding agent's prompt
    - repo tools are gated on actual repo/GitHub signal, not generic coding
      keywords - a message about an unrelated new app doesn't route to the
-     coding agent just for sounding code-flavored, in both the main chat
-     and the Overseer strategy chat
+     coding agent just for sounding code-flavored
    - a model that comes back with a genuinely empty completion (e.g. it
      burned its turn on tool_calls and had nothing left once locked to
      tool_choice:"none") triggers exactly one automatic fallback retry on a
      different tool-capable model instead of just showing "(empty response)"
-   - an unambiguous coding message always auto-routes to the same one
-     pinned coding model instead of the general auto-router's usual
-     shuffle-for-variety behavior rotating it between several
-     similarly-scored coding models message to message
    - GitHub Settings: a one-tap Clear button disconnects the active repo
      without opening the Connect modal, previously-connected repos are
      offered as quick "recent" picks when reconnecting, and a repo saved
@@ -110,8 +93,6 @@
      never touches sw.js's own bytes) still applies itself automatically -
      no tap required - and defers cleanly instead of reloading mid-request
      if a send or coding-agent round is still in flight
-   - the Overseer button visibly pulses while the auto-router is scoring
-     which model fits the message just sent, and clears once it decides
    - every model, tool-capable or not, is explicitly told not to invent
      or call a tool/function that was never actually defined for the
      conversation (e.g. a fictional weather lookup)
@@ -126,8 +107,7 @@
      user report that continuous=false's "stops on a pause" behavior
      isn't reliable enough across real browsers/OSes to depend on alone
    - picking a voice persists it and is actually set on the utterance
-     when speaking; Overseer personality text persists and shows up in
-     the system prompt sent to the model
+     when speaking
    - the compose bar's icon row wraps instead of pushing the Send button
      off-screen at a narrow phone viewport width
    - an image message never routes to the dedicated coding agent even
@@ -167,26 +147,14 @@
      final answer - narrow on purpose, a plain network/timeout error
      still shows as before instead of silently switching models on a
      transient hiccup
-   - the main chat's single point of contact is "the Overseer" (the
-     primary reply label), with the model that actually answered shown
-     as a secondary indicator rather than the primary identity
-   - the Overseer's quality/stuck tracking reacts to what the model's
-     reply actually says (refusing, unsure, no access), not just its
-     character length - a long, fluent refusal no longer scores
-     "excellent" purely for being wordy
-   - the persistent Overseer bar never claims to be "working on the
-     next step" (amber dot, no visible reason why) unless there's an
-     actual next step to continue - right after the first message, with
-     nothing pending, it reads as a plain status instead of implying
-     work is silently in progress
-   - the persistent Overseer bar's next-step action is labeled "Use next
-     step", fills the continuation prompt, and clears immediately so the
-     same step is not offered over and over
-   - the main chat (and the Overseer's own side-chat) also gets one
-     automatic retry when the model writes fake tool-call syntax as
-     plain text (e.g. an invented <function=some_tool>{...}</function>)
-     instead of an actual answer - the same fix already covering the
-     dedicated coding agent, now applied to the ordinary chat path too
+   - the main chat's reply label reads "Assistant", with the model that
+     actually answered shown as a secondary indicator rather than the
+     primary identity
+   - the main chat also gets one automatic retry when the model writes
+     fake tool-call syntax as plain text (e.g. an invented
+     <function=some_tool>{...}</function>) instead of an actual answer -
+     the same fix already covering the dedicated coding agent, now
+     applied to the ordinary chat path too
    - a dedicated Coding tab routes every message straight to the coding
      agent regardless of keyword content, showing a clear guard message
      if no repo is connected yet instead of silently using the plain
@@ -199,9 +167,9 @@
    - the Coding indicator lives in the systemToggle status bar (with the
      active project/prompt name) rather than the header's icon row, so
      the version number stays fully visible instead of getting squeezed
-   - the dedicated coding agent's own console is labeled "Overseer" too
+   - the dedicated coding agent's own console is labeled "Assistant" too
      (with its fixed model as a secondary indicator), consistent with
-     the main chat's relabeling instead of a leftover "Assistant"
+     the main chat's labeling
    - an OAuth-only GitHub connection with an expired token can refresh and
      keep repo/coding access alive without also requiring the legacy write
      secret path
@@ -259,27 +227,15 @@ function assert(cond, label) {
   }
   function realErrors() { return errors.filter(e => !isNoise(e)); }
 
-  async function dismissConfirmIfAny() {
-    const v = await page.evaluate(() => !document.getElementById('agentConfirmModal').classList.contains('hidden'));
-    if (v) { await page.click('#agentConfirmSendCurrent'); await page.waitForTimeout(300); }
-    return v;
-  }
   async function waitForSendDone() {
-    // Check for the model-switch confirm modal on every iteration, not just
-    // once right after the click - switchToBestModel's scoring can finish
-    // later than a single fixed check under slower conditions, and a missed
-    // modal sits open blocking every later test in the file, not just this one.
     // 25 * 300ms (7.5s) assumed the sandbox's proxy rejects the (expected
     // to fail) worker requests almost instantly. That rejection latency
     // varies and was creeping past 7.5s, so this returned early with the
     // send still genuinely in flight - every assertion checking "did it
     // finish" then read stale mid-request state and failed for a reason
-    // that had nothing to do with app correctness. A dismissed switch-
-    // model confirm still has to wait out the same slow rejection
-    // afterward, compounding the delay - was raised to 150 * 300ms (45s)
-    // for that reason, then observed exceeding even that under real
-    // sandbox load. 400 * 300ms (2 min) gives real slow-rejection cases
-    // ample room while still catching a genuine hang eventually.
+    // that had nothing to do with app correctness. 400 * 300ms (2 min)
+    // gives real slow-rejection cases ample room while still catching a
+    // genuine hang eventually.
     //
     // Failing loudly here (instead of just returning) matters as much as
     // the budget itself: silently giving up left the app's `sending` flag
@@ -289,7 +245,6 @@ function assert(cond, label) {
     // connection to the real cause. Throwing here instead puts the failure
     // at its actual source, with a message that says what's actually wrong.
     for (let i = 0; i < 400; i++) {
-      await dismissConfirmIfAny();
       const t = await page.textContent('#sendBtn');
       if (t.indexOf('Send') >= 0) return;
       await page.waitForTimeout(300);
@@ -300,7 +255,6 @@ function assert(cond, label) {
     await page.fill('#prompt', text);
     await page.click('#sendBtn');
     await page.waitForTimeout(600);
-    await dismissConfirmIfAny();
     await waitForSendDone();
   }
   // Waits for the actual attach-list count to reach n instead of trusting a
@@ -345,84 +299,10 @@ function assert(cond, label) {
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 15000 });
   await page.waitForTimeout(1500);
 
-  console.log('\n-- basic send + Overseer bar --');
+  console.log('\n-- basic send --');
   await sendMsg('hi there, quick test');
-  const barText = await page.evaluate(() => {
-    const el = document.getElementById('overseerBarText');
-    return el ? el.textContent : null;
-  });
-  assert(!!barText && barText.length > 0, 'Overseer bar populated after first message');
-  // Right after the very first message, no step has been marked complete
-  // yet (currentStep is still 0) and there's nothing pending - a real user
-  // report found the bar saying "Working on X" with an amber dot and no
-  // Continue button in exactly this state, reading like something was
-  // actively in progress when the app was fully idle.
-  const barStateAfterFirstMsg = await page.evaluate(() => ({
-    text: document.getElementById('overseerBarText').textContent,
-    continueHidden: document.getElementById('overseerBarContinueBtn').classList.contains('hidden'),
-  }));
-  assert(barStateAfterFirstMsg.text.indexOf('Working on the next step') === -1, `the bar doesn't claim to be "working on the next step" when no step has actually advanced and there's nothing to continue (got "${barStateAfterFirstMsg.text}")`);
-  assert(barStateAfterFirstMsg.continueHidden, 'the Continue control stays hidden when there is no real next step, matching the bar text');
-
-  console.log('\n-- Overseer next-step bar uses a distinct label and clears after one use --');
-  let progressReplyCount = 0;
-  await page.route('**/*', async (route) => {
-    const req = route.request();
-    if (req.method() === 'POST' && req.postData()) {
-      let parsed = null;
-      try { parsed = JSON.parse(req.postData()); } catch (e) {}
-      if (parsed && parsed.stream === true) {
-        progressReplyCount++;
-        const longReply = 'regtest progress reply ' + progressReplyCount + ' with enough detail to keep the Overseer from marking the conversation as stuck while step progress advances normally through the pending next-step state.';
-        await route.fulfill({
-          status: 200,
-          contentType: 'text/event-stream',
-          body: `data: {"choices":[{"delta":{"content":${JSON.stringify('')}}}]}\n\ndata: {"choices":[{"delta":{"content":${JSON.stringify(longReply)}}}]}\n\ndata: [DONE]\n\n`,
-        });
-        return;
-      }
-    }
-    await route.continue();
-  });
-  await sendMsg('another quick test');
-  await sendMsg('one more quick test');
-  const nextStepBarState = await page.evaluate(() => ({
-    text: document.getElementById('overseerBarText').textContent,
-    label: document.getElementById('overseerBarContinueBtn').textContent,
-    hidden: document.getElementById('overseerBarContinueBtn').classList.contains('hidden'),
-  }));
-  assert(!nextStepBarState.hidden, 'the next-step bar action appears once a real next step is pending');
-  assert(nextStepBarState.text.indexOf('Next step ready') >= 0, `the bar reads as a ready next step instead of pretending work is already in flight (got "${nextStepBarState.text}")`);
-  assert(nextStepBarState.label.indexOf('Use next step') >= 0, `the persistent bar action uses a distinct label instead of another generic Continue (got "${nextStepBarState.label}")`);
-  await page.click('#overseerBarContinueBtn');
-  const nextStepAfterUse = await page.evaluate(() => ({
-    prompt: document.getElementById('prompt').value,
-    hidden: document.getElementById('overseerBarContinueBtn').classList.contains('hidden'),
-  }));
-  await page.unroute('**/*');
-  assert(nextStepAfterUse.prompt.indexOf('Continue with the next step: ') === 0, `using the next-step bar action fills the expected continuation prompt (got "${nextStepAfterUse.prompt}")`);
-  assert(nextStepAfterUse.hidden, 'using the next-step bar action clears it so the same step is not offered repeatedly');
-
-  console.log('\n-- Overseer suggestion buttons (inline onclick="insertPrompt(...)") actually work --');
-  // displayGeneratedPrompts/displayBrainstormingSuggestions build raw HTML
-  // strings with onclick="insertPrompt(...)" - inline handlers run in
-  // global scope, so this only works if insertPrompt is reachable as
-  // window.insertPrompt, not just a function local to the app's IIFE.
-  // Build a button with the exact same inline-onclick shape those
-  // functions produce, rather than waiting on live Overseer timers.
-  await page.evaluate(() => {
-    var btn = document.createElement('button');
-    btn.id = 'regtestInsertPromptBtn';
-    btn.setAttribute('onclick', "insertPrompt('regtest inserted suggestion')");
-    document.body.appendChild(btn);
-  });
-  await page.click('#regtestInsertPromptBtn');
-  const insertedPromptValue = await page.inputValue('#prompt');
-  assert(insertedPromptValue === 'regtest inserted suggestion', 'tapping a suggestion button (inline onclick="insertPrompt(...)") fills the compose box');
-  await page.evaluate(() => {
-    document.getElementById('regtestInsertPromptBtn').remove();
-    document.getElementById('prompt').value = '';
-  });
+  const chatTextAfterBasicSend = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(chatTextAfterBasicSend.indexOf('quick test') >= 0, 'the sent message actually renders in the chat');
 
   console.log('\n-- project detail\'s Edit button closes the detail modal underneath it --');
   // wprojEditor is earlier in the DOM than wprojDetail, and both share the
@@ -526,27 +406,6 @@ function assert(cond, label) {
   await page.unroute('**/*');
   assert(hiddenRetryPostCount > postCountAfterHiddenFailure, 'coming back to the foreground after a hidden-tab send failure automatically retries once, with no tap needed');
 
-  console.log('\n-- a next-step prompt always appears, even after a send error, even with brainstorming mode off --');
-  // Used to only appear after a clean successful reply, gated behind the
-  // brainstormMode toggle - an error, an empty completion, or the toggle
-  // simply being off left the conversation just sitting there with no cue
-  // for what to do next. Now unconditional: the previous message already
-  // failed (no sandbox egress), which is exactly the case this covers.
-  const nextStepPromptAfterError = await page.evaluate(() => !!document.getElementById('overseerPrompts'));
-  assert(nextStepPromptAfterError, 'a next-step suggestion prompt appears even after a send error, not just after a successful reply');
-  await page.evaluate(() => document.getElementById('overseerPrompts').remove());
-  await page.click('#settingsBtn'); await page.waitForTimeout(150);
-  await page.click('#brainstormToggleBtn'); await page.waitForTimeout(150);
-  const brainstormOffLabel = await page.textContent('#brainstormToggleBtn');
-  assert(brainstormOffLabel === 'OFF', `test setup: brainstorming mode is now off (got "${brainstormOffLabel}")`);
-  await page.click('#closeSettingsModal'); await page.waitForTimeout(150);
-  await sendMsg('another message that will also fail to send');
-  const nextStepPromptWithBrainstormOff = await page.evaluate(() => !!document.getElementById('overseerPrompts'));
-  assert(nextStepPromptWithBrainstormOff, 'the next-step prompt still appears with brainstorming mode off - only the separate exploratory idea grid is gated on that setting');
-  await page.click('#settingsBtn'); await page.waitForTimeout(150);
-  await page.click('#brainstormToggleBtn'); await page.waitForTimeout(150);
-  await page.click('#closeSettingsModal'); await page.waitForTimeout(150);
-
   console.log('\n-- vision model auto-switch + auto-restore --');
   // "here's a photo" -> "what's wrong with it?" is an extremely common
   // pattern - the immediate next message has no NEW attachment but still
@@ -586,7 +445,6 @@ function assert(cond, label) {
   await page.fill('#prompt', '');
   await page.click('#sendBtn');
   await page.waitForTimeout(600);
-  await dismissConfirmIfAny();
   await waitForSendDone();
   // Poll for the intercepted request body specifically, not just UI settle
   // time - unrouting before the request lands (a timing race, not an app
@@ -658,7 +516,6 @@ function assert(cond, label) {
   // settle time - unrouting before the request lands (a race, not an app
   // bug) reads lastRegenBody as null and misreports a failure.
   for (let i = 0; i < 60 && lastRegenBody === null; i++) await page.waitForTimeout(200);
-  await dismissConfirmIfAny();
   await waitForSendDone();
   await page.unroute('**/*');
   const regenSysContent = (lastRegenBody && lastRegenBody.messages ? lastRegenBody.messages : [])
@@ -796,8 +653,8 @@ function assert(cond, label) {
   // misreports a failure. Same fix already applied to the regen test.
   for (let i = 0; i < 60 && lastUnrelatedBody === null; i++) await page.waitForTimeout(200);
   await page.unroute('**/*');
-  // App-control tools (create_project/switch_model/remember) are always
-  // attached for a tool-capable model now, regardless of relevance - only
+  // App-control tools (create_project/remember) are always attached for a
+  // tool-capable model now, regardless of relevance - only
   // the repo tools (read_file/write_file/list_files) stay gated on
   // whether the message is actually code/github-relevant.
   const unrelatedToolNames = ((lastUnrelatedBody && lastUnrelatedBody.tools) || []).map((t) => t.function.name);
@@ -890,12 +747,11 @@ function assert(cond, label) {
   const listFilesTool = (lastCodingAgentBody.tools || []).find((t) => t.function.name === 'list_files');
   assert(listFilesTool && !(listFilesTool.function.parameters.required || []).includes('path'), 'list_files no longer requires a path - omitting it can mean "list the repo root"');
   const chatTextAfterCodingAgent = await page.evaluate(() => document.getElementById('chat').textContent);
-  assert(chatTextAfterCodingAgent.indexOf('Overseer') >= 0, "repo work renders as a normal Overseer reply, labeled consistently with the main chat");
+  assert(chatTextAfterCodingAgent.indexOf('Assistant') >= 0, "repo work renders as a normal Assistant reply, labeled consistently with the main chat");
   assert(chatTextAfterCodingAgent.indexOf('README describes this project') >= 0, "the coding agent's final answer actually renders");
 
   console.log('\n-- 3+ rounds of "Continue with the next step" in a row still keep routing to the dedicated coding agent --');
-  // Each auto-generated "Continue with the next step: X" message (from the
-  // step-completed notice and the persistent Overseer bar) scores zero on
+  // A generic "Continue with the next step: X" message scores zero on
   // every analyzeTask keyword category on its own - a real bug had
   // recentTurnsWereRepoRelevant only looking at the last 3 prior user
   // turns, so after 3+ of these generic continuation messages in a row,
@@ -998,35 +854,6 @@ function assert(cond, label) {
   await page.click('#githubDisconnectBtn'); await page.waitForTimeout(150);
   const ghStatusAfterDisconnect = await page.textContent('#githubStatus');
   assert(ghStatusAfterDisconnect === 'Not connected', `GitHub status reflects disconnect (got "${ghStatusAfterDisconnect}")`);
-
-  console.log('\n-- an unambiguous coding message always converges on the same pinned coding model --');
-  // The general auto-router's shuffle + recency-penalty scoring (added
-  // specifically so it wouldn't camp on one model for variety's sake)
-  // meant a coding conversation could rotate between several
-  // similarly-scored coding models message to message (Qwen2.5-72B,
-  // DeepSeek-V3.2, Qwen3-Coder, Kimi-K2, GLM-4.6, MiniMax-M2) - each with
-  // different conventions and tool-calling behavior, which reads as
-  // "random" for something that benefits from staying consistent. Force
-  // the model onto something clearly non-coding first, then send an
-  // unambiguous coding message and confirm it always lands on the one
-  // pinned coding model - same one the dedicated repo coding agent uses.
-  // Deliberately does NOT clear the chat first - #clearBtn wipes the
-  // active tab's history, and this runs on Tab A before the later "tabs"
-  // test switches away and back expecting Tab A's original content still
-  // there. The router weighs the last 8 non-github-flavored user turns by
-  // recency (latest counts in full, each one before it at half the weight
-  // of the one after it - see analyzeConversationTasks), so an unambiguous
-  // coding message with several matched keywords dominates that window
-  // regardless of whatever unrelated messages came before it.
-  await page.click('#modelBtn'); await page.waitForTimeout(150);
-  await page.locator('.mc:has-text("Llama 3.1 8B Turbo")').first().click();
-  await page.waitForTimeout(150);
-  await sendMsg('why does this python function raise a TypeError when I pass it a list, can you fix and refactor the code');
-  const modelAfterCodeMsg = await page.textContent('#modelBtnLabel');
-  assert(modelAfterCodeMsg === 'Qwen3 Coder 480B', `an unambiguous coding message converges on the one pinned coding model instead of a rotating pick (got "${modelAfterCodeMsg}")`);
-  await sendMsg('please debug this javascript error and implement a fix');
-  const modelAfterSecondCodeMsg = await page.textContent('#modelBtnLabel');
-  assert(modelAfterSecondCodeMsg === 'Qwen3 Coder 480B', `a second, differently-worded coding message stays on the same pinned model instead of rotating (got "${modelAfterSecondCodeMsg}")`);
 
   console.log('\n-- memory add/delete --');
   await page.click('#settingsBtn'); await page.waitForTimeout(150);
@@ -1224,46 +1051,6 @@ function assert(cond, label) {
   assert(codingTabAgentHit, 'a completely generic message with zero repo/code keywords still reaches the dedicated coding agent inside a Coding tab');
   const chatTextInCodingTab = await page.evaluate(() => document.getElementById('chat').textContent);
   assert(chatTextInCodingTab.indexOf('regtest coding tab reply') >= 0, "the coding agent's reply actually renders in the Coding tab");
-  // A real user report: the "🤖 Agent switched to X" banner (a second,
-  // separate instance of the same bug class as the "Switch to X" button
-  // fixed below) kept appearing in a Coding tab before every send, even
-  // though runCodingAgentTurn always uses the one fixed
-  // CODING_AGENT_MODEL_ID regardless of what the per-message auto-router
-  // picked. This send is not the tab's first message (chatHistory.length>1
-  // by now from the guard exchange above), so switchToBestModel() would
-  // have fired here pre-fix.
-  assert(chatTextInCodingTab.indexOf('Agent switched to') === -1, 'the per-message auto-router never shows its "Agent switched to X" banner in a Coding tab');
-
-  console.log('\n-- a model-switch recommendation never appears in a Coding tab, since the coding work always runs on the fixed agent model regardless --');
-  // A real user report: "Switch to X... Switched" kept firing mid-task in
-  // a Coding tab and got tapped along with everything else - pointless,
-  // since runCodingAgentTurn always uses the one fixed
-  // CODING_AGENT_MODEL_ID no matter what the main chat's currentModel is.
-  // Reuses the same fake-tool-call content the stubborn-retry test below
-  // uses - it's short AND trips detectAssistantConcern's looksLikeFakeToolCallText
-  // check, a reliable way to make this conversation read as "stuck" and
-  // fire makeBetterRecommendation() without depending on exact timing.
-  await page.route('**/*', async (route) => {
-    const req = route.request();
-    if (req.method() === 'POST' && req.postData()) {
-      let parsed = null;
-      try { parsed = JSON.parse(req.postData()); } catch (e) {}
-      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'tool_code\nprint(list_files())' } }] }) });
-        return;
-      }
-    }
-    await route.continue();
-  });
-  await sendMsg('regtest another coding message that should look stuck');
-  let switchButtonSeenInCodingTab = false;
-  for (let i = 0; i < 20; i++) {
-    switchButtonSeenInCodingTab = await page.evaluate(() => Array.from(document.querySelectorAll('#chat button')).some((b) => (b.textContent || '').indexOf('Switch to') >= 0));
-    if (switchButtonSeenInCodingTab) break;
-    await page.waitForTimeout(300);
-  }
-  await page.unroute('**/*');
-  assert(!switchButtonSeenInCodingTab, 'no "Switch to X" model-switch recommendation ever appears in a Coding tab, since it would have zero effect on the coding agent actually doing the work');
   // A fresh plain tab, not clicking into whatever "first" tab happens to
   // exist this deep in the suite (that landed on an unpredictable tab with
   // its own accumulated history and broke a much later, unrelated test).
@@ -1577,97 +1364,9 @@ function assert(cond, label) {
   assert(popupWithNoId.url().indexOf('ai-router-backups') >= 0, `with no folder id known, "Open" falls back to a name search instead of a dead link (got "${popupWithNoId.url()}")`);
   await popupWithNoId.close();
   await page.context().unroute('https://drive.google.com/**');
-
-  console.log('\n-- Overseer chat: long-press opens it, a sent message renders and reaches the model with a dedicated system prompt --');
-  // Settings was left open by the previous test - it shares the same
-  // z-index as the new chat modal and sits later in the DOM, so leaving it
-  // open would silently intercept clicks meant for the chat modal
-  // underneath (the same class of bug fixed earlier for wprojDetail).
+  // Settings was left open by the previous test - close it explicitly so
+  // it doesn't intercept clicks meant for whatever modal the next test opens.
   await page.click('#closeSettingsModal'); await page.waitForTimeout(150);
-  // Long-press (500ms hold) on the Overseer button opens the strategy chat,
-  // distinct from the quick-tap ON/OFF toggle - dispatch the same
-  // mousedown/mouseup timing the real handler listens for.
-  await page.dispatchEvent('#overseerBtn', 'mousedown');
-  await page.waitForTimeout(700);
-  await page.dispatchEvent('#overseerBtn', 'mouseup');
-  await page.waitForTimeout(200);
-  const overseerChatOpen = await page.evaluate(() => !document.getElementById('overseerChatModal').classList.contains('hidden'));
-  assert(overseerChatOpen, 'long-pressing the Overseer button opens the strategy chat modal');
-
-  let lastOverseerChatBody = null;
-  await page.route('**/*', async (route) => {
-    const req = route.request();
-    if (req.method() === 'POST' && req.postData()) {
-      try {
-        const parsed = JSON.parse(req.postData());
-        if (parsed.messages && parsed.messages.some((m) => typeof m.content === 'string' && m.content.indexOf('strategic advisor') >= 0)) {
-          lastOverseerChatBody = parsed;
-        }
-      } catch (e) {}
-    }
-    await route.continue();
-  });
-  await page.fill('#overseerChatInput', 'regtest strategy question, what should I try next');
-  await page.click('#overseerChatSendBtn');
-  for (let i = 0; i < 60 && lastOverseerChatBody === null; i++) await page.waitForTimeout(200);
-  await page.unroute('**/*');
-  const overseerChatUserBubbleShown = await page.evaluate(() => document.getElementById('overseerChatLog').textContent.indexOf('regtest strategy question') >= 0);
-  assert(overseerChatUserBubbleShown, 'sent strategy question renders in the Overseer chat log');
-  assert(!!lastOverseerChatBody, 'the strategy question reaches the model tagged with the Overseer\'s own dedicated system prompt, not the main chat one');
-  await page.waitForTimeout(1500); // let the failed (no-egress) request settle into its error state
-  await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
-  const overseerChatClosed = await page.evaluate(() => document.getElementById('overseerChatModal').classList.contains('hidden'));
-  assert(overseerChatClosed, 'Overseer chat modal closes via its close button');
-
-  console.log('\n-- Overseer chat gets the same generous max_tokens as the coding agent when repo tools are actually offered --');
-  // Same truncation risk as runCodingAgentRound above - this side-panel can
-  // also call write_file (overseerHasRepoTools), so a repo-relevant
-  // question here must get the same headroom, not the smaller budget only
-  // meant for the trivial app-control tool calls this loop also handles.
-  // Explicit setup rather than assuming GH/model state survived from far
-  // earlier tests - overseerHasRepoTools needs both a connected repo AND
-  // a tool-capable current model (confirmed tool-capable elsewhere in this
-  // file, e.g. the fallback-model test's app-control tool round).
-  await page.click('#settingsBtn'); await page.waitForTimeout(150);
-  await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
-  await page.fill('#ghOwnerInput', 'solmasta');
-  await page.fill('#ghRepoInput', 'AI-Router');
-  await page.fill('#ghWriteSecretInput', 'regtest-write-secret');
-  await page.click('#githubSaveBtn'); await page.waitForTimeout(300);
-  // Saving already closes the Settings modal (same as the earlier "Coding
-  // tab reaches..." test, which doesn't click a separate close button
-  // either) - a redundant closeSettingsModal click here just times out
-  // waiting for a button that's already hidden.
-  await page.click('#modelBtn'); await page.waitForTimeout(150);
-  await page.locator('.mc:has-text("Mistral Small")').first().click();
-  await page.waitForTimeout(150);
-  await page.dispatchEvent('#overseerBtn', 'mousedown');
-  await page.waitForTimeout(700);
-  await page.dispatchEvent('#overseerBtn', 'mouseup');
-  await page.waitForTimeout(200);
-  let overseerChatRepoToolsBody = null;
-  await page.route('**/*', async (route) => {
-    const req = route.request();
-    if (req.method() === 'POST' && req.postData()) {
-      let parsed = null;
-      try { parsed = JSON.parse(req.postData()); } catch (e) {}
-      if (parsed && parsed.messages && parsed.messages.some((m) => typeof m.content === 'string' && m.content.indexOf('strategic advisor') >= 0)) {
-        overseerChatRepoToolsBody = parsed;
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest overseer repo answer' } }] }) });
-        return;
-      }
-    }
-    await route.continue();
-  });
-  await page.fill('#overseerChatInput', 'please read a file from the github repo for me');
-  await page.click('#overseerChatSendBtn');
-  for (let i = 0; i < 40 && overseerChatRepoToolsBody === null; i++) await page.waitForTimeout(200);
-  await page.unroute('**/*');
-  assert(!!overseerChatRepoToolsBody, 'test setup: the repo-relevant Overseer chat question actually reached the tool round');
-  const overseerChatToolNames = ((overseerChatRepoToolsBody && overseerChatRepoToolsBody.tools) || []).map((t) => t.function.name);
-  assert(overseerChatToolNames.indexOf('write_file') >= 0, `test setup: repo tools (including write_file) were actually offered (got tools: ${JSON.stringify(overseerChatToolNames)})`);
-  assert(overseerChatRepoToolsBody.max_tokens >= 8000, `the Overseer chat gets enough max_tokens for a real file write when repo tools are offered (got ${overseerChatRepoToolsBody.max_tokens})`);
-  await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
 
   console.log('\n-- write_file tool never defaults to main/master, and the approved branch is what actually reaches the worker --');
   // write_file used to have no branch parameter at all - the ops worker
@@ -1685,8 +1384,7 @@ function assert(cond, label) {
   // (never auto-fetched, entered here the same way a real user would) -
   // without it executeRepoTool short-circuits before ever reaching the
   // GitHub ops worker, which the rest of this block and the merge_branch
-  // and Overseer-chat write_file blocks below (same connection, reused)
-  // depend on actually happening.
+  // block below (same connection, reused) depend on actually happening.
   await page.fill('#ghWriteSecretInput', 'regtest-write-secret');
   await page.click('#githubSaveBtn'); await page.waitForTimeout(150);
   // githubConnectBtn hides Settings underneath before opening its own
@@ -1740,7 +1438,6 @@ function assert(cond, label) {
   await page.click('#sendBtn');
   let confirmShowed = false;
   for (let i = 0; i < 100; i++) {
-    await dismissConfirmIfAny();
     confirmShowed = await page.evaluate(() => !document.getElementById('githubWriteConfirmModal').classList.contains('hidden'));
     if (confirmShowed) break;
     await page.waitForTimeout(200);
@@ -1829,7 +1526,6 @@ function assert(cond, label) {
   await page.click('#sendBtn');
   let mergeConfirmShowed = false;
   for (let i = 0; i < 100; i++) {
-    await dismissConfirmIfAny();
     mergeConfirmShowed = await page.evaluate(() => !document.getElementById('githubMergeConfirmModal').classList.contains('hidden'));
     if (mergeConfirmShowed) break;
     await page.waitForTimeout(200);
@@ -1846,200 +1542,8 @@ function assert(cond, label) {
   // waitForSendDone() above returns as soon as the Send button label flips
   // back, but autosave/tab-sync work triggered by the merge response can
   // still be settling - give it a beat before the next test starts
-  // interacting, same as the settle wait already used after the Overseer
-  // chat's failed (no-egress) request above.
+  // interacting.
   await page.waitForTimeout(500);
-
-  console.log('\n-- Overseer chat can also call repo tools directly, same TOOL_MODELS/approval gates as the main chat --');
-  // The Overseer's own side-channel chat used to have zero tool access at
-  // all - pure advice text. This checks it can now actually drive a
-  // write_file tool_call end to end: the same approval dialog still shows
-  // (no bypass just because the request came from the Overseer instead of
-  // the main chat), the write still reaches the GitHub ops worker once
-  // approved, and the tool-execution notice lands in the Overseer's own
-  // chat log (overseerChatLog), not the main chat log.
-  // The Overseer chat's own tool access is still gated on the main chat's
-  // currentModel being in TOOL_MODELS (unlike the main chat's repo work,
-  // this side-channel wasn't moved onto the dedicated coding agent) -
-  // force a known tool-capable model explicitly rather than relying on
-  // whatever an earlier test happened to leave selected - the auto-router
-  // could have drifted to any backend by this point, and the model modal
-  // opens showing whichever backend tab is already active, not
-  // necessarily DeepInfra's.
-  await page.click('#modelBtn'); await page.waitForTimeout(150);
-  await page.click('#deepinfraBtn'); await page.waitForTimeout(150);
-  await page.locator('.mc:has-text("Mistral Small")').first().click();
-  await page.waitForTimeout(150);
-  await page.dispatchEvent('#overseerBtn', 'mousedown');
-  await page.waitForTimeout(700);
-  await page.dispatchEvent('#overseerBtn', 'mouseup');
-  await page.waitForTimeout(200);
-
-  let capturedOverseerWriteBody = null;
-  let overseerToolRoundCount = 0;
-  await page.route('**/*', async (route) => {
-    const req = route.request();
-    const url = req.url();
-    if (url.indexOf('github-ops-worker') >= 0 && req.method() === 'POST') {
-      try { capturedOverseerWriteBody = JSON.parse(req.postData()); } catch (e) {}
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, commit: 'regtestoverseersha', branch: capturedOverseerWriteBody && capturedOverseerWriteBody.branch }),
-      });
-      return;
-    }
-    if (req.method() === 'POST' && req.postData()) {
-      let parsed = null;
-      try { parsed = JSON.parse(req.postData()); } catch (e) {}
-      if (parsed && parsed.stream === false) {
-        overseerToolRoundCount++;
-        if (overseerToolRoundCount === 1) {
-          await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              choices: [{
-                finish_reason: 'tool_calls',
-                message: {
-                  role: 'assistant',
-                  tool_calls: [{
-                    id: 'regtest_overseer_call_1',
-                    type: 'function',
-                    function: { name: 'write_file', arguments: JSON.stringify({ path: 'regtest-overseer-file.txt', content: 'hello from overseer', message: 'regtest overseer commit' }) },
-                  }],
-                },
-              }],
-            }),
-          });
-          return;
-        }
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest overseer done' } }] }),
-        });
-        return;
-      }
-      if (parsed && parsed.stream === true) {
-        await route.fulfill({
-          status: 200,
-          contentType: 'text/event-stream',
-          body: 'data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n',
-        });
-        return;
-      }
-    }
-    await route.continue();
-  });
-  await page.fill('#overseerChatInput', 'please write a small file to the repo for me');
-  await page.click('#overseerChatSendBtn');
-  let overseerWriteConfirmShowed = false;
-  for (let i = 0; i < 100; i++) {
-    overseerWriteConfirmShowed = await page.evaluate(() => !document.getElementById('githubWriteConfirmModal').classList.contains('hidden'));
-    if (overseerWriteConfirmShowed) break;
-    await page.waitForTimeout(200);
-  }
-  assert(overseerWriteConfirmShowed, 'a write_file tool_call from the Overseer chat surfaces the same approval dialog as the main chat');
-  await page.click('#ghwApproveBtn');
-  for (let i = 0; i < 100 && capturedOverseerWriteBody === null; i++) await page.waitForTimeout(200);
-  await page.unroute('**/*');
-  assert(!!capturedOverseerWriteBody, 'approving it actually reaches the GitHub ops worker, same as a main-chat-issued write_file');
-  assert(capturedOverseerWriteBody && capturedOverseerWriteBody.path === 'regtest-overseer-file.txt', `the file path requested by the Overseer is what's actually sent to the worker (got "${capturedOverseerWriteBody && capturedOverseerWriteBody.path}")`);
-  await page.waitForTimeout(300);
-  const overseerLogHasToolNotice = await page.evaluate(() => document.getElementById('overseerChatLog').textContent.indexOf('regtest-overseer-file.txt') >= 0);
-  assert(overseerLogHasToolNotice, 'the tool-execution notice renders in the Overseer\'s own chat log, not just the main chat log');
-  await page.waitForTimeout(500);
-  await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
-
-  console.log('\n-- Overseer chat withholds repo tools for a strategy question with no actual repo/GitHub signal --');
-  // Same relevance gate as the main chat: GitHub being connected must not
-  // be enough on its own to hand the Overseer read_file/write_file/
-  // merge_branch for a question that has nothing to do with the connected
-  // repo (e.g. talking through a brand new, unrelated app idea).
-  await page.dispatchEvent('#overseerBtn', 'mousedown');
-  await page.waitForTimeout(700);
-  await page.dispatchEvent('#overseerBtn', 'mouseup');
-  await page.waitForTimeout(200);
-  let lastOverseerUnrelatedBody = null;
-  await page.route('**/*', async (route) => {
-    const req = route.request();
-    if (req.method() === 'POST' && req.postData()) {
-      try {
-        const parsed = JSON.parse(req.postData());
-        if (parsed.messages) lastOverseerUnrelatedBody = parsed;
-      } catch (e) {}
-    }
-    await route.continue();
-  });
-  await page.fill('#overseerChatInput', 'I want to start a brand new app idea, any thoughts on the concept?');
-  await page.click('#overseerChatSendBtn');
-  for (let i = 0; i < 60 && lastOverseerUnrelatedBody === null; i++) await page.waitForTimeout(200);
-  await page.unroute('**/*');
-  const overseerUnrelatedToolNames = ((lastOverseerUnrelatedBody && lastOverseerUnrelatedBody.tools) || []).map((t) => t.function.name);
-  assert(overseerUnrelatedToolNames.indexOf('read_file') < 0 && overseerUnrelatedToolNames.indexOf('write_file') < 0 && overseerUnrelatedToolNames.indexOf('list_files') < 0 && overseerUnrelatedToolNames.indexOf('merge_branch') < 0, `an Overseer strategy question with no repo/GitHub signal gets no repo tools even with GitHub connected (got tools: ${JSON.stringify(overseerUnrelatedToolNames)})`);
-  await page.waitForTimeout(300);
-  await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
-
-  console.log('\n-- Overseer chat\'s code-signal keywords are word-boundary matched, not substring - an unrelated word containing one doesn\'t grant repo tools --');
-  // analyzeTask's code-keyword list used to match with a plain indexOf,
-  // so "react" matched inside "overreacted", "code" matched inside "zip
-  // code"/"decode" - completely unrelated messages could still light up
-  // tasks.code and get read_file/write_file/merge_branch offered. This
-  // message hits exactly that old substring trap ("react" inside
-  // "overreacted") and nothing else - it must not qualify for repo tools.
-  await page.dispatchEvent('#overseerBtn', 'mousedown');
-  await page.waitForTimeout(700);
-  await page.dispatchEvent('#overseerBtn', 'mouseup');
-  await page.waitForTimeout(200);
-  let lastOverseerSubstringBody = null;
-  await page.route('**/*', async (route) => {
-    const req = route.request();
-    if (req.method() === 'POST' && req.postData()) {
-      try {
-        const parsed = JSON.parse(req.postData());
-        if (parsed.messages) lastOverseerSubstringBody = parsed;
-      } catch (e) {}
-    }
-    await route.continue();
-  });
-  await page.fill('#overseerChatInput', 'I overreacted about something today, any advice?');
-  await page.click('#overseerChatSendBtn');
-  for (let i = 0; i < 60 && lastOverseerSubstringBody === null; i++) await page.waitForTimeout(200);
-  await page.unroute('**/*');
-  const overseerSubstringToolNames = ((lastOverseerSubstringBody && lastOverseerSubstringBody.tools) || []).map((t) => t.function.name);
-  assert(overseerSubstringToolNames.indexOf('read_file') < 0 && overseerSubstringToolNames.indexOf('write_file') < 0 && overseerSubstringToolNames.indexOf('list_files') < 0 && overseerSubstringToolNames.indexOf('merge_branch') < 0, `"react" appearing inside "overreacted" must not be treated as a code signal (got tools: ${JSON.stringify(overseerSubstringToolNames)})`);
-  await page.waitForTimeout(300);
-  await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
-
-  console.log('\n-- Overseer chat requires more than one incidental code-keyword hit before granting repo tools --');
-  // Unlike a real github keyword (worth +2 on its own), each code keyword
-  // is only worth +1 - a single one showing up once in an otherwise
-  // unrelated message ("bug" in a non-coding complaint) shouldn't be
-  // enough by itself to hand out repo write access. Requires >= 2 hits.
-  await page.dispatchEvent('#overseerBtn', 'mousedown');
-  await page.waitForTimeout(700);
-  await page.dispatchEvent('#overseerBtn', 'mouseup');
-  await page.waitForTimeout(200);
-  let lastOverseerSingleHitBody = null;
-  await page.route('**/*', async (route) => {
-    const req = route.request();
-    if (req.method() === 'POST' && req.postData()) {
-      try {
-        const parsed = JSON.parse(req.postData());
-        if (parsed.messages) lastOverseerSingleHitBody = parsed;
-      } catch (e) {}
-    }
-    await route.continue();
-  });
-  await page.fill('#overseerChatInput', 'there is a bug I keep running into with my sleep schedule');
-  await page.click('#overseerChatSendBtn');
-  for (let i = 0; i < 60 && lastOverseerSingleHitBody === null; i++) await page.waitForTimeout(200);
-  await page.unroute('**/*');
-  const overseerSingleHitToolNames = ((lastOverseerSingleHitBody && lastOverseerSingleHitBody.tools) || []).map((t) => t.function.name);
-  assert(overseerSingleHitToolNames.indexOf('read_file') < 0 && overseerSingleHitToolNames.indexOf('write_file') < 0 && overseerSingleHitToolNames.indexOf('list_files') < 0 && overseerSingleHitToolNames.indexOf('merge_branch') < 0, `a single incidental code-keyword hit ("bug") with no other signal must not be enough on its own to grant repo tools (got tools: ${JSON.stringify(overseerSingleHitToolNames)})`);
-  await page.waitForTimeout(300);
-  await page.click('#closeOverseerChatModal'); await page.waitForTimeout(150);
 
   console.log('\n-- coding agent runs one step at a time, waiting for Continue before the next tool call --');
   // The coding agent never auto-chains multiple tool rounds in one burst -
@@ -3327,15 +2831,11 @@ function assert(cond, label) {
   await page.locator('.mc:has-text("Mistral Small")').first().click();
   await page.waitForTimeout(150);
 
-  console.log('\n-- App-control tools (create_project/remember/switch_model) actually execute, no confirm needed --');
-  // These are the Overseer's new "full autonomy" tools - unlike write_file
-  // they run immediately on a model-issued tool_call, no approval dialog.
-  // Mock all three in one tool_calls response and verify each one's real,
-  // observable side effect: a project actually saved and made active, a
-  // memory actually stored, and the model actually switched.
-  await page.click('#modelBtn'); await page.waitForTimeout(150);
-  await page.locator('.mc:has-text("Mistral Small")').first().click();
-  await page.waitForTimeout(150);
+  console.log('\n-- App-control tools (create_project/remember) actually execute, no confirm needed --');
+  // Unlike write_file, these run immediately on a model-issued tool_call,
+  // no approval dialog. Mock both in one tool_calls response and verify
+  // each one's real, observable side effect: a project actually saved and
+  // made active, and a memory actually stored.
   let appControlRoundCount = 0;
   await page.route('**/*', async (route) => {
     const req = route.request();
@@ -3356,7 +2856,6 @@ function assert(cond, label) {
                   tool_calls: [
                     { id: 'regtest_call_a', type: 'function', function: { name: 'create_project', arguments: JSON.stringify({ name: 'Regtest Tool Project', instructions: 'Regtest project instructions' }) } },
                     { id: 'regtest_call_b', type: 'function', function: { name: 'remember', arguments: JSON.stringify({ fact: 'Regtest remembered fact' }) } },
-                    { id: 'regtest_call_c', type: 'function', function: { name: 'switch_model', arguments: JSON.stringify({ model_id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo' }) } },
                   ],
                 },
               }],
@@ -3365,7 +2864,7 @@ function assert(cond, label) {
           return;
         }
         // The tool round loop keeps going until the model stops calling
-        // tools - round 2 must say it's done, or these three tools would
+        // tools - round 2 must say it's done, or these two tools would
         // re-run every round up to MAX_TOOL_ROUNDS for no reason.
         await route.fulfill({
           status: 200,
@@ -3385,7 +2884,7 @@ function assert(cond, label) {
     }
     await route.continue();
   });
-  await sendMsg('please make this a project, remember something, and switch models for me');
+  await sendMsg('please make this a project and remember something for me');
   await page.unroute('**/*');
 
   const projectCreated = await page.evaluate(() => {
@@ -3402,9 +2901,6 @@ function assert(cond, label) {
   const memoryRemembered = await page.evaluate(() => document.getElementById('memoryList').textContent.indexOf('Regtest remembered fact') >= 0);
   assert(memoryRemembered, 'remember tool call actually saves a memory');
   await page.click('#closeMemoryModal'); await page.waitForTimeout(150);
-
-  const modelLabelAfterToolSwitch = await page.textContent('#modelBtnLabel');
-  assert(modelLabelAfterToolSwitch === 'Llama 3.3 70B Turbo', `switch_model tool call actually switches the active model (got "${modelLabelAfterToolSwitch}")`);
 
   console.log('\n-- hardcoded app-structure knowledge only appears when the connected repo actually IS this app --');
   // Without this, the coding agent asked to do "a checkup" or "add a
@@ -3832,17 +3328,16 @@ function assert(cond, label) {
   assert(usedVoiceName === 'regtest-voice', `the picked voice is actually set on the utterance (got "${usedVoiceName}")`);
   await page.click('#speakBtn'); await page.waitForTimeout(150);
 
-  console.log('\n-- the main chat labels replies "Overseer" with the actual model shown as a secondary indicator --');
-  // The main chat's single point of contact is the Overseer, not whichever
-  // model happens to answer - the model name should still be visible, just
-  // as a secondary indicator rather than the primary label.
+  console.log('\n-- the main chat labels replies "Assistant" with the actual model shown as a secondary indicator --');
+  // The model name should still be visible, just as a secondary indicator
+  // rather than the primary label.
   await page.route('**/*', async (route) => {
     const req = route.request();
     if (req.method() === 'POST' && req.postData()) {
       let parsed = null;
       try { parsed = JSON.parse(req.postData()); } catch (e) {}
       if (parsed && parsed.stream === true) {
-        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"choices":[{"delta":{"content":"regtest overseer-label reply"}}]}\n\ndata: [DONE]\n\n' });
+        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"choices":[{"delta":{"content":"regtest assistant-label reply"}}]}\n\ndata: [DONE]\n\n' });
         return;
       }
       if (parsed && parsed.stream === false) {
@@ -3852,18 +3347,18 @@ function assert(cond, label) {
     }
     await route.continue();
   });
-  await sendMsg('regtest message to check the overseer label');
+  await sendMsg('regtest message to check the assistant label');
   await page.unroute('**/*');
-  const overseerLabelInfo = await page.evaluate(() => {
+  const replyLabelInfo = await page.evaluate(() => {
     const labels = document.querySelectorAll('#chat .msg.ma3 .ml');
     const last = labels[labels.length - 1];
     const primary = last ? last.querySelector('span:not(.av):not(.modelTag)').textContent : '';
     const modelTag = last ? last.querySelector('.modelTag') : null;
     return { primary, modelTagText: modelTag ? modelTag.textContent : null, currentModelLabel: document.getElementById('modelBtnLabel').textContent };
   });
-  assert(overseerLabelInfo.primary === 'Overseer', `the reply bubble's primary label reads "Overseer" (got "${overseerLabelInfo.primary}")`);
-  assert(!!overseerLabelInfo.modelTagText, 'a secondary model-name indicator is present on the reply bubble');
-  assert(overseerLabelInfo.modelTagText === overseerLabelInfo.currentModelLabel, `the model-name indicator matches the model that actually answered (got "${overseerLabelInfo.modelTagText}" vs active "${overseerLabelInfo.currentModelLabel}")`);
+  assert(replyLabelInfo.primary === 'Assistant', `the reply bubble's primary label reads "Assistant" (got "${replyLabelInfo.primary}")`);
+  assert(!!replyLabelInfo.modelTagText, 'a secondary model-name indicator is present on the reply bubble');
+  assert(replyLabelInfo.modelTagText === replyLabelInfo.currentModelLabel, `the model-name indicator matches the model that actually answered (got "${replyLabelInfo.modelTagText}" vs active "${replyLabelInfo.currentModelLabel}")`);
 
   console.log('\n-- a reply\'s model-name tag survives a later model switch + reload instead of getting relabeled with today\'s active model --');
   // appendMsg used to always paint currentModel.label onto every assistant
@@ -3872,7 +3367,7 @@ function assert(cond, label) {
   // earlier reply as if the NEW model had answered them too. Each
   // chatHistory entry now carries its own modelLabel from when it was
   // actually created; re-rendering must use that instead of the live model.
-  const modelBeforeSwitch = overseerLabelInfo.currentModelLabel;
+  const modelBeforeSwitch = replyLabelInfo.currentModelLabel;
   await page.click('#modelBtn'); await page.waitForTimeout(300);
   const otherModelIndex = await page.evaluate((exclude) => {
     const cards = Array.from(document.querySelectorAll('#modelList .mc'));
@@ -3889,75 +3384,6 @@ function assert(cond, label) {
   await page.waitForTimeout(700);
   const modelTagsAfterReload = await page.evaluate(() => Array.from(document.querySelectorAll('#chat .msg.ma3 .modelTag')).map((el) => el.textContent));
   assert(modelTagsAfterReload.indexOf(modelBeforeSwitch) >= 0, `the earlier reply's model-name tag still reads "${modelBeforeSwitch}" after reload, not relabeled with the now-active "${modelAfterSwitch}" (got tags: ${JSON.stringify(modelTagsAfterReload)})`);
-
-  console.log('\n-- the Overseer\'s quality/stuck tracking reacts to what the model actually said, not just reply length --');
-  // A long, fluent refusal used to score "excellent" purely for being
-  // wordy, since quality was based only on character count. The Overseer
-  // should notice when the model's own words say it's stuck or refusing,
-  // regardless of length.
-  await page.route('**/*', async (route) => {
-    const req = route.request();
-    if (req.method() === 'POST' && req.postData()) {
-      let parsed = null;
-      try { parsed = JSON.parse(req.postData()); } catch (e) {}
-      if (parsed && parsed.stream === true) {
-        await route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'data: {"choices":[{"delta":{"content":"I don\'t have access to that repository, so I am not able to check it directly, and honestly I am not sure what else to try here since nothing seems to be working out for this particular request no matter how I approach it."}}]}\n\ndata: [DONE]\n\n' });
-        return;
-      }
-      if (parsed && parsed.stream === false) {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '' } }] }) });
-        return;
-      }
-    }
-    await route.continue();
-  });
-  await sendMsg('regtest message that gets a long-but-stuck reply');
-  await page.unroute('**/*');
-  let overseerStatusTextAfterConcern = '';
-  for (let i = 0; i < 20; i++) {
-    overseerStatusTextAfterConcern = await page.evaluate(() => { const el = document.getElementById('overseerStatus'); return el ? el.textContent : ''; });
-    if (overseerStatusTextAfterConcern.indexOf('Stuck') >= 0) break;
-    await page.waitForTimeout(300);
-  }
-  const qualityMatch = overseerStatusTextAfterConcern.match(/Quality:\s*(\d+)%/);
-  const qualityPct = qualityMatch ? parseInt(qualityMatch[1], 10) : -1;
-  // A 220-char reply on length alone would score 85% ("excellent") - the
-  // concern cap (<=40) only kicks in because of what the text actually
-  // says. Exact value depends on the averaging window (shared chat
-  // history across the whole suite), so assert the cap held, not a
-  // precise number.
-  assert(qualityPct >= 0 && qualityPct <= 40, `a reply that actually says it's stuck/refusing is capped at 40% quality or lower instead of scoring high purely for length (got Quality: ${qualityPct}%, full status: ${overseerStatusTextAfterConcern})`);
-  assert(overseerStatusTextAfterConcern.indexOf('Stuck') >= 0, `the stuck indicator reacts to the reply's actual content, not just its length (got: ${overseerStatusTextAfterConcern})`);
-
-  console.log('\n-- Overseer personality is persisted and shapes the system prompt --');
-  await page.click('#settingsBtn'); await page.waitForTimeout(150);
-  await page.fill('#personalityInput', 'regtest warm and playful');
-  await page.evaluate(() => document.getElementById('personalityInput').dispatchEvent(new Event('input')));
-  const persistedPersonality = await page.evaluate(() => localStorage.getItem('ai_overseer_personality'));
-  assert(persistedPersonality === 'regtest warm and playful', `personality text persists (got "${persistedPersonality}")`);
-  await page.click('#closeSettingsModal'); await page.waitForTimeout(150);
-
-  let lastPersonalityBody = null;
-  await page.route('**/*', async (route) => {
-    const req = route.request();
-    if (req.method() === 'POST' && req.postData()) {
-      try {
-        const parsed = JSON.parse(req.postData());
-        if (parsed.messages) lastPersonalityBody = parsed;
-      } catch (e) {}
-    }
-    await route.continue();
-  });
-  await sendMsg('regtest message to check personality shows up in the system prompt');
-  for (let i = 0; i < 60 && lastPersonalityBody === null; i++) await page.waitForTimeout(200);
-  await page.unroute('**/*');
-  const personalitySysContent = ((lastPersonalityBody && lastPersonalityBody.messages) || []).filter((m) => m.role === 'system').map((m) => m.content).join('\n');
-  assert(personalitySysContent.indexOf('regtest warm and playful') >= 0, 'the persisted personality text is included in the system prompt sent to the model');
-  // Clear it so it doesn't leak into other tests' system-prompt assertions.
-  await page.click('#settingsBtn'); await page.waitForTimeout(150);
-  await page.fill('#personalityInput', '');
-  await page.evaluate(() => document.getElementById('personalityInput').dispatchEvent(new Event('input')));
-  await page.click('#closeSettingsModal'); await page.waitForTimeout(150);
 
   console.log('\n-- compose bar icon row wraps instead of pushing Send off-screen on a narrow phone --');
   // Adding speak/voice-mode icons to the compose bar this session grew it
@@ -4077,26 +3503,6 @@ function assert(cond, label) {
   assert(appliedOnceIdle, 'the deferred update applies itself automatically once the app goes idle, with no further action needed');
   await page.evaluate(() => localStorage.removeItem('ai_router_updated_notice'));
 
-  console.log('\n-- Overseer button pulses while the router evaluates which model fits the message just sent --');
-  // The actual scoring is synchronous and near-instant, which made the
-  // routing decision invisible - a message that kept the same model looked
-  // identical to the router not running at all. A floor on how long the
-  // pulse shows (not on the scoring itself) makes every decision briefly
-  // visible on the Overseer button, and clears once the decision lands.
-  await page.fill('#prompt', 'regtest message to check the thinking pulse');
-  await page.click('#sendBtn');
-  let sawThinkingClass = false;
-  for (let i = 0; i < 40; i++) {
-    const hasThinking = await page.evaluate(() => document.getElementById('overseerBtn').classList.contains('thinking'));
-    if (hasThinking) { sawThinkingClass = true; break; }
-    await page.waitForTimeout(20);
-  }
-  assert(sawThinkingClass, 'the Overseer button gets a "thinking" pulse class while the router evaluates the message');
-  await dismissConfirmIfAny();
-  await waitForSendDone();
-  const thinkingClassClearedAfter = await page.evaluate(() => document.getElementById('overseerBtn').classList.contains('thinking'));
-  assert(!thinkingClassClearedAfter, 'the "thinking" pulse clears once the routing decision is made');
-
   console.log('\n-- renderMd escapes markdown-link URLs instead of letting them break out of the href attribute --');
   // esc() only neutralizes &, <, > - a model reply (which can carry
   // attacker-controlled text echoed back from a web search result) could
@@ -4212,7 +3618,7 @@ function assert(cond, label) {
   assert(recentEntryStaysGoneAfterReopen, 'the deletion actually persisted to storage, not just the in-memory render');
   await page.click('#closeRecentModal'); await page.waitForTimeout(150);
 
-  console.log('\n-- Overseer proactively suggests saving a settled conversation as a Work Project, but only when the model itself flags it --');
+  console.log('\n-- the app proactively suggests saving a settled conversation as a Work Project, but only when the model itself flags it --');
   // Message count alone used to trigger this (8 messages in) even for
   // ordinary small talk; now it's gated on the model's own <project_suggest/>
   // self-flag (see getModelSystemPrompt), same pattern as <memory>. A long
@@ -4287,7 +3693,6 @@ function assert(cond, label) {
   await page.fill('#prompt', 'ok, new topic - what is the capital of France');
   await page.click('#sendBtn');
   await page.waitForTimeout(600);
-  await dismissConfirmIfAny();
   await waitForSendDone();
   const tabCountAfterTopicChange = await page.evaluate(() => document.querySelectorAll('#tabBar .tabpill').length);
   assert(tabCountAfterTopicChange === tabCountBeforeTopicChange + 1, `an explicit topic-change phrase prompts to start a new tab, and accepting creates one (before=${tabCountBeforeTopicChange}, after=${tabCountAfterTopicChange})`);

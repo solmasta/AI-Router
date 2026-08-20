@@ -138,21 +138,8 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 .cur{display:none}
 @keyframes bl{0%,100%{opacity:1}50%{opacity:0}}
 .tb{display:flex;align-items:center;gap:8px;padding:2px 2px 6px;font-size:11px;color:var(--mu);flex-shrink:0;font-weight:500}
-.ob{display:flex;align-items:center;gap:6px;padding:2px 2px 6px;font-size:11px;color:var(--mu);flex-shrink:0;font-weight:500;cursor:pointer}
-.obd{width:7px;height:7px;border-radius:50%;background:#22c55e;flex-shrink:0;transition:background .3s}
-.obd.warn{background:#f59e0b}
-.obd.stuck{background:#ef4444}
-.obd.off{background:var(--mu)}
-#overseerBarText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ob-continue{flex-shrink:0;margin-left:auto}
-/* Step/action pills (the Overseer's "use next step" control and the coding
-   agent's round-to-round prompts) used to each pick their own color -
-   green here, plain gray there - for closely related actions. Green also
-   collided with .obd's existing meaning (a status dot, not a button), so
-   the control next to it read as two unrelated signals. One consistent
-   accent-purple treatment, matching the rest of the app's actual
-   call-to-action color (Send, active states) instead of introducing a
-   second one. */
+/* The coding agent's round-to-round "Continue" pill - accent-colored to
+   match the rest of the app's call-to-action color (Send, active states). */
 .cta{padding:4px 11px;background:rgba(88,166,255,.15);border:1px solid var(--ac);color:var(--ac);border-radius:20px;font-size:11.5px;font-weight:600;cursor:pointer;transition:background .15s}
 .cta:hover{background:rgba(88,166,255,.28)}
 .tt{flex:1;height:3px;background:var(--up);border-radius:2px;overflow:hidden}
@@ -174,12 +161,10 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 #prompt::placeholder{color:var(--mu)}
 #prompt:focus{outline:none}
 .ia{display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:0 2px}
-/* Eight distinct icons (attach/mic/speak/voice/overseer/brainstorm/
-   newtab/newcodetab) sat in one undifferentiated row with no visual
-   grouping at all - a thin divider before the first "session" control
-   (as opposed to "compose this message") at least gives the row some
-   structure without moving or renaming anything already wired up. */
-#overseerBtn{margin-left:6px;padding-left:10px;border-left:1px solid var(--br)}
+/* A thin divider before the first "session" control (auto-approve/new
+   tab/new Coding tab) separates them from the compose-this-message
+   controls (attach/mic/speak/voice) that precede them in the row. */
+#autoApproveBtn{margin-left:6px;padding-left:10px;border-left:1px solid var(--br)}
 .ir{display:flex;gap:6px;margin-left:auto;align-items:center}
 .bp{padding:9px 20px;font-size:14.5px;font-weight:600;color:#fff;background:var(--ac);border:none;border-radius:20px;cursor:pointer;transition:background .15s,transform .1s,box-shadow .15s;box-shadow:0 2px 8px rgba(88,166,255,.3)}
 .bp:hover:not(:disabled){background:var(--ad);box-shadow:0 4px 14px rgba(88,166,255,.4);transform:translateY(-1px)}
@@ -200,17 +185,6 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 .ws{background:none;border:none;border-radius:20px;padding:9px 10px;font-size:13px;cursor:pointer;line-height:1;color:var(--mu);transition:background .15s,color .15s;min-width:40px;min-height:40px;display:inline-flex;align-items:center;justify-content:center}
 .ws:hover{background:var(--up);color:var(--tx)}
 .ws.on{background:rgba(88,166,255,.13);color:var(--ac)}
-/* Overseer button pulses while it's actively scoring which model fits the
-   message that was just sent - visible proof the routing decision runs
-   every time, not just on the (rarer) messages that end up switching. */
-@keyframes overseerThinking{0%,100%{box-shadow:0 0 0 0 rgba(88,166,255,.55)}50%{box-shadow:0 0 0 6px rgba(88,166,255,0)}}
-.ws.thinking{animation:overseerThinking .6s ease-in-out infinite;color:var(--ac)}
-/* Quick confirmation flash on the model badge when the Overseer evaluates
-   a message and decides the current model is still the best fit - without
-   this, staying on the same model looked identical whether the router had
-   just checked and confirmed it, or simply wasn't running at all. */
-@keyframes modelConfirmed{0%{box-shadow:0 0 0 0 rgba(34,197,94,.5)}70%{box-shadow:0 0 0 5px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
-.mb.confirmed{animation:modelConfirmed .9s ease-out}
 .modal{position:fixed;inset:0;z-index:999;background:rgba(0,0,0,.55);display:flex;align-items:flex-end;backdrop-filter:blur(6px)}
 .modal.hidden{display:none!important}
 .sheet{width:100%;max-width:820px;margin:0 auto;background:var(--sf);border:1px solid var(--br);border-bottom:none;border-radius:22px 22px 0 0;display:flex;flex-direction:column;max-height:90vh;max-height:calc(100dvh - 72px - env(safe-area-inset-top,0px));box-shadow:0 -8px 30px rgba(0,0,0,.25)}
@@ -308,7 +282,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.178</span></span>
+      <span class="wm">ai-router <span>v5.179</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -323,15 +297,10 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
     <span class="sa">&#8250;</span>
   </button>
   <div class="tabbar hidden" id="tabBar"></div>
-  <div class="chat" id="chat"><div class="es" id="emptyState"><div class="es-icon">&lt;/&gt;</div><div class="es-title">I'm your Overseer.</div><div class="es-sub">Tell me what you need — I'll pick the right model, use your tools, and get it done.</div></div></div>
+  <div class="chat" id="chat"><div class="es" id="emptyState"><div class="es-icon">&lt;/&gt;</div><div class="es-title">Ready when you are.</div><div class="es-sub">Pick a model, connect a repo, and start writing code.</div></div></div>
   <div class="term-panel hidden" id="terminalPanel">
     <div class="term-head">&gt;_ Terminal <span style="opacity:.7">&#8212; live repo activity, separate from chat</span></div>
     <div class="term-log" id="terminalLog"><div id="terminalPlaceholder" style="color:#6e7681">No repo activity yet - once the coding agent reads, writes, or lists files, it shows up here.</div></div>
-  </div>
-  <div class="ob hidden" id="overseerBar">
-    <span class="obd" id="overseerBarDot"></span>
-    <span id="overseerBarText">Overseer monitoring</span>
-    <button class="cta ob-continue hidden" id="overseerBarContinueBtn">Use next step &#8594;</button>
   </div>
   <div class="tb hidden" id="tokenBar">
     <span id="tokenCount">0 tokens</span>
@@ -348,8 +317,6 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
         <button class="mic" id="micBtn" title="Voice">&#127908;</button>
         <button class="mic spk" id="speakBtn" title="Speak replies aloud">&#128266;</button>
         <button class="mic vc" id="voiceModeBtn" title="Live voice conversation - listens, sends, and replies aloud automatically">&#128222;</button>
-        <button class="ws" id="overseerBtn" title="Overseer status (long-press to chat)">🤖</button>
-        <button class="ws" id="brainstormBtn" title="Brainstorming suggestions">💭</button>
         <button class="ws" id="autoApproveBtn" style="opacity:.6" title="Manual: every repo write/merge waits for your approval. Tap to let the coding agent push and merge on its own.">🔒</button>
         <button class="ws" id="newTabBtn" title="New conversation tab" style="color:var(--ac);font-size:17px;font-weight:400">&#43;</button>
         <button class="ws" id="newCodeTabBtn" title="New Coding tab - every message goes straight to your connected repo" style="color:var(--ac);font-size:15px;font-weight:400">&#128187;</button>
@@ -474,30 +441,6 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <div class="sf2"><button class="ceb" id="editWprojBtn">Edit project</button></div>
 </div></div>
 
-<div class="modal hidden" id="agentConfirmModal"><div class="sheet">
-  <div class="sh"><span>🤖 Overseer Suggestion</span><button class="sc" id="closeAgentConfirmModal">&#10005;</button></div>
-  <div class="sbody">
-    <div id="agentConfirmText" style="font-size:14px;line-height:1.5;color:var(--tx)"></div>
-  </div>
-  <div class="sf2 ef">
-    <button class="bg" id="agentConfirmSendCurrent">Send with current model</button>
-    <button class="bp" id="agentConfirmSwitch">Switch &amp; Send</button>
-  </div>
-</div></div>
-
-<div class="modal hidden" id="overseerChatModal"><div class="sheet">
-  <div class="sh"><span>🤖 Chat with Overseer</span><button class="sc" id="closeOverseerChatModal">&#10005;</button></div>
-  <div class="sbody">
-    <div id="overseerChatSummary" style="white-space:pre-wrap;font-family:var(--mn);font-size:11px;line-height:1.5;max-height:160px;overflow:auto;background:var(--sf);border:1px solid var(--br);border-radius:8px;padding:8px;margin-bottom:12px"></div>
-    <div id="overseerChatLog" style="display:flex;flex-direction:column;gap:10px"></div>
-  </div>
-  <div class="sf2" style="display:flex;gap:8px;align-items:flex-end">
-    <textarea id="overseerChatInput" class="fi" placeholder="Ask about strategy, next steps, or what's not working&#8230;" style="flex:1;resize:none;min-height:38px;max-height:120px;box-sizing:border-box"></textarea>
-    <button class="bp" id="overseerChatSendBtn">Send</button>
-  </div>
-</div></div>
-
-
 <div class="modal hidden" id="githubModal"><div class="sheet">
   <div class="sh"><span>Connect GitHub Repo</span><button class="sc" id="closeGithubModal">&#10005;</button></div>
   <div class="sbody">
@@ -612,7 +555,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.178</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.179</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -626,12 +569,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
     <div class="sec-h">&#129504; Assistant behavior</div>
     <div class="sec">
     <div class="sr"><div><div class="slb">Temperature</div><div class="ssb">Higher = creative, lower = focused</div></div><div style="display:flex;align-items:center;gap:8px"><input type="range" class="ts" id="tempSlider" min="0" max="1" step="0.05" value="0.7"><span class="tv" id="tempVal">0.7</span></div></div>
-    <div class="sr"><div><div class="slb">Agent auto-select</div><div class="ssb">Automatically pick the best model for each task</div></div><button class="bg" id="agentToggleBtn">ON</button></div>
-    <div class="sr"><div><div class="slb">Overseer monitoring</div><div class="ssb">Track progress, detect stuck situations, suggest next steps</div></div><button class="bg" id="overseerToggleBtn">ON</button></div>
-    <div class="sr"><div><div class="slb">Brainstorming mode</div><div class="ssb">Show extra exploratory idea suggestions during conversation. The next-step prompt after each reply always shows, regardless of this setting.</div></div><button class="bg" id="brainstormToggleBtn">ON</button></div>
-    <div class="sr"><div><div class="slb">Auto prompt injection</div><div class="ssb">Overseer auto-generates optimal instructions for each model</div></div><button class="bg" id="autoPropomptToggleBtn">ON</button></div>
-    <div class="sr"><div><div class="slb">Overseer voice</div><div class="ssb">Which voice reads replies aloud</div></div><select id="voiceSelect" class="fi" style="max-width:170px"><option value="">Default</option></select></div>
-    <div class="sr"><div><div class="slb">Overseer personality</div><div class="ssb">Shapes tone and word choice in replies</div></div><input type="text" id="personalityInput" class="fi" placeholder="e.g. warm, direct, playful" style="max-width:180px" autocomplete="off"></div>
+    <div class="sr"><div><div class="slb">Reply voice</div><div class="ssb">Which voice reads replies aloud</div></div><select id="voiceSelect" class="fi" style="max-width:170px"><option value="">Default</option></select></div>
     </div>
 
     <div class="sec-h">&#128190; Data &amp; memory</div>
@@ -916,79 +854,6 @@ var sessionId=Date.now().toString(),responseCount=0;
 var temperature=0.7,favorites={},isDark=true;
 var summarizing=false;
 var abortController=null;
-/* Overseer Agent System - Enhanced */
-function defaultOverseerState(){
-  return{
-    goal:null,goalType:null,progress:0,status:"idle",startTime:null,
-    messagesProcessed:0,modelsUsed:new Set(),estimatedTokens:0,
-    stuck:false,stuckSince:null,recommendations:[],
-    attemptedApproaches:[],successProbability:0,efficiencyScore:100,
-    qualityScore:0,steps:[],currentStep:0,pendingContinueStep:null,contextHistory:[],
-    lastResponseLength:0,conversationQuality:"good",lastAssistantConcern:false,
-    activeProject:null,activeProjectInstructions:null,
-    strategyChat:[]
-  };
-}
-var overseerState=defaultOverseerState();
-var overseerEnabled=true,overseerCheckInterval=null,lastAnalysisTime=0;
-
-/* Overseer API - Full access to app functions for automated control */
-var overseerAPI={
-  getState:function(){return overseerState;},
-  setState:function(key,value){overseerState[key]=value;},
-  getChatHistory:function(){return chatHistory;},
-  addMessage:function(role,content){chatHistory.push({role:role,content:content});},
-  getCurrentModel:function(){return currentModel;},
-  switchModel:function(modelId){
-    for(var backend in BACKENDS){
-      var models=BACKENDS[backend].models;
-      for(var i=0;i<models.length;i++){
-        if(models[i].id===modelId){
-          activeBackend=backend;
-          currentModel=models[i];
-          updateModelUI();
-          return true;
-        }
-      }
-    }
-    return false;
-  },
-  sendMessage:function(text){
-    if(!sending){
-      document.getElementById("prompt").value=text;
-      send();
-      return true;
-    }
-    return false;
-  },
-  executeRepoTool:function(toolName,toolInput){
-    return executeRepoTool(toolName,toolInput);
-  },
-  getAppState:function(){
-    return{
-      backend:activeBackend,
-      model:currentModel,
-      chatHistory:chatHistory,
-      sending:sending,
-      overseerState:overseerState,
-      brainstormMode:brainstormMode,
-      autoPromptInjection:autoPromptInjection,
-      ghConnected:!!ghToken&&!!ghRepoOwner&&!!ghRepoName
-    };
-  },
-  enableBrainstorming:function(){brainstormMode=true;document.getElementById("brainstormToggleBtn").textContent="ON";},
-  disableBrainstorming:function(){brainstormMode=false;document.getElementById("brainstormToggleBtn").textContent="OFF";},
-  enableAutoInjection:function(){autoPromptInjection=true;document.getElementById("autoPropomptToggleBtn").textContent="ON";},
-  disableAutoInjection:function(){autoPromptInjection=false;document.getElementById("autoPropomptToggleBtn").textContent="OFF";},
-  generatePrompts:function(){return generateContextualPrompts();},
-  generateBrainstormingIdeas:function(){return generateBrainstormingPrompts();},
-  insertPrompt:function(prompt){insertPrompt(prompt);},
-  updateOverseerUI:function(){updateOverseerStatus();},
-  analyzeTask:function(text){return analyzeTask(text);},
-  selectBestModel:function(tasks){return selectBestModel(tasks);},
-  estimateTokens:function(){return estTokens();},
-  summarizeConversation:function(){return doSummarize();}
-};
 
 /* BACKENDS and data injected by build script */
 var BACKENDS={
@@ -1519,10 +1384,8 @@ var REPO_TOOLS=[
    enum is built fresh each call so it always matches the real catalog,
    never a separately-maintained copy that can drift out of sync. */
 function getAppControlTools(){
-  var modelIds=getAllAvailableModels().map(function(x){return x.model.id;});
   return[
     {type:"function","function":{name:"create_project",description:"Turn the current conversation into a saved, reusable Work Project - a persistent ruleset the user can return to later. Use this when the user asks to save/turn this into a project (e.g. \"make this a project\"). Write a clear name and complete instructions yourself, based on what this conversation has actually been about - don't ask the user to write them.",parameters:{type:"object",properties:{name:{type:"string",description:"Short project name"},instructions:{type:"string",description:"Complete instructions/ruleset for this project"}},required:["name","instructions"]}}},
-    {type:"function","function":{name:"switch_model",description:"Switch the active chat model. Use this when the user asks to switch models, or when a different available model would clearly serve their actual request better right now.",parameters:{type:"object",properties:{model_id:{type:"string",description:"Exact model id to switch to",enum:modelIds}},required:["model_id"]}}},
     {type:"function","function":{name:"remember",description:"Save a durable fact about the user for future conversations. Use this when the user explicitly asks you to remember something.",parameters:{type:"object",properties:{fact:{type:"string",description:"The fact to remember, written as a standalone statement"}},required:["fact"]}}}
   ];
 }
@@ -1766,8 +1629,7 @@ function toggleMic(){
 }
 
 /* ---- Speak replies aloud ---- */
-/* Off by default, same as overseerEnabled/autoPromptInjection - not
-   persisted to localStorage, a plain session toggle. */
+/* Off by default - not persisted to localStorage, a plain session toggle. */
 var speakEnabled=false;
 if(!window.speechSynthesis)document.getElementById("speakBtn").classList.add("off");
 function toggleSpeak(){
@@ -1847,7 +1709,7 @@ function toggleVoiceMode(){
 }
 if(!recognition||!window.speechSynthesis)document.getElementById("voiceModeBtn").classList.add("off");
 
-/* ---- Overseer voice + personality ---- */
+/* ---- Reply voice ---- */
 /* A picked voice is a stated, ongoing preference ("I like this voice"),
    not a per-session toggle - persisted the same way theme is, a plain
    global key rather than profile-scoped, since it's about how this
@@ -1855,7 +1717,6 @@ if(!recognition||!window.speechSynthesis)document.getElementById("voiceModeBtn")
    data. Voice objects themselves aren't serializable, so the name is what
    gets persisted and re-matched against getVoices() on each use. */
 var selectedVoiceName=localStorage.getItem("ai_voice_name")||"";
-var overseerPersonality=localStorage.getItem("ai_overseer_personality")||"";
 function populateVoiceOptions(){
   if(!window.speechSynthesis)return;
   var voices=window.speechSynthesis.getVoices();
@@ -1881,12 +1742,6 @@ document.getElementById("voiceSelect").addEventListener("change",function(){
   selectedVoiceName=this.value;
   localStorage.setItem("ai_voice_name",selectedVoiceName);
 });
-document.getElementById("personalityInput").value=overseerPersonality;
-document.getElementById("personalityInput").addEventListener("input",function(){
-  overseerPersonality=this.value;
-  localStorage.setItem("ai_overseer_personality",overseerPersonality);
-});
-
 /* ---- Favorites ---- */
 var FK="ai_favorites";
 function loadFavs(){try{favorites=JSON.parse(localStorage.getItem(FK)||"{}");}catch(e){favorites={};}}
@@ -2009,8 +1864,6 @@ function renderRecent(){
   }catch(e){list.innerHTML='<p class="el">Could not load recent chats.</p>';}
 }
 
-/* ---- Agent Router: Auto-select best model for task ---- */
-var allAvailableModels=[],agentAutoSelect=true,lastAgentSelection=null;
 /* Deliberately explicit, multi-word phrases only - unlike analyzeTask's
    short single-word keywords (which can false-positive inside unrelated
    words), these gate a disruptive confirm() prompt, so precision matters
@@ -2023,14 +1876,6 @@ function analyzeTask(text){
   var codeKeywords=["code","fix","debug","bug","error","function","javascript","python","java","c++","react","node","implement","refactor","lint"];
   var writeKeywords=["write","essay","article","blog","poem","story","explain","describe","summarize","documentation","readme"];
   var reasonKeywords=["why","analyze","explain","think about","consider","philosophy","problem","solution"];
-  /* Was declared on the tasks object but never actually scored anywhere -
-     no keyword list ever incremented it, so every message scored analyze:0
-     and no model ever got a research/analysis-specific boost in
-     scoreModelForTask below. That silently removed a whole category of
-     models (Technical/Reasoning-tagged, "analysis"/"research"/"data" in
-     their description) from ever being favored, which was part of why the
-     auto-router kept landing on the same handful of models regardless of
-     what was actually asked. */
   var analyzeKeywords=["research","investigate","compare","statistics","stats","data","dataset","trend","insight","survey","findings"];
   var searchKeywords=["search","find","lookup","what is","who is","latest","news","price","weather"];
   /* Word-boundary match, not a plain substring indexOf - short entries
@@ -2046,8 +1891,8 @@ function analyzeTask(text){
      "code" match inside "decode"/"encode"/"zip code"/"Unicode", "java"
      match inside "javascript" (already its own separate hit) - ordinary
      English sentences with zero coding content were silently scoring
-     tasks.code>0 and (via the Overseer chat's own gate below) handing out
-     read_file/write_file/merge_branch for messages that never mentioned
+     tasks.code>0 and handing out read_file/write_file/merge_branch for
+     messages that never mentioned
      code at all. "c++" is the one entry that isn't bounded by word
      characters on both ends (trailing "+" is non-word, so a trailing \b
      would never match), so it keeps plain substring matching - a rare,
@@ -2074,17 +1919,13 @@ function analyzeTask(text){
    can't browse anything. Scans the full conversation backward, not a
    fixed recent window - an earlier version capped this at the last 3
    user turns, but the app's own auto-generated "Continue with the next
-   step: X" messages (from the step-completed notice and the persistent
-   Overseer bar) are themselves empty-scored, so 3+ rounds of tapping
-   Continue filled the entire window with them and pushed the original
-   repo-establishing message out of range - silently dropping a mid-task
-   conversation back to the plain chat model, which hallucinates fake
-   tool-call syntax instead of actually having repo tools. No cap is
+   step: X" messages are themselves empty-scored, so a few rounds of
+   tapping Continue filled the entire window with them and pushed the
+   original repo-establishing message out of range - silently dropping a
+   mid-task conversation back to the plain chat model, which hallucinates
+   fake tool-call syntax instead of actually having repo tools. No cap is
    needed: a genuine topic change already clears it via the
    first-non-empty-turn check below, regardless of how far back it is.
-   Main chat only, deliberately NOT
-   applied to the Overseer's own strategy chat - see overseerRepoRelevant's
-   comment for why that one stays strictly per-message.
 
    The caller must also confirm the CURRENT message actually looks like a
    continuation (via looksLikeContinuationRequest), not just that it scores
@@ -2140,87 +1981,6 @@ function shouldAutoContinueCodingTurn(text){
   if(/^\s*continue with the next step\b/i.test(t))return true;
   return looksLikeAutoContinueRequest(t);
 }
-/* Weighs the WHOLE conversation, not just the message that was just sent -
-   scoring only the latest message meant a short reply like "yeah, do that"
-   or "looks good, what about error handling" carried almost no keyword
-   signal on its own and could tip the router toward a cheap generic model
-   in the middle of an otherwise heavily code- or research-flavored thread.
-   Each user turn contributes analyzeTask() scaled by recency (the latest
-   message counts in full, each one before it counts half as much as the
-   one after it) so a real topic change still moves the decision within a
-   couple of messages, while one throwaway reply can't erase everything the
-   conversation has been about. Capped to the last 8 user turns - decay
-   alone already makes anything further back negligible, this just avoids
-   re-scanning an entire long conversation on every send.
-
-   Repo/GitHub-flavored turns (the same .github>0 signal that diverts a
-   message to the dedicated coding agent in doSendRequest) are excluded
-   entirely, not just left uncounted - repo work always runs on its own
-   agent independent of whatever model the main chat is using, and letting
-   those turns' complexity linger in this window would quietly undo that:
-   several GitHub turns in a row could out-pull the main chat's model
-   toward a bigger/pricier one for an unrelated message that follows,
-   exactly the coupling this window is supposed to leave broken. */
-function analyzeConversationTasks(){
-  var recent=chatHistory.filter(function(m){
-    return m.role==="user"&&analyzeTask(m.content).github===0;
-  }).slice(-8);
-  var merged={github:0,code:0,write:0,reason:0,analyze:0,search:0};
-  var n=recent.length;
-  recent.forEach(function(m,i){
-    var weight=Math.pow(0.5,n-1-i);
-    var t=analyzeTask(m.content);
-    Object.keys(merged).forEach(function(k){merged[k]+=t[k]*weight;});
-  });
-  return merged;
-}
-function scoreModelForTask(model,tasks){
-  var score=50;
-  var capStr=(model.id+" "+model.label+" "+(model.desc||"")).toLowerCase();
-  if(tasks.code>0){
-    if(capStr.indexOf("code")>=0||capStr.indexOf("coder")>=0||capStr.indexOf("python")>=0||capStr.indexOf("javascript")>=0||model.id.indexOf("code")>=0)score+=tasks.code*8;
-  }
-  if(tasks.write>0){
-    if(capStr.indexOf("writ")>=0||capStr.indexOf("opus")>=0||capStr.indexOf("sonnet")>=0)score+=tasks.write*8;
-  }
-  if(tasks.reason>0){
-    if(capStr.indexOf("reason")>=0||model.cat==="Technical"||model.cat==="Reasoning")score+=tasks.reason*6;
-  }
-  if(tasks.analyze>0){
-    if(capStr.indexOf("analy")>=0||capStr.indexOf("research")>=0||capStr.indexOf("data")>=0||model.cat==="Technical"||model.cat==="Reasoning")score+=tasks.analyze*7;
-  }
-  if(tasks.search>0){
-    score+=tasks.search*2;
-  }
-  /* Token efficiency: how demanding does this message actually look?
-     When nothing points to a hard task, prefer cheaper/faster models -
-     reach for an expensive one only when the task genuinely calls for it,
-     rather than defaulting to the biggest model for a simple "hi".
-
-     This used to be two wide bands: complexity<=1 got the FULL cheap-model
-     reward (up to +18), and nothing short of complexity>=5 got any
-     capability push at all (at most +6, rarely enough to clear
-     SWITCH_SCORE_MARGIN on its own). Since real keyword coverage is sparse,
-     the overwhelming majority of ordinary messages landed in that <=1
-     bucket - so in practice the router almost always converged on whichever
-     tier-0 (cheapest) model scored highest, and genuinely demanding
-     messages rarely pulled decisively toward a more capable one. Net
-     effect: it kept bouncing between the same 3-4 cheap models and barely
-     ever reached for the rest of the catalog. Three narrower bands
-     instead: only a truly signal-free message gets the full cheap-model
-     push, mid-range messages get a mild capability lean instead of
-     nothing, and messages with real signal pull harder toward capability. */
-  var complexity=tasks.github+tasks.code+tasks.write+tasks.reason+tasks.analyze+tasks.search;
-  var tier=getModelCostTier(model);
-  if(complexity===0){
-    score+=(3-tier)*4; /* no signal at all: mild reward for cheap models */
-  }else if(complexity>=4){
-    score+=tier*5; /* strong signal: pull hard toward capable/pricier models */
-  }else{
-    score+=tier*1; /* in between: small capability lean either way */
-  }
-  return score;
-}
 function getAllAvailableModels(){
   var all=[];
   Object.keys(BACKENDS).forEach(function(key){
@@ -2252,196 +2012,11 @@ function showModelSwitchNotice(html,targetId){
   document.getElementById(targetId||"chat").appendChild(notice);
   setTimeout(function(){notice.style.opacity="0.5";},4000);
 }
-/* Minimum score edge a candidate needs over the current model before it's
-   even worth suggesting a switch - without this, two models scoring a
-   couple points apart could ping-pong the suggestion back and forth on
-   every message as the conversation alternates between message types.
-   Lowered from 15: at 15, the router felt "stuck" - two comparably good
-   models rarely differ by that much, so once one won it tended to keep
-   winning every message after. Not lowered further than this - an
-   earlier attempt at 8 combined with the streak decay below could push
-   the EFFECTIVE threshold negative, which stopped meaning "needs a real
-   edge" and started meaning "almost anything can dethrone a
-   long-incumbent model," including clearly worse candidates. */
-var SWITCH_SCORE_MARGIN=11;
-var declinedSwitchTargets={};
-/* How many messages in a row the router has confirmed staying on the
-   SAME model (reset to 0 the moment it actually switches). Decayed off
-   currentScore below so the longer a model has held on, the smaller an
-   edge a genuine alternative needs to take over - stops a model from
-   camping indefinitely just because it keeps clearing the margin by a
-   hair on messages that are all similar in flavor. Capped well under
-   SWITCH_SCORE_MARGIN so the effective threshold always stays clearly
-   positive - this only makes staying incumbent slightly harder over
-   time, it never flips into "anything beats the current model." */
-var consecutiveSameModelStreak=0;
 /* Cap on how many non-streaming tool_choice:"auto" rounds a single message
    gets before being forced into the final tool_choice:"none" render call -
    without a cap, a model that keeps wanting to call tools could loop
-   indefinitely. Matches the Overseer's own existing "Step X/4" convention
-   already shown in the UI. */
+   indefinitely. */
 var MAX_TOOL_ROUNDS=4;
-/* After any decline, skip suggesting a switch at all for the next few
-   messages - the actual ping-pong isn't necessarily the same model being
-   re-suggested (different message types can make different candidate
-   models score highest each time), it's getting interrupted with a
-   switch prompt on every single message. This gives real breathing room
-   regardless of which model would've been suggested next. */
-var switchSuggestionCooldown=0;
-/* Last few models the router actually switched TO, most recent first -
-   used below to mildly penalize immediately re-suggesting whatever was
-   just picked. Without this, ties (or near-ties) between several
-   similarly-good-fit models always resolved to the same one every time
-   (stable sort + first-in-array-order wins), which is a big part of why
-   the router felt like it only ever bounced between a couple of models
-   instead of actually spreading across the catalog when several models
-   were a reasonable fit. Reset alongside declinedSwitchTargets wherever
-   that's reset - both are per-conversation routing state. */
-var recentAutoSelections=[];
-/* Coding is the one category where the shuffle-for-variety routing below
-   actively hurts: several catalog models score close enough on "code" that
-   the shuffle + recency penalty (both added specifically to stop the
-   router camping on one model) kept rotating a coding conversation through
-   Qwen2.5-72B/DeepSeek-V3.2/Qwen3-Coder/Kimi-K2/GLM-4.6/MiniMax-M2 message
-   to message - each with different conventions and tool-calling behavior,
-   which reads as "random" and actively hurts a project needing consistent
-   style. Unlike writing/research, where trying a different model can
-   genuinely help, there's no upside to varying the coding model - so when
-   code is clearly the dominant signal, skip the exploration entirely and
-   converge on one fixed, agentic coding model every time: the same one
-   already trusted for the dedicated repo coding agent. */
-function selectBestCodingModel(tasks){
-  if(!(tasks.code>0&&tasks.code>=tasks.write&&tasks.code>=tasks.reason&&tasks.code>=tasks.analyze&&tasks.code>=tasks.github))return undefined;
-  var pinned=getAllAvailableModels().find(function(item){return item.model.id===CODING_AGENT_MODEL_ID;});
-  if(!pinned)return undefined; /* not in the current catalog - fall through to normal scoring below */
-  if(pinned.backend===activeBackend&&pinned.model.id===currentModel.id)return null; /* already on it */
-  return{model:pinned.model,backend:pinned.backend,score:scoreModelForTask(pinned.model,tasks)};
-}
-function selectBestModel(tasks){
-  var codingPick=selectBestCodingModel(tasks);
-  if(codingPick!==undefined)return codingPick;
-  /* Shuffle before scoring so an exact score tie between several
-     comparably-good models doesn't always resolve to the same one (Array
-     methods here are stable, so without this the first model in
-     BACKENDS' fixed declaration order would win every tie, every time). */
-  var available=getAllAvailableModels();
-  for(var s=available.length-1;s>0;s--){
-    var j=Math.floor(Math.random()*(s+1));
-    var tmp=available[s];available[s]=available[j];available[j]=tmp;
-  }
-  if(!available.length)return null;
-  /* Graduated penalty over the last 4 switch targets (steepest for the
-     most recent) instead of one flat -6 for "in the last 3" - a flat
-     penalty barely dented a model that was scoring well clear of
-     everything else, so the router kept round-tripping between the same
-     one or two models whenever they were genuinely the best fit. This
-     makes an alternative that was JUST used noticeably less attractive
-     without permanently blacklisting it. */
-  var recencyPenalty=[10,6,3,1];
-  var scored=available.map(function(item){
-    var sc=scoreModelForTask(item.model,tasks);
-    var recentIdx=recentAutoSelections.indexOf(item.model.id);
-    if(recentIdx>=0&&recentIdx<recencyPenalty.length)sc-=recencyPenalty[recentIdx];
-    return{model:item.model,backend:item.backend,score:sc};
-  });
-  scored.sort(function(a,b){return b.score-a.score;});
-  /* Decayed by how many messages in a row the current model has already
-     held on - the longer a streak runs, the smaller an edge a genuine
-     alternative needs to end it, so a model can't camp indefinitely just
-     by clearing the margin on a string of similar-flavored messages.
-     Capped at 5, well under SWITCH_SCORE_MARGIN (11) - the effective
-     threshold (margin minus this) always stays at least 6, so a long
-     streak makes staying incumbent easier to end, it never makes a
-     genuinely worse candidate able to win. */
-  var currentScore=scoreModelForTask(currentModel,tasks)-Math.min(consecutiveSameModelStreak*2,5);
-  for(var i=0;i<scored.length;i++){
-    var candidate=scored[i];
-    if(candidate.backend===activeBackend&&candidate.model.id===currentModel.id)continue;
-    if(declinedSwitchTargets[candidate.model.id])continue;
-    if(candidate.score-currentScore<SWITCH_SCORE_MARGIN)return null;
-    return candidate;
-  }
-  return null;
-}
-function switchReasonText(best){
-  var reasons=[];
-  if(best.reason&&best.reason.github>0)reasons.push("GitHub operations");
-  if(best.reason&&best.reason.code>0)reasons.push("code expertise");
-  if(best.reason&&best.reason.write>0)reasons.push("writing skills");
-  if(best.reason&&best.reason.reason>0)reasons.push("reasoning");
-  if(best.reason&&best.reason.analyze>0)reasons.push("research/analysis");
-  if(best.reason&&best.reason.search>0)reasons.push("real-time info");
-  return reasons.length?reasons.join(", "):"efficiency for this message";
-}
-/* Ask before switching instead of silently swapping models underneath the
-   user - this blocks send() until they pick, so a message never goes out
-   on a model they didn't confirm. Resolves true to switch, false to keep
-   the current model and send as-is. */
-function confirmModelSwitch(best){
-  return new Promise(function(resolve){
-    var reasonText=switchReasonText(best);
-    var txt="Currently on <strong>"+esc(currentModel.label)+"</strong>. "+
-      "<strong>"+esc(best.model.label)+"</strong> ("+esc(BACKENDS[best.backend].name)+") looks like a better fit for "+esc(reasonText)+".";
-    document.getElementById("agentConfirmText").innerHTML=txt;
-    openModal("agentConfirmModal");
-    var sendBtn=document.getElementById("agentConfirmSendCurrent");
-    var switchBtn=document.getElementById("agentConfirmSwitch");
-    var closeBtn=document.getElementById("closeAgentConfirmModal");
-    function cleanup(){
-      closeModal("agentConfirmModal");
-      sendBtn.removeEventListener("click",onSend);
-      switchBtn.removeEventListener("click",onSwitch);
-      closeBtn.removeEventListener("click",onClose);
-    }
-    /* Remember a decline for this conversation so the same model isn't
-       suggested again and again if the user already said no once -
-       that's the actual ping-pong: not the scoring itself, but asking
-       about the same rejected candidate on every subsequent message. */
-    function onSend(){declinedSwitchTargets[best.model.id]=true;switchSuggestionCooldown=2;cleanup();resolve(false);}
-    function onSwitch(){cleanup();resolve(true);}
-    function onClose(){declinedSwitchTargets[best.model.id]=true;switchSuggestionCooldown=2;cleanup();resolve(false);}
-    sendBtn.addEventListener("click",onSend);
-    switchBtn.addEventListener("click",onSwitch);
-    closeBtn.addEventListener("click",onClose);
-  });
-}
-function showModelConfirmedStay(){
-  var btn=document.getElementById("modelBtn");
-  btn.classList.remove("confirmed");
-  void btn.offsetWidth; /* restart the animation if it's still fading from a previous message */
-  btn.classList.add("confirmed");
-  setTimeout(function(){btn.classList.remove("confirmed");},900);
-}
-async function switchToBestModel(){
-  if(!agentAutoSelect)return;
-  if(switchSuggestionCooldown>0){switchSuggestionCooldown--;return;}
-  var tasks=analyzeConversationTasks();
-  var best=selectBestModel(tasks);
-  if(!best){consecutiveSameModelStreak++;showModelConfirmedStay();return;}
-  best.reason=tasks;
-  consecutiveSameModelStreak=0;
-  /* Full autonomy: switch on the Overseer's own judgment and report what
-     happened afterward (showAgentSelection) instead of blocking every
-     send on a confirm dialog first. */
-  lastAgentSelection={model:best.model,backend:best.backend,reason:tasks,score:best.score};
-  recentAutoSelections.unshift(best.model.id);
-  recentAutoSelections=recentAutoSelections.slice(0,4);
-  if(best.backend!==activeBackend){
-    activeBackend=best.backend;
-    await loadBackend();
-  }
-  setModel(best.model);
-  renderModelList();
-  showAgentSelection(best);
-}
-function showAgentSelection(best){
-  var reasonText=switchReasonText(best);
-  var notice=document.createElement("div");
-  notice.style.cssText="padding:8px 12px;margin:8px 0;background:rgba(88,166,255,0.1);border-left:3px solid var(--ac);border-radius:4px;font-size:13px;color:var(--tx)";
-  notice.innerHTML="🤖 <strong>Agent switched to "+esc(best.model.label)+"</strong> – "+esc(reasonText);
-  document.getElementById("chat").appendChild(notice);
-  setTimeout(function(){notice.style.opacity="0.5";},3000);
-}
 /* Auto-switch to a vision-capable model when an image is attached and the
    current model can't read images - no confirm dialog, no user decision,
    consistent with how model routing works everywhere else in the app. */
@@ -2501,723 +2076,6 @@ async function restorePreVisionModelIfNeeded(hasImgThisMessage){
   setTimeout(function(){notice.style.opacity="0.5";},3000);
 }
 
-/* ---- Overseer Agent System: Strategic Conversation Orchestration ---- */
-function detectGoal(text){
-  var lower=(typeof text==="string"?text:(text.find&&text.find(function(c){return c.type==="text";})||{}).text||"").toLowerCase();
-  var goals={feature:0,debug:0,design:0,refactor:0,analyze:0,learn:0,write:0,plan:0};
-  if(lower.match(/add|implement|build|create|feature|new/))goals.feature+=2;
-  if(lower.match(/fix|bug|error|issue|broken|crash|debug/))goals.debug+=3;
-  if(lower.match(/design|architecture|redesign|refactor|improve/))goals.design+=2;
-  if(lower.match(/optimize|performance|speed|clean|simplify/))goals.refactor+=2;
-  if(lower.match(/analyze|understand|explain|what|how does|why/))goals.analyze+=2;
-  if(lower.match(/learn|teach|tutorial|guide|doc|read/))goals.learn+=2;
-  if(lower.match(/write|document|email|report|article/))goals.write+=2;
-  if(lower.match(/plan|roadmap|steps|break down|approach/))goals.plan+=2;
-  var topGoal=Object.keys(goals).reduce(function(a,b){return goals[a]>goals[b]?a:b;});
-  return topGoal;
-}
-function initializeOverseer(firstMessage){
-  /* Fold the active project's instructions into goal detection too - a
-     project like "helping me write my novel" should steer the detected
-     goal even if the first message alone reads as something else. */
-  var ap=getAP();
-  var isProject=ap&&typeof ap.id==="string"&&ap.id.indexOf("wproj_")===0;
-  overseerState.activeProject=isProject?ap.name:null;
-  overseerState.activeProjectInstructions=isProject?ap.content:null;
-  var firstText=typeof firstMessage==="string"?firstMessage:((firstMessage&&firstMessage.find&&firstMessage.find(function(c){return c.type==="text";})||{}).text||"");
-  var goalInput=isProject?(ap.content+"\n"+firstText):firstMessage;
-  overseerState.goal=detectGoal(goalInput);
-  overseerState.goalType=overseerState.goal;
-  overseerState.status="in_progress";
-  overseerState.startTime=Date.now();
-  overseerState.messagesProcessed=1;
-  overseerState.progress=10;
-  overseerState.successProbability=70;
-  planTaskSteps();
-  trackApproach("initial");
-  updateOverseerStatus();
-}
-function planTaskSteps(){
-  overseerState.steps=[];
-  if(overseerState.goal==="debug"){
-    overseerState.steps=["Understand error","Identify root cause","Develop fix","Test fix","Verify no regression"];
-  }else if(overseerState.goal==="feature"){
-    overseerState.steps=["Plan approach","Design implementation","Write code","Test","Documentation"];
-  }else if(overseerState.goal==="design"){
-    overseerState.steps=["Understand requirements","Map architecture","Design components","Review design"];
-  }else if(overseerState.goal==="analyze"){
-    overseerState.steps=["Gather data","Identify patterns","Draw conclusions","Validate findings"];
-  }else{overseerState.steps=["Understand task","Work on task","Verify results"];}
-  overseerState.currentStep=0;
-}
-function trackApproach(approach){
-  overseerState.attemptedApproaches.push({approach:approach,time:Date.now(),success:null});
-}
-/* Length alone said nothing about whether the model was actually on
-   track - a long, fluent refusal ("I don't have access to that
-   repository...") scored "excellent" purely for being wordy, while a
-   short, correct one-line answer scored "poor" for being brief. This is
-   the real "relay the model's own feedback and analyze it" loop: the
-   Overseer should notice when the underlying model's actual words say
-   it's stuck, refusing, or unsure - not just track how many characters
-   came back. */
-var ASSISTANT_CONCERN_PATTERNS=[/\bi (don'?t|do not) have access\b/i,/\bi can'?t\b/i,/\bi cannot\b/i,/\bi'?m not able to\b/i,/\bi am not able to\b/i,/\bi'?m not sure\b/i,/\bi don'?t know\b/i,/\bunable to (help|assist|complete|do that)\b/i,/^error:/i,/\(empty response\)/i,/no response from/i];
-function detectAssistantConcern(text){
-  var t=(typeof text==="string"?text:"").toLowerCase();
-  /* Also a concern if this got shown as-is after the fake-tool-call retry
-     in doSendRequest already gave it one shot (looksLikeFakeToolCallText,
-     defined below) - the Overseer's own tracking should reflect that the
-     "answer" the user actually saw was pseudo-code, not real content. */
-  if(looksLikeFakeToolCallText(text))return true;
-  return ASSISTANT_CONCERN_PATTERNS.some(function(p){return p.test(t);});
-}
-function analyzeConversationFlow(){
-  if(chatHistory.length<2)return;
-  /* overseerState round-trips through JSON (tab save/restore), which turns
-     modelsUsed from a Set into a plain object - .add() below would throw
-     on that silently since this only used to run off a periodic timer with
-     no error boundary around it. Self-heal instead of ever calling .add()
-     on something that isn't actually still a Set. */
-  if(!(overseerState.modelsUsed instanceof Set))overseerState.modelsUsed=new Set();
-  var now=Date.now();
-  var recentMsgs=chatHistory.slice(-4);
-  var userMsgs=recentMsgs.filter(function(m){return m.role==="user";});
-  var assistantMsgs=recentMsgs.filter(function(m){return m.role==="assistant";});
-  overseerState.messagesProcessed=chatHistory.length;
-  if(userMsgs.length>0){overseerState.modelsUsed.add(currentModel.id);}
-
-  var avgResponseLength=assistantMsgs.length>0?assistantMsgs.reduce(function(sum,m){return sum+(m.content||"").length;},0)/assistantMsgs.length:0;
-  overseerState.lastResponseLength=avgResponseLength;
-  var lastAssistantMsg=assistantMsgs.length?assistantMsgs[assistantMsgs.length-1]:null;
-  overseerState.lastAssistantConcern=lastAssistantMsg?detectAssistantConcern(lastAssistantMsg.content):false;
-
-  var isStuck=(avgResponseLength<100&&userMsgs.length>=2)||overseerState.lastAssistantConcern;
-  if(isStuck&&!overseerState.stuck){overseerState.stuck=true;overseerState.stuckSince=now;makeBetterRecommendation();}
-  if(!isStuck){overseerState.stuck=false;overseerState.stuckSince=null;}
-
-  calculateQualityScore();calculateEfficiencyScore();calculateSuccessProbability();
-
-  var estimatedCompletion=0;
-  if(overseerState.goal==="debug")estimatedCompletion=overseerState.messagesProcessed>4?75:Math.min(50,overseerState.messagesProcessed*15);
-  else if(overseerState.goal==="feature")estimatedCompletion=overseerState.messagesProcessed>6?70:Math.min(60,overseerState.messagesProcessed*10);
-  else if(overseerState.goal==="design")estimatedCompletion=overseerState.messagesProcessed>3?60:Math.min(40,overseerState.messagesProcessed*12);
-  else estimatedCompletion=Math.min(90,Math.round(overseerState.messagesProcessed*8));
-  overseerState.progress=Math.min(estimatedCompletion,99);
-  updateStepProgress();
-}
-function calculateQualityScore(){
-  if(overseerState.lastResponseLength<50)overseerState.qualityScore=30;
-  else if(overseerState.lastResponseLength<200)overseerState.qualityScore=60;
-  else if(overseerState.lastResponseLength<500)overseerState.qualityScore=85;
-  else overseerState.qualityScore=95;
-  /* A confident-sounding refusal is still wordy - length alone would
-     score it "excellent". Cap it down when the model's own words say
-     it's stuck/refusing/unsure, regardless of how long that text is. */
-  if(overseerState.lastAssistantConcern)overseerState.qualityScore=Math.min(overseerState.qualityScore,40);
-  if(overseerState.qualityScore<70)overseerState.conversationQuality="poor";
-  else if(overseerState.qualityScore<85)overseerState.conversationQuality="good";
-  else overseerState.conversationQuality="excellent";
-}
-function calculateEfficiencyScore(){
-  var timeElapsed=(Date.now()-overseerState.startTime)/1000/60;
-  var msgsPerMinute=timeElapsed>0?overseerState.messagesProcessed/timeElapsed:overseerState.messagesProcessed;
-  var idealRate=overseerState.goal==="debug"?3:(overseerState.goal==="feature"?2.5:2);
-  overseerState.efficiencyScore=Math.min(100,Math.round((msgsPerMinute/idealRate)*100));
-}
-function calculateSuccessProbability(){
-  var base=70;
-  if(overseerState.qualityScore>80)base+=15;
-  if(overseerState.efficiencyScore>90)base+=10;
-  if(overseerState.modelsUsed.size>1)base+=5;
-  if(overseerState.stuck)base-=20;
-  overseerState.successProbability=Math.min(95,Math.max(20,base));
-}
-function updateStepProgress(){
-  if(overseerState.steps.length===0)return;
-  var newStep=Math.floor((overseerState.progress/100)*overseerState.steps.length);
-  if(newStep>overseerState.currentStep&&newStep<=overseerState.steps.length){
-    overseerState.currentStep=newStep;
-    if(overseerState.currentStep<overseerState.steps.length){
-      showStepUpdate(overseerState.steps[overseerState.currentStep-1],overseerState.steps[overseerState.currentStep]);
-    }
-  }
-}
-function makeBetterRecommendation(){
-  var taskAnalysis=analyzeTask((chatHistory[chatHistory.length-1]||{}).content||"");
-  var complexity=taskAnalysis.github+taskAnalysis.code+taskAnalysis.write+taskAnalysis.reason+taskAnalysis.analyze+taskAnalysis.search;
-  var recs=[];
-
-  /* Used to suggest from a fixed list of 4 hardcoded model names
-     no matter what the actual catalog looked like - completely disconnected
-     from scoreModelForTask/getAllAvailableModels, the same machinery the
-     mid-chat auto-router already uses to weigh the full model roster. That
-     mismatch is why the Overseer only ever seemed to know about a couple
-     models: it did, literally, regardless of how many were actually
-     available. Scoring the real catalog here means a newly added model
-     shows up in these suggestions automatically, with no separate list to
-     maintain in sync. */
-  /* Model-switch recommendations are pointless in a Coding tab - repo work
-     (see runCodingAgentTurn) always runs on the one fixed
-     CODING_AGENT_MODEL_ID, completely independent of currentModel/
-     activeBackend. A real user report showed "Switch to X... Switched ✓"
-     firing mid-task and being tapped along with everything else, with
-     zero actual effect on the coding agent that was doing the real work -
-     just misleading noise suggesting the model handling the task was
-     changing when it never does. Skip straight to the approach-tip
-     suggestions below instead. */
-  if(complexity>0&&!codingModeActive){
-    var scored=getAllAvailableModels()
-      .filter(function(item){return !(item.backend===activeBackend&&item.model.id===currentModel.id);})
-      .map(function(item){return{model:item.model,backend:item.backend,score:scoreModelForTask(item.model,taskAnalysis)};})
-      .sort(function(a,b){return b.score-a.score;});
-    var reasonText=switchReasonText({reason:taskAnalysis});
-    recs=scored.slice(0,3).map(function(c,i){
-      return{type:"model_switch",model:c.model.label,modelId:c.model.id,backend:c.backend,
-        reason:"Better fit for "+reasonText+".",confidence:Math.max(60,90-i*10)};
-    });
-  }
-  if(taskAnalysis.code>0){
-    recs.push({type:"approach",reason:"Try: Print debug statements, isolate the exact line causing the issue.",confidence:70});
-  }else if(taskAnalysis.reason>0||taskAnalysis.analyze>0){
-    recs.push({type:"approach",reason:"Break down into smaller questions and solve each one separately.",confidence:70});
-  }else if(taskAnalysis.write>0){
-    recs.push({type:"approach",reason:"Try: 'Explain this more clearly' or 'Make it more concise'",confidence:70});
-  }else if(!recs.length){
-    recs.push({type:"approach",reason:"Ask a more specific follow-up question to get better results.",confidence:75});
-    recs.push({type:"approach",reason:"Try providing an example of what you want.",confidence:70});
-  }
-
-  if(recs.length>0){
-    var bestRec=recs[0];
-    overseerState.recommendations.push(bestRec);
-    showBetterRecommendation(bestRec,recs.slice(1,3));
-  }
-}
-function showStepUpdate(prevStep,nextStep){
-  if(!nextStep)return;
-  overseerState.pendingContinueStep=nextStep;
-  updateOverseerBar();
-  autoSave();
-  var notice=document.createElement("div");
-  notice.style.cssText="padding:8px 12px;margin:8px 0;background:rgba(34,197,94,0.1);border-left:3px solid #22c55e;border-radius:4px;font-size:12px;color:var(--tx)";
-  notice.innerHTML="✓ <strong>Step completed:</strong> "+esc(prevStep)+"<br>→ <strong>Next:</strong> "+esc(nextStep);
-  document.getElementById("chat").appendChild(notice);
-  /* Auto-send only when the model's last message looks like it was
-     mid-analysis and got cut off - the most reliable signal is the
-     message ending with a bare colon (the model declared what it was
-     about to do or show, then stopped before doing it). Checking this
-     avoids firing a spurious extra send when the step counter advances
-     due to accumulated message count on a fully completed response. */
-  var lastMsg=chatHistory.length>0?chatHistory[chatHistory.length-1]:null;
-  var lastText=lastMsg&&lastMsg.role==="assistant"?(typeof lastMsg.content==="string"?lastMsg.content.trim():""):"";
-  var midAnalysis=lastText.endsWith(":")||/\b(let me|now let me|i'?ll now|continuing to|next[,\s])\b/i.test(lastText)&&lastText.slice(-80).indexOf(".")<0;
-  if(midAnalysis&&document.getElementById("prompt").value.trim()===""){
-    overseerState.pendingContinueStep=null;
-    updateOverseerBar();
-    autoSave();
-    window.insertPrompt("Continue with the next step: "+nextStep);
-    send();
-  }
-}
-/* Each condition below stays true across many 15s monitoring ticks (e.g.
-   progress sitting above 75% while idle) - without this check
-   makeProactiveRecommendation would push and render the same box again on
-   every tick instead of once per distinct recommendation. */
-function alreadyRecommended(reason){
-  return overseerState.recommendations.some(function(r){return r.reason===reason;});
-}
-function makeProactiveRecommendation(){
-  if(overseerState.progress>75&&overseerState.goal==="debug"&&overseerState.messagesProcessed>5){
-    var recs=[
-      {type:"next_step",reason:"Add test case to verify fix works",confidence:85},
-      {type:"next_step",reason:"Document what caused the bug and solution",confidence:80}
-    ];
-    var rec={type:"next_step",reason:"Debug nearly complete. Next: write test + document fix",confidence:85};
-    if(!alreadyRecommended(rec.reason)){
-      overseerState.recommendations.push(rec);
-      showBetterRecommendation(rec,recs.slice(1));
-    }
-  }
-  if(overseerState.progress>75&&overseerState.goal==="feature"&&overseerState.messagesProcessed>6){
-    var recs2=[
-      {type:"next_step",reason:"Run integration tests against main system",confidence:90},
-      {type:"next_step",reason:"Create PR for code review before merging",confidence:85}
-    ];
-    var rec2={type:"next_step",reason:"Feature nearly complete. Next: integration testing, then code review",confidence:90};
-    if(!alreadyRecommended(rec2.reason)){
-      overseerState.recommendations.push(rec2);
-      showBetterRecommendation(rec2,recs2.slice(1));
-    }
-  }
-  if(overseerState.progress>80&&overseerState.goal==="design"&&overseerState.messagesProcessed>4){
-    var recs3=[
-      {type:"next_step",reason:"Walk through each component to validate design",confidence:85},
-      {type:"next_step",reason:"Get feedback from team on proposed architecture",confidence:80}
-    ];
-    var rec3={type:"next_step",reason:"Design review nearly complete. Next: validate components, get team feedback",confidence:85};
-    if(!alreadyRecommended(rec3.reason)){
-      overseerState.recommendations.push(rec3);
-      showBetterRecommendation(rec3,recs3.slice(1));
-    }
-  }
-  if(overseerState.efficiencyScore<50&&overseerState.messagesProcessed>3){
-    var rec4={type:"approach",reason:"Conversation pace is slow. Try asking for shorter, more focused responses.",confidence:70};
-    if(!alreadyRecommended(rec4.reason)){
-      overseerState.recommendations.push(rec4);
-      showBetterRecommendation(rec4,[]);
-    }
-  }
-}
-function updateOverseerStatus(){
-  var progressColor=overseerState.progress<40?"#ef4444":(overseerState.progress<70?"#f59e0b":"#22c55e");
-  var statusHtml='<div style="padding:10px;background:rgba(88,166,255,0.08);border-radius:8px;font-size:12px;margin:8px 0;border-left:3px solid var(--ac)">';
-  statusHtml+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-  statusHtml+='<strong>Overseer Intelligence Report</strong>';
-  statusHtml+='<span style="font-size:11px;color:var(--mu)">'+overseerState.progress+'% • '+overseerState.conversationQuality+'</span>';
-  statusHtml+='</div>';
-
-  statusHtml+='<div style="background:rgba(0,0,0,0.2);height:4px;border-radius:2px;margin-bottom:8px">';
-  statusHtml+='<div style="background:'+progressColor+';height:100%;width:'+overseerState.progress+'%;border-radius:2px;transition:width 0.3s"></div></div>';
-
-  if(overseerState.activeProject){
-    statusHtml+='<div style="font-size:11px;color:var(--ac);margin-bottom:8px">📌 Project: '+esc(overseerState.activeProject)+'</div>';
-  }
-
-  var stepDisplay="";
-  if(overseerState.steps.length>0&&overseerState.currentStep<overseerState.steps.length){
-    stepDisplay=' • Step: '+overseerState.currentStep+'/'+overseerState.steps.length;
-  }
-
-  statusHtml+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;font-size:11px;color:var(--mu)">';
-  statusHtml+='<div>Goal: '+overseerState.goalType+'</div>';
-  statusHtml+='<div>Success: '+overseerState.successProbability+'%</div>';
-  statusHtml+='<div>Quality: '+overseerState.qualityScore+'%</div>';
-  statusHtml+='<div>Efficiency: '+overseerState.efficiencyScore+'%</div>';
-  statusHtml+='</div>';
-
-  statusHtml+='<div style="font-size:11px;color:var(--mu);line-height:1.4">';
-  statusHtml+='Messages: '+overseerState.messagesProcessed+' • Models: '+overseerState.modelsUsed.size;
-  if(overseerState.stuck){statusHtml+=' • ⚠️ Stuck';}
-  statusHtml+=stepDisplay;
-  statusHtml+='</div></div>';
-
-  if(!document.getElementById("overseerStatus")){
-    var statusEl=document.createElement("div");statusEl.id="overseerStatus";
-    document.getElementById("chat").appendChild(statusEl);
-  }
-  document.getElementById("overseerStatus").innerHTML=statusHtml;
-  updateOverseerBar();
-}
-/* Persistent bar above the input, unlike the report panel above (which
-   gets buried at the top of the chat as the conversation grows and is
-   easy to lose track of) - this stays visible and up to date at a
-   glance without scrolling or long-pressing anything. */
-function updateOverseerBar(){
-  var bar=document.getElementById("overseerBar");
-  if(!bar)return;
-  if(!overseerEnabled||!overseerState.goal){
-    bar.classList.add("hidden");
-    return;
-  }
-  bar.classList.remove("hidden");
-  var dot=document.getElementById("overseerBarDot");
-  dot.className="obd"+(overseerState.stuck?" stuck":(overseerState.progress<40?" warn":""));
-  /* hasNextStep decides BOTH the text and the next-step button below - it
-     should only light up when there's a real, still-pending step left for
-     the user to use. Once that step has already been queued into the
-     prompt (or auto-sent), leaving the button around invites the user to
-     fire the exact same continuation again and makes the models look like
-     they're pointlessly repeating themselves. */
-  var hasNextStep=!overseerState.stuck&&!!overseerState.pendingContinueStep&&overseerState.currentStep>0&&overseerState.currentStep<overseerState.steps.length;
-  var text="🤖 ";
-  if(overseerState.stuck)text+="Waiting on the next detail";
-  else if(hasNextStep)text+="Next step ready";
-  else if(overseerState.goalType)text+="Tracking: "+overseerState.goalType.toLowerCase();
-  else text+="Tracking the conversation";
-  if(overseerState.activeProject)text+=" • "+overseerState.activeProject;
-  document.getElementById("overseerBarText").textContent=text;
-  /* Same underlying step data as the one-time green notice in the chat
-     (showStepUpdate) - repeated here because that notice scrolls out of
-     view and gets buried as the conversation grows, while this bar stays
-     pinned above the input the whole time. Without this, "Working on the
-     next step" was just ambient text with nothing to actually act on
-     unless you scrolled back to find the original notice. */
-  var continueBtn=document.getElementById("overseerBarContinueBtn");
-  continueBtn.classList.toggle("hidden",!hasNextStep);
-  if(hasNextStep)continueBtn.dataset.nextStep=overseerState.pendingContinueStep;
-  else delete continueBtn.dataset.nextStep;
-}
-/* Applies a recommended model_switch rec directly - same backend-switch +
-   setModel + renderModelList sequence switchToBestModel/ensureVisionModel
-   already use elsewhere, so a click here behaves identically to every
-   other auto-switch in the app instead of being a second, inconsistent
-   path. */
-async function applyRecommendedSwitch(rec){
-  if(rec.backend!==activeBackend){activeBackend=rec.backend;await loadBackend();}
-  var target=(BACKENDS[rec.backend].models||[]).find(function(m){return m.id===rec.modelId;});
-  if(!target)return false;
-  setModel(target);renderModelList();
-  return true;
-}
-function showBetterRecommendation(rec,alternates){
-  var recHtml='<div style="padding:10px 12px;margin:8px 0;background:rgba(245,158,11,0.1);border-left:3px solid #f59e0b;border-radius:4px;font-size:12px;color:var(--tx)">';
-  recHtml+='<strong style="display:block;margin-bottom:6px">💡 Overseer Recommendation ('+rec.confidence+'% confidence)</strong>';
-  if(rec.type==="model_switch"){
-    recHtml+='<div style="padding:6px 0">Switch to <strong>'+esc(rec.model)+'</strong></div>';
-    recHtml+='<div style="color:var(--mu);font-size:11px;padding:4px 0">'+esc(rec.reason)+'</div>';
-  }else if(rec.type==="approach"){
-    recHtml+='<div style="padding:6px 0">'+esc(rec.reason)+'</div>';
-  }
-  if(alternates&&alternates.length>0){
-    /* var(--br), not a hardcoded white-based rgba - a white-tinted divider
-       is only visible against a dark page background, so it disappeared
-       entirely in the light theme. */
-    recHtml+='<div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--br);font-size:11px;color:var(--mu)">';
-    recHtml+='<strong>Alternatives:</strong><br>';
-    alternates.forEach(function(alt){
-      if(alt.type==="model_switch"){recHtml+='• '+esc(alt.model)+' ('+alt.confidence+'%)<br>';}
-      else{recHtml+='• '+esc(alt.reason.substring(0,50))+'... ('+alt.confidence+'%)<br>';}
-    });
-    recHtml+='</div>';
-  }
-  recHtml+='</div>';
-  var recEl=document.createElement("div");recEl.innerHTML=recHtml;
-  if(rec.type==="model_switch"&&rec.modelId){
-    var box=recEl.firstElementChild;
-    var btn=document.createElement("button");
-    btn.textContent="Switch to "+rec.model;
-    btn.style.cssText="margin-top:6px;padding:5px 12px;font-size:11px;font-weight:600;color:#fff;background:var(--ac);border:none;border-radius:14px;cursor:pointer";
-    btn.addEventListener("click",async function(){
-      btn.disabled=true;btn.textContent="Switching...";
-      var ok=await applyRecommendedSwitch(rec);
-      btn.textContent=ok?"Switched ✓":"Model unavailable";
-    });
-    box.appendChild(btn);
-  }
-  document.getElementById("chat").appendChild(recEl);
-}
-function startOverseerMonitoring(){
-  if(overseerCheckInterval)clearInterval(overseerCheckInterval);
-  overseerCheckInterval=setInterval(function(){
-    if(chatHistory.length>1&&!sending){
-      analyzeConversationFlow();
-      if(Date.now()-lastAnalysisTime>15000){
-        makeProactiveRecommendation();
-        if(overseerState.progress>10&&overseerState.progress<80){displayGeneratedPrompts();}
-        if(overseerState.progress>30&&overseerState.progress<85&&overseerState.messagesProcessed%2===0){displayBrainstormingSuggestions();}
-        lastAnalysisTime=Date.now();
-      }
-      updateOverseerStatus();
-    }
-  },3000);
-}
-function stopOverseerMonitoring(){
-  if(overseerCheckInterval){clearInterval(overseerCheckInterval);overseerCheckInterval=null;}
-}
-
-/* ---- Overseer Prompt Generation & Brainstorming ---- */
-var brainstormMode=true,generatedPrompts=[],suggestedCommands=[],autoPromptInjection=true;
-var lastInjectedPrompt=null;
-function generateContextualPrompts(){
-  var prompts=[];
-  var lastUserMsg=chatHistory[chatHistory.length-2];
-  var lastAIMsg=chatHistory[chatHistory.length-1];
-  var userText=(lastUserMsg&&typeof lastUserMsg.content==="string"?lastUserMsg.content:"").toLowerCase();
-
-  if(overseerState.goal==="debug"){
-    prompts.push("Ask the model to add logging statements to help isolate where the bug occurs");
-    prompts.push("Request a breakdown of the error message and what each part means");
-    prompts.push("'Can you walk through the execution flow step-by-step?'");
-    prompts.push("'Try the fix in a test case before final commit'");
-  }else if(overseerState.goal==="feature"){
-    prompts.push("Ask for a brief architecture overview before implementation");
-    prompts.push("'What edge cases should we handle?'");
-    prompts.push("'Can you add tests for this feature?'");
-    prompts.push("Request validation: 'Verify this works with existing features'");
-  }else if(overseerState.goal==="design"){
-    prompts.push("'What are potential bottlenecks in this design?'");
-    prompts.push("Ask for performance implications of each component");
-    prompts.push("'Could this scale to 10x the current load?'");
-    prompts.push("Request trade-offs: 'Complexity vs maintainability'");
-  }else if(overseerState.goal==="analyze"){
-    prompts.push("'What's the most surprising finding here?'");
-    prompts.push("Ask for alternative explanations or interpretations");
-    prompts.push("'What would disprove this analysis?'");
-    prompts.push("Request next steps based on findings");
-  }else{
-    prompts.push("'Can you explain your approach first before implementing?'");
-    prompts.push("'What are the potential issues with this solution?'");
-    prompts.push("'Try a different approach and compare'");
-  }
-
-  if(userText.indexOf("error")>=0||userText.indexOf("fail")>=0){
-    prompts.push("'What's the minimum code change to fix this?'");
-    prompts.push("'Is there a simpler solution?'");
-  }
-
-  if(userText.indexOf("refactor")>=0||userText.indexOf("clean")>=0){
-    prompts.push("'Suggest performance improvements'");
-    prompts.push("'Identify code duplication opportunities'");
-  }
-
-  return prompts.slice(0,4);
-}
-function suggestGitCommands(){
-  var cmds=[];
-  if(overseerState.modelsUsed.size>0){
-    if(overseerState.goal==="debug"){
-      cmds.push({cmd:"git log --oneline -10",desc:"Show recent commits to find when bug was introduced"});
-      cmds.push({cmd:"git diff HEAD~1",desc:"See what changed in the last commit"});
-      cmds.push({cmd:"git blame src/file.js",desc:"Find who changed each line"});
-    }
-    if(overseerState.goal==="feature"){
-      cmds.push({cmd:"git branch feature/new-feature",desc:"Create feature branch"});
-      cmds.push({cmd:"git commit -am 'Feature: description'",desc:"Commit your changes"});
-    }
-    if(overseerState.progress>75){
-      cmds.push({cmd:"git log --oneline origin/main..HEAD",desc:"See commits ready for PR"});
-      cmds.push({cmd:"git diff origin/main",desc:"Review all changes before merge"});
-    }
-  }
-  return cmds;
-}
-function generateBrainstormingPrompts(){
-  var goals=["debug","feature","design","analyze"];
-  var prompts=[];
-
-  prompts.push({title:"Explore Edge Cases",prompt:"What edge cases haven't we considered? Generate 3-5 scenarios that might break this solution."});
-  prompts.push({title:"Alternative Approaches",prompt:"Suggest 2-3 completely different ways to solve this problem. What are pros/cons of each?"});
-  prompts.push({title:"Performance Analysis",prompt:"How would this scale? What are the performance implications of our approach?"});
-  prompts.push({title:"User Impact",prompt:"From a user perspective, what problems could this cause? How would they experience it?"});
-  prompts.push({title:"Code Quality",prompt:"How maintainable is this code? Suggest improvements for readability and maintainability."});
-  prompts.push({title:"Risk Assessment",prompt:"What are the biggest risks with this approach? How would we mitigate them?"});
-  prompts.push({title:"Testing Strategy",prompt:"What tests would validate this solution? Critical vs nice-to-have?"});
-  prompts.push({title:"Future Extensibility",prompt:"If we need to extend this in 6 months, what would be hard to change? Design for that now."});
-
-  return prompts.slice(0,3);
-}
-function displayGeneratedPrompts(force){
-  /* force skips the Overseer-progress gate below - used right after a
-     response finishes so a next-step suggestion reliably shows up every
-     time, instead of only within the narrow progress window the periodic
-     monitor (startOverseerMonitoring) uses for its own separate nudges
-     during long conversations. */
-  if(!force&&(!overseerEnabled||overseerState.progress<15))return;
-  var prompts=generateContextualPrompts();
-  if(prompts.length===0)return;
-
-  /* var(--ac), matching the memory/project/model-switch notices - was an
-     off-brand violet (#a855f7, not the app's actual accent) that existed
-     nowhere else, for what's functionally the same "Overseer suggestion
-     box" as those three. */
-  var promptsHtml='<div style="padding:10px 12px;margin:8px 0;background:rgba(88,166,255,0.08);border-left:3px solid var(--ac);border-radius:4px;font-size:12px;color:var(--tx)">';
-  promptsHtml+='<strong style="display:block;margin-bottom:8px">💭 Overseer Suggestions</strong>';
-  promptsHtml+='<div style="display:flex;flex-direction:column;gap:6px">';
-
-  prompts.forEach(function(prompt,i){
-    var cleanPrompt=prompt.replace(/^["']|["']$/g,"");
-    promptsHtml+='<button style="padding:6px 10px;background:var(--up);border:1px solid var(--br);color:var(--tx);border-radius:4px;font-size:11px;cursor:pointer;text-align:left;transition:background 0.15s" onclick="insertPrompt(\''+esc(cleanPrompt.replace(/\\/g,"\\\\").replace(/'/g,"\\'"))+'\')" title="Click to use this prompt">';
-    promptsHtml+=esc(cleanPrompt.substring(0,60))+(cleanPrompt.length>60?"...":"");
-    promptsHtml+='</button>';
-  });
-
-  promptsHtml+='</div></div>';
-
-  if(!document.getElementById("overseerPrompts")){
-    var promptsEl=document.createElement("div");promptsEl.id="overseerPrompts";
-    document.getElementById("chat").appendChild(promptsEl);
-  }
-  var existing=document.getElementById("overseerPrompts");
-  if(!existing.innerHTML.includes(prompts[0])){existing.innerHTML=promptsHtml;}
-}
-/* Unconditional next-step nudge, called from every way a send can end -
-   success, plain error, and an aborted stream with or without partial
-   content kept. Used to only fire on a clean successful reply gated behind
-   the brainstormMode toggle, which meant an error, an empty completion, or
-   brainstormMode simply being off left the conversation just sitting there
-   with nothing telling the user what to do next. generateContextualPrompts
-   only reads the user's own last message and overseerState (never the
-   assistant's reply), so it has something to show even when the reply
-   itself failed outright - this is deliberately not gated on brainstormMode
-   or on there being any actual response text. brainstormMode still
-   separately controls displayBrainstormingSuggestions, the bigger
-   exploratory idea grid - that's a different feature and stays opt-out. */
-function showNextStepPrompt(){
-  try{analyzeConversationFlow();displayGeneratedPrompts(true);}catch(e){}
-}
-function displayBrainstormingSuggestions(){
-  var suggestions=generateBrainstormingPrompts();
-  if(suggestions.length===0)return;
-
-  /* var(--ac), same reasoning as displayGeneratedPrompts above - was an
-     unrelated pink (#ec4899) that matched nothing else in the app. */
-  var brainstormHtml='<div style="padding:10px 12px;margin:8px 0;background:rgba(88,166,255,0.08);border-left:3px solid var(--ac);border-radius:4px;font-size:12px;color:var(--tx)">';
-  brainstormHtml+='<strong style="display:block;margin-bottom:8px">🧠 Brainstorming Ideas</strong>';
-  brainstormHtml+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
-
-  suggestions.forEach(function(idea){
-    brainstormHtml+='<button style="padding:8px 10px;background:var(--up);border:1px solid var(--br);color:var(--tx);border-radius:4px;font-size:11px;cursor:pointer;text-align:left;transition:background 0.15s" onclick="insertPrompt(\''+esc(idea.prompt.replace(/\\/g,"\\\\").replace(/'/g,"\\'"))+'\')" title="'+esc(idea.prompt)+'">';
-    brainstormHtml+='<strong>'+esc(idea.title)+'</strong><br><span style="font-size:10px;color:var(--mu)">'+esc(idea.prompt.substring(0,40))+'...</span>';
-    brainstormHtml+='</button>';
-  });
-
-  brainstormHtml+='</div></div>';
-
-  if(!document.getElementById("overseerBrainstorm")){
-    var brainstormEl=document.createElement("div");brainstormEl.id="overseerBrainstorm";
-    document.getElementById("chat").appendChild(brainstormEl);
-  }
-  document.getElementById("overseerBrainstorm").innerHTML=brainstormHtml;
-}
-/* Exposed on window (like window.cpCode below) because the suggestion
-   buttons that call this are built as raw HTML strings with an inline
-   onclick="insertPrompt(...)" attribute - inline handlers run in global
-   scope, so a bare function declared inside this file's outer IIFE is
-   invisible to them and the click just throws a silent ReferenceError,
-   with nothing visibly happening when tapped. */
-window.insertPrompt=function(prompt){
-  var promptEl=document.getElementById("prompt");
-  promptEl.value=prompt;
-  promptEl.style.height="auto";
-  promptEl.style.height=Math.min(promptEl.scrollHeight,150)+"px";
-  promptEl.focus();
-}
-function generateOptimalInstructions(userMessage,selectedModel){
-  var instructions="";
-  var taskAnalysis=analyzeTask(userMessage);
-  var modelName=(selectedModel.label||selectedModel.id).toLowerCase();
-
-  /* Read the currently active project live, not just whatever was set at
-     conversation start - the user can switch projects mid-conversation. */
-  var curAp=getAP();
-  var curProject=(curAp&&typeof curAp.id==="string"&&curAp.id.indexOf("wproj_")===0)?curAp:null;
-  if(curProject){
-    overseerState.activeProject=curProject.name;
-    overseerState.activeProjectInstructions=curProject.content;
-    /* doSendRequest already pushes ap.content as its own system message
-       unconditionally (for both projects and regular prompts) before this
-       function's output is added. Earlier this function ALSO re-included
-       the full project content here - meaning the model received the
-       exact same, often long, ruleset twice in one request. That's not
-       just wasteful: a duplicated block of near-identical instructions is
-       a plausible reason a model returns nothing at all. The project's
-       instructions are already authoritative via the existing ap.content
-       path - this function should add nothing on top of them, not repeat
-       them. */
-    return "";
-  }else if(overseerState.activeProject){
-    overseerState.activeProject=null;overseerState.activeProjectInstructions=null;
-  }
-
-  if(taskAnalysis.code>0){
-    instructions+="CODING TASK - Approach:\n";
-    instructions+="1. Understand the current implementation before making changes\n";
-    instructions+="2. Identify the specific issue or requirement\n";
-    instructions+="3. Write COMPLETE, working code (not snippets or pseudo-code)\n";
-    instructions+="4. Explain your changes clearly so they can be applied\n";
-    instructions+="5. Describe the intent behind each change\n\n";
-  }
-
-  if(taskAnalysis.github>0){
-    instructions+="GITHUB/REPO TASK - Workflow:\n";
-    instructions+="1. Ask for or work with the relevant file contents provided\n";
-    instructions+="2. Understand the file structure and current implementation\n";
-    instructions+="3. Provide complete, ready-to-apply changes with clear explanations\n";
-    instructions+="4. Each change should be atomic and well-described\n";
-    instructions+="5. Explain the 'why' behind each change, not just 'what'\n\n";
-  }
-
-  if(taskAnalysis.write>0){
-    instructions+="WRITING TASK - Style:\n";
-    instructions+="1. Be clear and concise\n";
-    instructions+="2. Use professional but accessible language\n";
-    instructions+="3. Structure with headers and bullet points where appropriate\n";
-    instructions+="4. Provide examples when helpful\n";
-    instructions+="5. End with a clear summary or next steps\n\n";
-  }
-
-  if(taskAnalysis.reason>0){
-    instructions+="REASONING TASK - Approach:\n";
-    instructions+="1. Break down the problem into component parts\n";
-    instructions+="2. Show your work step-by-step\n";
-    instructions+="3. Identify assumptions and constraints\n";
-    instructions+="4. Explore multiple angles before concluding\n";
-    instructions+="5. Acknowledge uncertainty where it exists\n\n";
-  }
-
-  if(overseerState.goal==="debug"){
-    instructions+="DEBUGGING FOCUS:\n";
-    instructions+="- Use systematic debugging approach\n";
-    instructions+="- Add logging to trace execution\n";
-    instructions+="- Create minimal reproduction case\n";
-    instructions+="- Test fix thoroughly before committing\n";
-    instructions+="- Include test cases in your solution\n\n";
-  }else if(overseerState.goal==="feature"){
-    instructions+="FEATURE DEVELOPMENT:\n";
-    instructions+="- Plan architecture before coding\n";
-    instructions+="- Write tests alongside implementation\n";
-    instructions+="- Consider edge cases\n";
-    instructions+="- Ensure backward compatibility\n";
-    instructions+="- Document changes\n\n";
-  }else if(overseerState.goal==="design"){
-    instructions+="DESIGN REVIEW:\n";
-    instructions+="- Evaluate scalability\n";
-    instructions+="- Consider maintainability\n";
-    instructions+="- Identify potential bottlenecks\n";
-    instructions+="- Weigh trade-offs explicitly\n";
-    instructions+="- Suggest improvements\n\n";
-  }
-
-  /* This block claims tools the model may never actually be offered -
-     doSendRequest only attaches app-control tools to the API request when
-     selectedModel.id is in TOOL_MODELS at all. Without this check, a
-     non-tool-capable model (OpenRouter, or any DeepInfra model
-     not in TOOL_MODELS) was told it had create_project/switch_model/
-     remember it was never given - it would then try to call one anyway
-     and, with no structured tool-calling mechanism available, dump the
-     attempt as literal text (e.g. "<tool_call><function=...>...") straight
-     into its reply instead of an error, since nothing told it the tools
-     didn't exist. Repo tools (read_file/write_file/list_files) used to
-     get claimed here too, but that access now runs exclusively through
-     the dedicated coding agent (runCodingAgentTurn) - this model never
-     gets them regardless of TOOL_MODELS membership. */
-  if(TOOL_MODELS.indexOf(selectedModel.id)>=0){
-    instructions+="APP CONTROL AVAILABLE (always, regardless of GitHub connection):\n";
-    instructions+="- create_project(name, instructions): Turns this conversation into a saved, reusable Work Project when the user asks (e.g. \"make this a project\") - write the name and full instructions yourself based on the actual conversation, don't ask the user to write them.\n";
-    instructions+="- switch_model(model_id): Switch the active model when the user asks, or when a clearly better-fitting model exists for what they need right now.\n";
-    instructions+="- remember(fact): Save a durable fact the user asks you to remember.\n";
-    instructions+="Use these directly the moment the user's request calls for them - don't just describe what you'd do, actually call the tool. No permission needed for these three; they're additive and reversible.\n";
-    instructions+="There is no tool here to check or change the GitHub repo connection - that's not one of the three tools above. The actual live status is:\n";
-    if(hasCodingAgentAccess()){
-      instructions+="GITHUB CONNECTION: connected to "+ghRepoOwner+"/"+ghRepoName+".\n\n";
-    }else if(hasGithubRepoConfigured()){
-      instructions+="GITHUB CONNECTION: repo "+ghRepoOwner+"/"+ghRepoName+" is saved, but repo tools are not authenticated yet (connect GitHub OAuth or enter the write secret in Settings > GitHub repository).\n\n";
-    }else{
-      instructions+="GITHUB CONNECTION: not connected. If the user asks about repo access, tell them plainly it's not connected and to use Settings > GitHub repository - don't claim otherwise or invent a way to check.\n\n";
-    }
-  }
-
-  instructions+="EXECUTION:\n";
-  instructions+="- Show your reasoning in <think> tags\n";
-  instructions+="- Be direct and action-oriented\n";
-  instructions+="- Provide complete solutions\n";
-  instructions+="- No filler or disclaimers\n";
-
-  return instructions;
-}
-function interceptAndEnhanceMessage(userMessage){
-  if(!autoPromptInjection||!overseerEnabled||!chatHistory.length)return null;
-
-  var instructions=generateOptimalInstructions(userMessage,currentModel);
-  /* A project returns "" here on purpose (its content already goes out via
-     ap.content) - don't claim instructions were injected when nothing was
-     actually added, or the UI misleadingly shows a green "injected" notice
-     for a request that got no extra system message at all. */
-  if(!instructions)return null;
-  lastInjectedPrompt=instructions;
-  return instructions;
-}
-
 /* ---- Model Coding & Tool Use System ---- */
 function displayThinkingProcess(thinkText){
   if(!thinkText||thinkText.trim()==="")return;
@@ -3260,7 +2118,6 @@ function displayToolExecution(toolName,input,result,containerId){
     }
   }
   else if(toolName==="create_project"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Creating project: "+esc(input.name)+"</div>";}
-  else if(toolName==="switch_model"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Switching model to: "+esc(input.model_id)+"</div>";}
   else if(toolName==="remember"){toolEl.innerHTML+="<div style='color:var(--mu);margin:4px 0'>Remembering: "+esc(input.fact)+"</div>";}
   if(result.error){toolEl.innerHTML+="<div style='color:var(--er);margin-top:4px'>Error: "+esc(result.error)+"</div>";}
   document.getElementById(containerId||"chat").appendChild(toolEl);
@@ -3281,23 +2138,14 @@ function createProjectFromTool(name,instructions){
   setWprojPromptBadge(proj);
   return{success:true,id:id};
 }
-async function switchModelFromTool(modelId){
-  var found=getAllAvailableModels().find(function(x){return x.model.id===modelId;});
-  if(!found)return{error:"Unknown model id: "+modelId};
-  if(found.backend!==activeBackend){activeBackend=found.backend;await loadBackend();}
-  setModel(found.model);
-  renderModelList();
-  return{success:true,label:found.model.label};
-}
 /* var codingTerminalLog / appendTerminalLog / the terminal modal below are
    the "separate from chat" live view of what's actually being read/written
    - a real user asked for a terminal-style preview distinct from the
    conversational summary in chat bubbles. Hooking this at executeRepoTool
-   (the one low-level function every repo action funnels through, whether
-   triggered by the Coding tab, the Overseer chat, or in the future any
-   other caller) means every real action shows up here with no per-caller
-   wiring, and nothing here can drift out of sync with what actually ran -
-   it logs the real result, not a guess at what should have happened. */
+   (the one low-level function every repo action funnels through) means
+   every real action shows up here with no per-caller wiring, and nothing
+   here can drift out of sync with what actually ran - it logs the real
+   result, not a guess at what should have happened. */
 var codingTerminalLog=[];
 var CODING_TERMINAL_LOG_MAX=300;
 function formatToolCallLine(toolName,toolInput){
@@ -3416,17 +2264,9 @@ async function executeRepoToolRaw(toolName,toolInput){
     return{error:"Unknown tool"};
   }catch(e){return{error:e.message};}
 }
-/* Executes one model-issued tool call and returns its result text - shared
-   by the Overseer chat and the main chat, which each used to carry their
-   own near-identical copy of this exact dispatch (same confirm dialogs,
-   same executeRepoTool calls, same app-control tool handlers). That
-   duplication was the actual risk, not just extra lines - a fix landing in
-   one copy and not the other (as nearly happened with the HTML-escaping
-   fix elsewhere in this file) would be silent and easy to miss.
-   renderStatus updates whichever transient "in progress" bubble the caller
-   is driving (the Overseer chat log's bubble vs the main chat's reply
-   bubble); logTarget is forwarded to displayToolExecution unchanged
-   (undefined for the main chat, "overseerChatLog" for the Overseer chat).
+/* Executes one model-issued tool call and returns its result text.
+   renderStatus updates the transient "in progress" bubble in the main
+   chat's reply; logTarget is forwarded to displayToolExecution unchanged.
    The coding agent's own dispatch (runCodingAgentRound) stays separate - it
    drives a different, cumulative console UI and only ever sees the 4 repo
    tools, never the app-control ones, so folding it in here would trade a
@@ -3491,10 +2331,6 @@ async function executeToolCall(toolName,toolArgs,renderStatus,logTarget){
     var cpRes=createProjectFromTool(toolArgs.name,toolArgs.instructions);
     displayToolExecution("create_project",toolArgs,cpRes,logTarget);
     return{toolResult:cpRes.success?("Created project \""+toolArgs.name+"\" and set it as the active project - this conversation will be saved under it from now on."):(cpRes.error||"Failed to create project")};
-  }else if(toolName==="switch_model"){
-    var smRes=await switchModelFromTool(toolArgs.model_id);
-    displayToolExecution("switch_model",toolArgs,smRes,logTarget);
-    return{toolResult:smRes.success?("Switched to "+smRes.label+"."):(smRes.error||"Failed to switch model")};
   }else if(toolName==="remember"){
     addMemory(toolArgs.fact);
     displayToolExecution("remember",toolArgs,{success:true},logTarget);
@@ -3519,8 +2355,7 @@ var CODING_AGENT_MODEL_LABEL="Qwen3 Coder 480B";
    model actually drives a given Coding tab (DeepInfra vs OpenRouter,
    whichever model they trust for that project) instead of always the one
    fixed default above - and once they picked one, didn't want anything in
-   the app quietly switching it back, the way Overseer's auto-select does
-   for the main chat. null means "use the fixed default"; set means "this
+   the app quietly switching it back. null means "use the fixed default"; set means "this
    tab's repo work always uses exactly this model+backend, full stop" -
    nothing in the coding-agent path ever overrides it once set, matching
    that expectation. Tab-scoped (see currentTabSnapshot/loadTabIntoLiveState
@@ -3634,12 +2469,9 @@ function renderCodingConsole(){
   wrap.className="msg ma3";
   var label=document.createElement("div");label.className="ml";
   var av=document.createElement("span");av.className="av";av.textContent="✦";label.appendChild(av);
-  /* "Overseer", matching the main chat's own relabeling - the coding
-     agent is a different underlying model, but it's still the same
-     single point of contact from the user's perspective, not a
-     separate persona. Model shown as the same secondary .modelTag
-     indicator the main chat uses. */
-  var lspan=document.createElement("span");lspan.textContent="Overseer";label.appendChild(lspan);
+  /* Matches the main chat's own labeling (see appendMsg) - model shown as
+     the same secondary .modelTag indicator the main chat uses. */
+  var lspan=document.createElement("span");lspan.textContent="Assistant";label.appendChild(lspan);
   var mtag=document.createElement("span");mtag.className="modelTag";mtag.textContent=getCodingAgentModel().label;label.appendChild(mtag);
   var body=document.createElement("div");body.className="body";body.innerHTML='<span class="cur">▇</span> working on the next step&#8230;';
   wrap.appendChild(label);wrap.appendChild(body);
@@ -4292,8 +3124,7 @@ function getModelSystemPrompt(ap){
      the caller), not whatever happens to be selected right now. */
   var curAp2=ap!==undefined?ap:getAP();
   var inProject=curAp2&&typeof curAp2.id==="string"&&curAp2.id.indexOf("wproj_")===0;
-  var sys="You are the Overseer - the user's single point of contact in this app. You act directly using your tools instead of just describing what should be done.\n\n";
-  if(overseerPersonality)sys+="Personality: "+overseerPersonality+" - let this come through naturally in your tone and word choice, without announcing or explaining it.\n\n";
+  var sys="You are a helpful assistant. You act directly using your tools instead of just describing what should be done.\n\n";
   if(inProject){
     sys="You are a helpful assistant. An active project's instructions (sent separately) define your task and behavior for this conversation - follow them exactly.\n";
   }else{
@@ -4352,14 +3183,11 @@ async function loadBackend(){
      If a model really is gone, the send itself surfaces a clear error
      instead of it silently vanishing from the picker. */
 }
-/* Guarded by codingModeActive on purpose - the Overseer chat side panel
-   can still call the switch_model tool (or suggest a switch) while a
-   Coding tab is the one on screen, and that must keep currentModel in
-   sync for whenever the user goes back to a non-coding tab, but must NOT
-   repaint the model button while it's actually showing the Coding tab's
-   own model (see getCodingAgentModel/mkCard). A real user asked for
-   exactly this: pick a model for repo work and never have anything else
-   in the app switch it back on them. */
+/* Guarded by codingModeActive on purpose - switching the main chat's model
+   must keep currentModel in sync for whenever the user goes back to a
+   non-coding tab, but must NOT repaint the model button while it's
+   actually showing the Coding tab's own model (see
+   getCodingAgentModel/mkCard). */
 function setModel(m){currentModel=m;if(!codingModeActive)document.getElementById("modelBtnLabel").textContent=m.label;}
 function renderModelList(){
   var list=document.getElementById("modelList");list.innerHTML="";
@@ -4419,9 +3247,8 @@ function mkCard(m,backendForModel){
     if(e.target===star||e.target.parentNode===star)return;
     /* Setting codingAgentModelOverride here, instead of calling setModel(),
        is the whole point - a Coding tab's model choice is deliberately
-       separate from (and never touched by) the main chat's model or
-       Overseer's auto-select, which is exactly what a real user asked for:
-       pick a model for repo work and have it actually stick. */
+       separate from (and never touched by) the main chat's model, so
+       picking a model for repo work actually sticks. */
     if(codingModeActive){codingAgentModelOverride={id:m.id,label:m.label,backend:backendForModel};updateCodingModeUI();}
     else{setModel(m);}
     closeModal("modelModal");renderModelList();
@@ -4867,7 +3694,7 @@ function startWprojChat(){
   if(!p)return;
   if(chatHistory.length&&!confirm("Start a new chat in this project? Current chat will be cleared."))return;
   saveToRecent();
-  chatHistory=[];document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">&lt;/&gt;</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';
+  chatHistory=[];document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">&lt;/&gt;</div><div class="es-title">Ready when you are.</div><div class="es-sub">Pick a model, connect a repo, and start writing code.</div></div>';
   sessionId=Date.now().toString();responseCount=0;
   document.getElementById("tokenBar").classList.add("hidden");
   activeWProjId=p.id;
@@ -4997,8 +3824,7 @@ function tabTitleFor(hist,isCoding){
   return raw.slice(0,24)+(raw.length>24?"...":"");
 }
 function currentTabSnapshot(){
-  var ov=Object.assign({},overseerState,{modelsUsed:Array.from(overseerState.modelsUsed)});
-  return{title:tabTitleFor(chatHistory,codingModeActive),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,overseer:ov,codingMode:codingModeActive,codingRepo:codingTabRepo,codingDenialSeen:codingAgentDenialSeen,codingFakeToolSeen:codingAgentFakeToolSeen,codingStallSeen:codingAgentStallSeen,codingStallCycles:codingAgentStallCycles,codingActiveBranch:codingAgentActiveBranch,codingModelOverride:codingAgentModelOverride};
+  return{title:tabTitleFor(chatHistory,codingModeActive),chatHistory:chatHistory.slice(),modelId:currentModel.id,modelLabel:currentModel.label,backend:activeBackend,sessionId:sessionId,codingMode:codingModeActive,codingRepo:codingTabRepo,codingDenialSeen:codingAgentDenialSeen,codingFakeToolSeen:codingAgentFakeToolSeen,codingStallSeen:codingAgentStallSeen,codingStallCycles:codingAgentStallCycles,codingActiveBranch:codingAgentActiveBranch,codingModelOverride:codingAgentModelOverride};
 }
 function syncActiveTabFromLiveState(){
   if(!openTabs.length)return;
@@ -5008,7 +3834,7 @@ function saveTabsToStorage(){
   try{localStorage.setItem(pk(TABS_KEY),JSON.stringify({tabs:openTabs,active:activeTabIndex}));}catch(e){}
 }
 function renderChatFromHistory(hist){
-  document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">&lt;/&gt;</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';
+  document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">&lt;/&gt;</div><div class="es-title">Ready when you are.</div><div class="es-sub">Pick a model, connect a repo, and start writing code.</div></div>';
   chatHistory=[];
   (hist||[]).forEach(function(m){chatHistory.push({role:m.role,content:m.content,modelLabel:m.modelLabel});appendMsg(m.role,m.content,false,m.modelLabel);});
   setTimeout(function(){var c=document.getElementById("chat");c.scrollTop=c.scrollHeight;},50);
@@ -5024,19 +3850,7 @@ function applyTabAsLiveState(t){
   if(def){setModel(def);}else if(t.modelId){currentModel={id:t.modelId,label:t.modelLabel||t.modelId};document.getElementById("modelBtnLabel").textContent=currentModel.label;document.getElementById("modelBtn").disabled=false;}
   renderChatFromHistory(t.chatHistory||[]);
   if(t.codingMode&&!(t.chatHistory&&t.chatHistory.length))applyCodingEmptyStateText();
-  /* Each tab keeps its own Overseer progress - switching tabs must not
-     leak stale goal/progress/project from whichever tab was last active,
-     especially now that the status bar makes it visible at a glance. */
-  stopOverseerMonitoring();
-  if(t.overseer){
-    overseerState=Object.assign(defaultOverseerState(),t.overseer,{modelsUsed:new Set(t.overseer.modelsUsed||[])});
-  }else{
-    overseerState=defaultOverseerState();
-  }
-  if(overseerEnabled&&chatHistory.length>1){startOverseerMonitoring();}
-  updateOverseerBar();
   preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;
-  declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   codingModeActive=!!t.codingMode;
   codingTabRepo=t.codingRepo||null;
   codingAgentDenialSeen=!!t.codingDenialSeen;
@@ -5108,13 +3922,9 @@ function createNewTab(isCoding){
   saveTabsToStorage();
   var newSessionId=Date.now().toString();
   /* Start every new chat on the active backend's designated general-purpose
-     model, not whatever the previous tab's conversation had auto-switched
-     to - the Overseer only has real signal to route on once a conversation
-     has actually started, so a brand-new tab shouldn't open already
-     steered toward whatever the last chat happened to need. A Coding tab
-     still starts here too - the model shown/used for plain replies is
-     independent of the dedicated coding agent, which runs on its own
-     fixed model regardless (see runCodingAgentTurn). */
+     model. A Coding tab still starts here too - the model shown/used for
+     plain replies is independent of the dedicated coding agent, which runs
+     on its own fixed model regardless (see runCodingAgentTurn). */
   var B=BACKENDS[activeBackend];
   var defModel=B.models.find(function(m){return m.id===B.def;})||B.models[0];
   setModel(defModel);
@@ -5123,11 +3933,7 @@ function createNewTab(isCoding){
   sessionId=newSessionId;
   renderChatFromHistory([]);
   renderModelList();
-  stopOverseerMonitoring();
-  overseerState=defaultOverseerState();
-  updateOverseerBar();
   preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;
-  declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
   codingModeActive=!!isCoding;
   codingTabRepo=null;
   codingAgentDenialSeen=false;
@@ -5194,7 +4000,7 @@ function initTabs(){
 /* ---- Memory: persistent facts across ALL conversations, user-controlled.
    The AI can suggest additions via <memory> tags in its response, but
    never writes one without an explicit tap to approve. Retrieval is
-   Overseer-mediated: only memories relevant to the current message get
+   relevance-filtered: only memories relevant to the current message get
    injected, not the whole list every time, to stay token-efficient. ---- */
 function loadMemories(){try{memories=JSON.parse(localStorage.getItem(pk(MK))||"[]");}catch(e){memories=[];}}
 function saveMemories(){return safeSetLocal(pk(MK),JSON.stringify(memories));}
@@ -5219,12 +4025,12 @@ function renderMemoryList(){
     list.appendChild(card);
   });
 }
-/* Overseer's job: pick which stored memories actually matter for the
-   current message instead of always injecting everything. Keyword
-   overlap is a simple, zero-cost heuristic - no extra API call needed.
-   Memories marked "always" (style/tone preferences etc.) are included
-   regardless of topic match. */
-function overseerSelectRelevantMemories(contextText,maxCount){
+/* Picks which stored memories actually matter for the current message
+   instead of always injecting everything. Keyword overlap is a simple,
+   zero-cost heuristic - no extra API call needed. Memories marked
+   "always" (style/tone preferences etc.) are included regardless of
+   topic match. */
+function selectRelevantMemories(contextText,maxCount){
   if(!memories.length)return[];
   var words=(contextText||"").toLowerCase().match(/[a-z0-9']{3,}/g)||[];
   var wordSet={};words.forEach(function(w){wordSet[w]=true;});
@@ -5240,13 +4046,13 @@ function overseerSelectRelevantMemories(contextText,maxCount){
   var relevant=scored.slice(0,Math.max(0,cap-always.length)).map(function(s){return s.mem;});
   return always.concat(relevant).slice(0,cap);
 }
-/* Same idea for the document library - the Overseer's "knowledge base"
-   isn't just memory facts, it's everything you've saved. Only pulls in
-   docs that actually match the current message (by keyword overlap),
-   and only a short snippet per doc, so having 30 saved documents doesn't
-   mean every message drags all of them into context. Images aren't
+/* Same idea for the document library - the app's "knowledge base" isn't
+   just memory facts, it's everything you've saved. Only pulls in docs
+   that actually match the current message (by keyword overlap), and only
+   a short snippet per doc, so having 30 saved documents doesn't mean
+   every message drags all of them into context. Images aren't
    text-searchable this way, so only text-type library entries qualify. */
-function overseerSelectRelevantDocs(contextText,maxCount,snippetChars){
+function selectRelevantDocs(contextText,maxCount,snippetChars){
   var textDocs=docLibrary.filter(function(d){return d.type==="text"&&d.content;});
   if(!textDocs.length)return[];
   var words=(contextText||"").toLowerCase().match(/[a-z0-9']{3,}/g)||[];
@@ -6296,11 +5102,6 @@ document.getElementById("convSearch").addEventListener("input",function(){
 document.getElementById("micBtn").addEventListener("click",toggleMic);
 document.getElementById("speakBtn").addEventListener("click",toggleSpeak);
 document.getElementById("voiceModeBtn").addEventListener("click",toggleVoiceMode);
-document.getElementById("agentToggleBtn").addEventListener("click",function(){
-  agentAutoSelect=!agentAutoSelect;
-  this.textContent=agentAutoSelect?"ON":"OFF";
-  this.style.opacity=agentAutoSelect?"1":"0.6";
-});
 document.getElementById("autoApproveBtn").addEventListener("click",function(){
   codingAutoApprove=!codingAutoApprove;
   this.textContent=codingAutoApprove?"🔓":"🔒";
@@ -6310,334 +5111,6 @@ document.getElementById("autoApproveBtn").addEventListener("click",function(){
   this.style.opacity=codingAutoApprove?"1":"0.6";
   showToast(codingAutoApprove?"Auto-push/merge is ON - the coding agent will act without asking.":"Auto-push/merge is OFF - back to approving each write/merge.");
 });
-function setOverseerEnabled(val){
-  overseerEnabled=val;
-  var btn=document.getElementById("overseerToggleBtn");
-  if(btn){btn.textContent=overseerEnabled?"ON":"OFF";btn.style.opacity=overseerEnabled?"1":"0.6";}
-  var quick=document.getElementById("overseerBtn");
-  if(quick)quick.style.opacity=overseerEnabled?"1":"0.4";
-  if(!overseerEnabled){stopOverseerMonitoring();if(document.getElementById("overseerStatus")){document.getElementById("overseerStatus").remove();}}
-  updateOverseerBar();
-}
-document.getElementById("overseerToggleBtn").addEventListener("click",function(){
-  setOverseerEnabled(!overseerEnabled);
-});
-document.getElementById("overseerBar").addEventListener("click",function(){openOverseerChat();});
-document.getElementById("overseerBarContinueBtn").addEventListener("click",function(e){
-  e.stopPropagation();
-  var nextStep=overseerState.pendingContinueStep||this.dataset.nextStep;
-  if(nextStep){
-    overseerState.pendingContinueStep=null;
-    updateOverseerBar();
-    autoSave();
-    insertPrompt("Continue with the next step: "+nextStep);
-  }
-});
-document.getElementById("brainstormToggleBtn").addEventListener("click",function(){
-  brainstormMode=!brainstormMode;
-  this.textContent=brainstormMode?"ON":"OFF";
-  this.style.opacity=brainstormMode?"1":"0.6";
-});
-document.getElementById("autoPropomptToggleBtn").addEventListener("click",function(){
-  autoPromptInjection=!autoPromptInjection;
-  this.textContent=autoPromptInjection?"ON":"OFF";
-  this.style.opacity=autoPromptInjection?"1":"0.6";
-});
-document.getElementById("brainstormBtn").addEventListener("click",function(){
-  var ideas=generateBrainstormingPrompts();
-  var msg="💭 BRAINSTORMING IDEAS FOR "+overseerState.goalType.toUpperCase()+"\n";
-  msg+="═════════════════════════════════════\n\n";
-  ideas.forEach(function(idea,i){
-    msg+=(i+1)+". "+idea.title+"\n";
-    msg+="   "+idea.prompt+"\n\n";
-  });
-  msg+="Commands to try:\n";
-  var cmds=suggestGitCommands();
-  cmds.forEach(function(c){
-    msg+="$ "+c.cmd+"\n";
-  });
-  showToast(msg);
-});
-function buildOverseerReportText(){
-  var msg="📊 OVERSEER INTELLIGENCE REPORT\n";
-  msg+="═════════════════════════════════════\n\n";
-  msg+="📌 GOAL TRACKING:\n";
-  msg+="  Task: "+overseerState.goalType+"\n";
-  msg+="  Progress: "+overseerState.progress+"%\n";
-  msg+="  Status: "+(overseerState.stuck?"⚠️ STUCK":"✓ On track")+"\n\n";
-  msg+="📊 CONVERSATION METRICS:\n";
-  msg+="  Messages: "+overseerState.messagesProcessed+"\n";
-  msg+="  Models used: "+overseerState.modelsUsed.size+" ("+Array.from(overseerState.modelsUsed).map(function(m){return m.split("/").pop().substring(0,10);}).join(", ")+")\n";
-  msg+="  Time: "+Math.round((Date.now()-overseerState.startTime)/1000)+"s\n\n";
-  msg+="📈 QUALITY METRICS:\n";
-  msg+="  Quality Score: "+overseerState.qualityScore+"%\n";
-  msg+="  Efficiency Score: "+overseerState.efficiencyScore+"%\n";
-  msg+="  Success Probability: "+overseerState.successProbability+"%\n\n";
-  if(overseerState.steps.length>0){
-    msg+="🎯 TASK STEPS:\n";
-    overseerState.steps.forEach(function(s,i){
-      msg+="  "+(i<overseerState.currentStep?"✓":"○")+" "+s+"\n";
-    });
-    msg+="\n";
-  }
-  if(overseerState.recommendations.length){
-    msg+="💡 PENDING RECOMMENDATIONS: "+overseerState.recommendations.length+"\n";
-    overseerState.recommendations.slice(-3).forEach(function(r){
-      msg+="  • "+r.reason+"\n";
-    });
-    msg+="\n";
-  }
-  if(brainstormMode){
-    var prompts=generateContextualPrompts();
-    if(prompts.length>0){
-      msg+="💭 SUGGESTED PROMPTS:\n";
-      prompts.forEach(function(p){
-        msg+="  • "+p.substring(0,60)+"\n";
-      });
-      msg+="\n";
-    }
-    var cmds=suggestGitCommands();
-    if(cmds.length>0){
-      msg+="⚙️ SUGGESTED COMMANDS:\n";
-      cmds.forEach(function(c){
-        msg+="  $ "+c.cmd+"\n";
-        msg+="    ("+c.desc+")\n";
-      });
-    }
-  }
-  return msg;
-}
-function renderOverseerChatLog(){
-  var log=document.getElementById("overseerChatLog");
-  log.innerHTML="";
-  (overseerState.strategyChat||[]).forEach(function(m){
-    var wrap=document.createElement("div");wrap.className="msg "+(m.role==="user"?"mu":"ma3");
-    var body=document.createElement("div");body.className="body";
-    body.innerHTML=renderMd(m.content||"");
-    wrap.appendChild(body);
-    log.appendChild(wrap);
-  });
-  log.scrollTop=log.scrollHeight;
-}
-function openOverseerChat(){
-  document.getElementById("overseerChatSummary").textContent=buildOverseerReportText();
-  renderOverseerChatLog();
-  openModal("overseerChatModal");
-  document.getElementById("overseerChatInput").focus();
-}
-var overseerChatSending=false;
-async function sendOverseerChatMsg(){
-  if(overseerChatSending)return;
-  var input=document.getElementById("overseerChatInput");
-  var text=input.value.trim();
-  if(!text)return;
-  input.value="";input.style.height="";
-  if(!overseerState.strategyChat)overseerState.strategyChat=[];
-  overseerState.strategyChat.push({role:"user",content:text});
-  renderOverseerChatLog();
-  overseerChatSending=true;
-  var sendBtn=document.getElementById("overseerChatSendBtn");
-  sendBtn.disabled=true;sendBtn.textContent="...";
-  /* This is a side-channel consult, deliberately separate from the main
-     chat's system prompt/persona/tools - the user has stepped OUT of the
-     task to talk to the Overseer itself about strategy, not continue the
-     task. Recent conversation is included as read-only context, not as
-     something for the model to keep responding to. */
-  var recentCtx=chatHistory.slice(-8).map(function(m){
-    var t=typeof m.content==="string"?m.content:((m.content&&m.content.find&&m.content.find(function(c){return c.type==="text";})||{}).text||"");
-    return (m.role==="user"?"User: ":"Assistant: ")+t.slice(0,400);
-  }).join("\n");
-  /* Full operational privileges over the app, on the same TOOL_MODELS gate
-     as the main chat (the underlying model has to actually support
-     function-calling) - the user asked for the Overseer to be able to
-     directly do repo work and manage which model is active, not just talk
-     about it. Same confirm-before-write/merge safety gates as the main
-     chat still apply below; this only changes who's allowed to ask. */
-  var overseerHasTools=TOOL_MODELS.indexOf(currentModel.id)>=0;
-  /* Gated on the message actually being about code or the connected repo
-     (same signal doSendRequest uses below), not just "GitHub is connected"
-     - without this, any strategy-chat message got read_file/write_file/
-     merge_branch offered regardless of topic, so a model discussing crypto
-     or some unrelated life topic could still reach for the wrong repo. */
-  var overseerTaskSignals=analyzeTask(text);
-  /* Deliberately NOT using recentTurnsWereRepoRelevant here like the main
-     chat gate below - the Overseer is a quick, topic-switching strategy
-     side-panel (by design: "what to try next", "am I stuck"), not a
-     sustained thread. A repo-relevant question immediately followed by an
-     unrelated one ("please write a file" -> "brand new app idea, thoughts?")
-     is a normal, expected pattern here, not a continuation - a sticky
-     window would hand out repo tools for the wrong question. */
-  /* github hits are already a strong signal (each real match scores +2 -
-     see analyzeTask), but code hits are +1 each from a basket of individual
-     keywords ("fix","error","function"...) any one of which can turn up
-     once in an otherwise unrelated message. Requiring at least 2 there
-     means a single incidental word isn't enough on its own to hand out
-     read_file/write_file/merge_branch in this per-message-only gate - a
-     genuinely code-focused message almost always trips more than one of
-     these anyway ("there's a bug in this function" -> bug+function). */
-  var overseerRepoRelevant=overseerTaskSignals.github>0||overseerTaskSignals.code>=2;
-  var overseerHasRepoTools=overseerHasTools&&hasCodingAgentAccess()&&overseerRepoRelevant;
-  var sys="You are the Overseer, a strategic advisor built into this app. The user has stepped out of their main conversation with the AI model to talk strategy with you directly - about approach, what to try next, or whether they're stuck. Be direct and concise. Base advice on the actual context below, not generic platitudes.\n\n"+
-    (overseerPersonality?("Personality: "+overseerPersonality+" - let this come through naturally in your tone and word choice, without announcing or explaining it.\n\n"):"")+
-    "Goal: "+(overseerState.goalType||"not yet detected")+"\n"+
-    "Progress: "+overseerState.progress+"%\n"+
-    "Stuck: "+(overseerState.stuck?"yes":"no")+"\n"+
-    (overseerState.activeProject?("Active project: "+overseerState.activeProject+"\nProject instructions: "+(overseerState.activeProjectInstructions||"").slice(0,600)+"\n"):"")+
-    (overseerState.steps.length?("Task steps: "+overseerState.steps.join(" > ")+" (currently on step "+(overseerState.currentStep+1)+")\n"):"")+
-    "\nRecent conversation with the model (most recent last):\n"+(recentCtx||"(no messages yet)");
-  if(overseerHasTools){
-    sys+="\n\nYou have full operational privileges on the user's behalf: create_project, switch_model (change which model is active in the main chat), and remember - use them directly the moment the user's request calls for it, no permission needed.";
-    if(overseerHasRepoTools){
-      sys+=" You also have direct repository access to "+ghRepoOwner+"/"+ghRepoName+": read_file, write_file, list_files, list_all_files, merge_branch. Use list_all_files instead of guessing a file's exact path/extension. Use them directly instead of just describing what to do - the user still approves every write_file and merge_branch before it actually happens. These only apply to "+ghRepoOwner+"/"+ghRepoName+" - if the user is talking about a different or new project, don't use them against this repo.";
-    }
-  }
-  var msgs=[{role:"system",content:sys}].concat(overseerState.strategyChat.slice(0,-1)).concat([{role:"user",content:text}]);
-  var wrap=document.createElement("div");wrap.className="msg ma3";
-  var body=document.createElement("div");body.className="body";body.innerHTML='<span class="cur">▇</span>';
-  wrap.appendChild(body);
-  var log=document.getElementById("overseerChatLog");
-  log.appendChild(wrap);log.scrollTop=log.scrollHeight;
-  var full="";
-  try{
-    var overseerTools=[];
-    if(overseerHasTools){
-      overseerTools=overseerTools.concat(getAppControlTools());
-      if(overseerHasRepoTools)overseerTools=overseerTools.concat(REPO_TOOLS);
-    }
-    if(overseerTools.length){
-      /* Same non-streaming tool_choice:"auto" round-trip loop the main
-         chat uses, capped at MAX_TOOL_ROUNDS - lets the Overseer chain
-         list_files -> read_file -> write_file etc. within one message
-         instead of getting one shot at a single tool call. */
-      for(var toolRound=0;toolRound<MAX_TOOL_ROUNDS;toolRound++){
-        /* This surface can call write_file too (overseerHasRepoTools above)
-           - same truncation risk as runCodingAgentRound's fetch below for
-           anything beyond a trivial file, so it gets the same generous
-           budget rather than a smaller one that's only fine for the
-           app-control tools (create_project/switch_model/remember) this
-           loop also handles. */
-        var p1res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:currentModel.id,messages:msgs,tools:overseerTools,tool_choice:"auto",temperature:temperature,stream:false,max_tokens:overseerHasRepoTools?8000:1000})});
-        if(!p1res.ok)break;
-        var p1data=await p1res.json();
-        var p1choice=(p1data.choices||[])[0]||{};
-        if(!(p1choice.finish_reason==="tool_calls"&&p1choice.message&&p1choice.message.tool_calls&&p1choice.message.tool_calls.length))break;
-        msgs.push(p1choice.message);
-        for(var ti=0;ti<p1choice.message.tool_calls.length;ti++){
-          var tc=p1choice.message.tool_calls[ti];
-          var toolName=tc["function"].name;
-          var toolArgs=JSON.parse(tc["function"].arguments||"{}");
-          var toolExec=await executeToolCall(toolName,toolArgs,function(html){body.innerHTML=html;},"overseerChatLog");
-          msgs.push({role:"tool",tool_call_id:tc.id,content:toolExec.toolResult||"No result"});
-        }
-        body.innerHTML='<span class="cur">▇</span>';
-      }
-    }
-    var reqBody={model:currentModel.id,messages:msgs,temperature:temperature,stream:true};
-    if(overseerTools.length){reqBody.tools=overseerTools;reqBody.tool_choice="none";}
-    var streamFrom=async function(body2){
-      var res=await fetch(workerUrl,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify(body2)});
-      if(!res.ok){var err=await res.json().catch(function(){return{};});throw new Error((err.error&&err.error.message)||"HTTP "+res.status);}
-      var reader=res.body.getReader(),dec=new TextDecoder(),buf="",done=false;
-      var handleLine=function(ln){
-        if(!ln.startsWith("data: "))return false;
-        var d=ln.slice(6);if(d==="[DONE]")return true;
-        try{
-          var tok=((JSON.parse(d).choices||[])[0]||{});
-          tok=tok.delta&&tok.delta.content;
-          if(tok){full+=tok;body.innerHTML=renderMd(full)+'<span class="cur">▇</span>';log.scrollTop=log.scrollHeight;}
-        }catch(ex){}
-        return false;
-      };
-      while(!done){
-        var chunk=await reader.read();
-        if(chunk.done){
-          if(handleLine(buf.trim()))done=true;
-          break;
-        }
-        buf+=dec.decode(chunk.value,{stream:true});
-        var lines=buf.split("\n");buf=lines.pop();
-        for(var i=0;i<lines.length;i++){
-          if(handleLine(lines[i].trim())){done=true;break;}
-        }
-      }
-    };
-    await streamFrom(reqBody);
-    /* Same fake-tool-call retry as the main chat (doSendRequest) - this
-       final render call is also locked to tool_choice:"none", and a model
-       can still write tool-call syntax out as the text itself instead of
-       an actual answer. One retry with a corrective nudge. */
-    if(full.trim()&&looksLikeFakeToolCallText(full)){
-      msgs.push({role:"assistant",content:full});
-      msgs.push({role:"user",content:"That wasn't a real tool call - it was tool-call syntax written out as plain text, so nothing actually ran. Answer directly in plain text instead of writing tool_code, <function=...>, <tool_call>, or similar as text."});
-      full="";
-      body.innerHTML='<span class="cur">▇</span>';
-      try{await streamFrom(reqBody);}catch(fte){console.error("Fake-tool-call retry error:",fte);}
-    }
-    /* Same auto-fallback as the main chat: an empty completion here most
-       often means the model spent its turn on tool_calls and had nothing
-       left once locked to tool_choice:"none" for the final render - retry
-       once on a different tool-capable model instead of just showing
-       "(empty response)". */
-    if(!full.trim()){
-      var fallback=pickFallbackModel(currentModel.id);
-      if(fallback){
-        var failedLabel=currentModel.label;
-        if(fallback.backend!==activeBackend){activeBackend=fallback.backend;await loadBackend();}
-        setModel(fallback.model);renderModelList();
-        showModelSwitchNotice("🤖 <strong>"+esc(failedLabel)+"</strong> returned no response – switched to <strong>"+esc(fallback.model.label)+"</strong> and retrying","overseerChatLog");
-        body.innerHTML='<span class="cur">▇</span>';
-        reqBody.model=fallback.model.id;
-        try{await streamFrom(reqBody);}catch(fe){console.error("Fallback retry error:",fe);}
-      }
-    }
-    body.innerHTML=renderMd(full||"(empty response)");
-    overseerState.strategyChat.push({role:"assistant",content:full||"(empty response)"});
-    speakText(full);
-  }catch(e){
-    body.className="body err";body.innerHTML="Error: "+esc(e.message);
-  }finally{
-    overseerChatSending=false;sendBtn.disabled=false;sendBtn.textContent="Send";
-    if(openTabs.length){syncActiveTabFromLiveState();saveTabsToStorage();}
-  }
-}
-document.getElementById("overseerChatSendBtn").addEventListener("click",sendOverseerChatMsg);
-document.getElementById("overseerChatInput").addEventListener("keydown",function(e){
-  if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendOverseerChatMsg();}
-});
-document.getElementById("overseerChatInput").addEventListener("input",function(){this.style.height="auto";this.style.height=Math.min(this.scrollHeight,120)+"px";});
-bindM("overseerChatModal","closeOverseerChatModal");
-/* Tap = quick ON/OFF toggle so Overseer can be gotten out of the way fast
-   mid-conversation. Long-press (500ms) = open the full report + strategy
-   chat, same idea as the old tap-only report-only behavior. Covers both
-   touch and mouse. */
-(function(){
-  var btn=document.getElementById("overseerBtn");
-  var pressTimer=null,longPressed=false;
-  function start(){longPressed=false;pressTimer=setTimeout(function(){longPressed=true;openOverseerChat();},500);}
-  function end(e){
-    /* A real touchend is followed by the browser firing a synthetic
-       mousedown/mouseup/click for compatibility with mouse-only code -
-       without preventDefault() here, that synthetic sequence re-runs
-       start()/end() a second time right after the real one, toggling
-       Overseer on/off/on/off (or occasionally winning the long-press race
-       and popping the chat open) from a single tap. */
-    if(e&&e.type==="touchend")e.preventDefault();
-    clearTimeout(pressTimer);
-    if(!longPressed){
-      setOverseerEnabled(!overseerEnabled);
-      var notice=document.createElement("div");
-      notice.style.cssText="padding:8px 12px;margin:8px 0;background:rgba(88,166,255,0.08);border-left:3px solid var(--ac);border-radius:4px;font-size:11px;color:var(--mu)";
-      notice.textContent="🤖 Overseer turned "+(overseerEnabled?"ON":"OFF")+" (long-press to chat/see report)";
-      document.getElementById("chat").appendChild(notice);
-      scrollBot();
-    }
-  }
-  btn.addEventListener("touchstart",start,{passive:true});
-  btn.addEventListener("touchend",end);
-  btn.addEventListener("mousedown",start);
-  btn.addEventListener("mouseup",end);
-  btn.addEventListener("mouseleave",function(){clearTimeout(pressTimer);});
-})();
 document.getElementById("attachBtn").addEventListener("click",function(){document.getElementById("fileInput").click();});
 var IMAGE_EXTENSIONS=["jpg","jpeg","png","gif","webp","heic","heif","bmp","tiff","tif","avif"];
 function looksLikeImageFile(file){
@@ -6711,15 +5184,12 @@ function appendMsg(role,content,streaming,modelLabel){
     var av=document.createElement("span");av.className="av";av.textContent="✦";
     label.appendChild(av);
   }
-  /* The main chat's single point of contact is the Overseer, not whichever
-     model happens to be answering right now (the model's own system prompt
-     already frames it this way too - see getModelSystemPrompt) - the actual
-     model name still shows, just as a secondary indicator (.modelTag,
+  /* The actual model name shows as a secondary indicator (.modelTag,
      always the label's last child) rather than the primary identity. The
      fallback-retry paths below rely on it staying the last child - they
      update it in place via label.lastChild.textContent when a mid-turn
-     model switch happens, without touching the "Overseer" text itself. */
-  var lspan=document.createElement("span");lspan.textContent=role==="user"?"You":"Overseer";
+     model switch happens, without touching this "Assistant" text itself. */
+  var lspan=document.createElement("span");lspan.textContent=role==="user"?"You":"Assistant";
   label.appendChild(lspan);
   if(role==="assistant"){
     /* modelLabel lets a caller say which model actually produced this
@@ -6891,38 +5361,7 @@ async function send(){
      while a reply is still generating, the message just sent should
      never be the thing that gets lost. */
   autoSave();
-  if(chatHistory.length===1&&overseerEnabled){initializeOverseer(userContent);startOverseerMonitoring();}
   promptEl.value="";promptEl.style.height="";clearAttach();
-  /* Skip general model auto-select for image messages - we already
-     forced a vision-capable model above, and letting the keyword-based
-     scorer suggest something else here could switch away from it and
-     leave the model unable to read the image after all. Also skip it
-     entirely on the very first message of a conversation (chatHistory.length
-     ===1, this message just having been pushed above) - the whole point of
-     starting every chat on the backend's general-purpose default (see
-     createNewTab) is to let it actually be a general chat until the
-     Overseer has something real to go on, rather than re-routing before a
-     single reply has even happened. */
-  /* Skip the auto-router entirely in a Coding tab - every message there
-     goes straight to the fixed coding-agent model (see codingModeActive
-     handling below in this function), so switching currentModel/activeBackend
-     and showing "Agent switched to X" here would be pure noise that doesn't
-     reflect what's actually about to happen. */
-  if(!hasImg&&agentAutoSelect&&chatHistory.length>1&&!codingModeActive){
-    /* The actual scoring is near-instant, which used to make the routing
-       decision invisible - nothing on screen distinguished "the Overseer
-       just checked every model and picked this one again" from "nothing
-       ran at all." A floor on how long the pulse shows (not on the
-       scoring itself) makes every decision briefly visible instead of
-       flashing for a few milliseconds. */
-    var overseerBtnEl=document.getElementById("overseerBtn");
-    overseerBtnEl.classList.add("thinking");
-    var minThinkDelay=new Promise(function(res){setTimeout(res,450);});
-    await Promise.all([switchToBestModel(),minThinkDelay]);
-    overseerBtnEl.classList.remove("thinking");
-  }else if(!hasImg&&chatHistory.length>1&&!codingModeActive){
-    await switchToBestModel();
-  }
   await doSendRequest(userContent,false,ap);
 }
 
@@ -6934,29 +5373,22 @@ async function doSendRequest(userContent,isRegen,ap){
   messages.push({role:"system",content:modelSysPrompt});
 
   var msgText=typeof userContent==="string"?userContent:((userContent&&userContent.find&&userContent.find(function(c){return c.type==="text";}))||{}).text||"";
-  var injectedInstructions=null;
-  if(!isRegen){
-    injectedInstructions=interceptAndEnhanceMessage(msgText);
-  }
-  if(injectedInstructions){
-    messages.push({role:"system",content:"TASK INSTRUCTIONS:\n"+injectedInstructions});
-  }
 
   if(ap)messages.push({role:"system",content:ap.content});
 
-  var relevantMemories=overseerSelectRelevantMemories(msgText,6);
+  var relevantMemories=selectRelevantMemories(msgText,6);
   if(relevantMemories.length){
     messages.push({role:"system",content:"MEMORY (persistent facts about the user, selected as relevant to this message):\n"+relevantMemories.map(function(m){return "- "+m.text;}).join("\n")});
   }
-  var relevantDocs=overseerSelectRelevantDocs(msgText,3,800);
+  var relevantDocs=selectRelevantDocs(msgText,3,800);
   if(relevantDocs.length){
     messages.push({role:"system",content:"FROM YOUR SAVED DOCUMENT LIBRARY (relevant excerpts):\n"+relevantDocs.map(function(d){return "--- "+d.name+" ---\n"+d.snippet;}).join("\n\n")});
   }
   var searchUsed=false;
   var searchTime=null;
-  /* Web search is fully automatic - no user toggle. The Overseer's own
-     task analysis (same system used for model selection) decides whether
-     a message actually needs current information; no manual on/off. */
+  /* Web search is fully automatic - no user toggle. The same task-analysis
+     signal decides whether a message actually needs current information;
+     no manual on/off. */
   var qtext=typeof userContent==="string"?userContent:((userContent&&userContent.find&&userContent.find(function(c){return c.type==="text";})||{}).text||"");
   /* Skip search entirely for code-heavy pastes - searching the web for raw
      code makes no sense and risks sending an oversized query downstream */
@@ -7033,9 +5465,9 @@ async function doSendRequest(userContent,isRegen,ap){
   try{
     if(TOOL_MODELS.indexOf(currentModel.id)>=0){
       try{
-        /* App-control tools (create_project/switch_model/remember) are
-           always offered here - they're additive/reversible and narrowly
-           described (each names its own explicit trigger phrase). */
+        /* App-control tools (create_project/remember) are always offered
+           here - they're additive/reversible and narrowly described (each
+           names its own explicit trigger phrase). */
         var initTools=getAppControlTools();
         if(initTools.length>0){
           /* One round used to be all a message got: capable models (e.g.
@@ -7188,7 +5620,6 @@ async function doSendRequest(userContent,isRegen,ap){
     asstMsg.body.innerHTML=renderMd(full||(isRegen?"(no response)":triedFallback?"\u26a0\ufe0f No response from "+esc(currentModel.label)+" either - try rephrasing or pick a different model.":"(empty response)"));
     renderChoiceButtons(asstMsg.wrap,choiceOptions);
     chatHistory.push({role:"assistant",content:full,modelLabel:currentModel.label});
-    showNextStepPrompt();
     memSuggestions.forEach(function(t){showMemorySuggestion(t);});
     /* Offer to save an ordinary conversation as a reusable Work Project -
        gated on the model actually flagging this one as reusable (see
@@ -7222,10 +5653,6 @@ async function doSendRequest(userContent,isRegen,ap){
         if(!isRegen)chatHistory.pop();
         autoSave();
       }
-      /* Stopping generation still ends the turn - the user needs the same
-         "what now" nudge as any other way a send can end, not just a bare
-         chat that stopped moving. */
-      showNextStepPrompt();
     }else{
       /* A model-capability error (the provider rejecting tools/tool_choice
          a specific model doesn't support) used to go straight to a raw
@@ -7262,7 +5689,6 @@ async function doSendRequest(userContent,isRegen,ap){
           asstMsg.wrap.classList.remove("ma2");
           asstMsg.body.innerHTML=renderMd(full||"(empty response)");
           chatHistory.push({role:"assistant",content:full,modelLabel:currentModel.label});
-          showNextStepPrompt();
           memSuggestionsAfterErrorFallback.forEach(function(t){showMemorySuggestion(t);});
           autoSave();responseCount++;if(responseCount%5===0)autoSnap();saveChatToActiveWproj();updTokenBar();
           return;
@@ -7270,7 +5696,6 @@ async function doSendRequest(userContent,isRegen,ap){
           console.error("Error-triggered fallback retry also failed:",fe);
           asstMsg.body.className="body err";asstMsg.body.innerHTML="Error: "+esc(fe.message);
           autoSave();
-          showNextStepPrompt();
           if(goneHiddenMidSend)pendingAutoRetryAfterHidden=true;
           return;
         }
@@ -7282,12 +5707,6 @@ async function doSendRequest(userContent,isRegen,ap){
          storage/tab snapshots out of sync with what's on screen. */
       asstMsg.body.className="body err";asstMsg.body.innerHTML="Error: "+esc(e.message);
       autoSave();
-      /* An error is exactly the case this exists for - "just sitting
-         there" with a dead error bubble and no visible way forward was
-         the actual complaint this fixes. Regen is already offered on the
-         bubble itself; this adds the same next-step options a successful
-         reply gets. */
-      showNextStepPrompt();
       if(goneHiddenMidSend)pendingAutoRetryAfterHidden=true;
     }
   }finally{
@@ -7308,11 +5727,10 @@ document.getElementById("clearBtn").addEventListener("click",function(){
   chatHistory=[];clearAttach();localStorage.removeItem(pk(AUTOSAVE_KEY));localStorage.removeItem(pk("ai_draft"));
   sessionId=Date.now().toString();responseCount=0;summarizing=false;
   codingTabRepo=null;codingAgentDenialSeen=false;codingAgentFakeToolSeen=false;codingAgentStallSeen=false;codingAgentStallCycles=0;codingAgentActiveBranch=null;codingAgentModelOverride=null;
-  clearActiveWproj();stopOverseerMonitoring();overseerState=defaultOverseerState();
-  preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;declinedSwitchTargets={};switchSuggestionCooldown=0;recentAutoSelections=[];consecutiveSameModelStreak=0;
-  document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">&lt;/&gt;</div><div class="es-title">I\'m your Overseer.</div><div class="es-sub">Tell me what you need — I\'ll pick the right model, use your tools, and get it done.</div></div>';
+  clearActiveWproj();
+  preVisionModel=null;msgsSinceLastImage=0;projectSuggestionShown=false;
+  document.getElementById("chat").innerHTML='<div class="es" id="emptyState"><div class="es-icon">&lt;/&gt;</div><div class="es-title">Ready when you are.</div><div class="es-sub">Pick a model, connect a repo, and start writing code.</div></div>';
   document.getElementById("tokenBar").classList.add("hidden");
-  updateOverseerBar();
   if(openTabs.length){openTabs[activeTabIndex]=currentTabSnapshot();renderTabBar();saveTabsToStorage();}
   showUndoToast();
 });
