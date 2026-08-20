@@ -282,7 +282,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.179</span></span>
+      <span class="wm">ai-router <span>v5.180</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -555,7 +555,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.179</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.180</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -2779,11 +2779,12 @@ async function runCodingAgentRound(sessionId,toolChoice){
         var tc=msg.tool_calls[i];
         var toolName=tc["function"].name;
         var toolArgs=JSON.parse(tc["function"].arguments||"{}");
-        var toolResult=null,lineText="";
+        var toolResult=null,lineText="",toolErrorText=null;
         if(toolName==="read_file"){
           con.body.innerHTML=renderMd("I'm checking "+(toolArgs.path||"that file")+".");
           var readRes=await executeRepoTool("read_file",toolArgs);
           toolResult=readRes.success?readRes.content:(readRes.error||"Failed to read file");
+          if(!readRes.success)toolErrorText=toolResult;
           lineText=summarizeCodingStep(toolName,toolArgs,readRes.success);
         }else if(toolName==="write_file"){
           con.body.innerHTML=renderMd("I need approval before I update "+(toolArgs.path||"that file")+".");
@@ -2796,17 +2797,20 @@ async function runCodingAgentRound(sessionId,toolChoice){
             con.body.innerHTML=renderMd("I'm updating "+(toolArgs.path||"that file")+".");
             var writeRes=await executeRepoTool("write_file",toolArgs);
             toolResult=writeRes.success?("File written to branch '"+approvedBranch+"'. Commit: "+writeRes.commit):(writeRes.error||"Failed to write file");
+            if(!writeRes.success)toolErrorText=toolResult;
             lineText=summarizeCodingStep(toolName,toolArgs,writeRes.success);
           }
         }else if(toolName==="list_files"){
           con.body.innerHTML=renderMd(toolArgs.path&&toolArgs.path!=="."?"I'm looking through "+toolArgs.path+".":"I'm looking through the repository.");
           var listRes=await executeRepoTool("list_files",toolArgs);
           toolResult=listRes.success?JSON.stringify(listRes.files):(listRes.error||"Failed to list files");
+          if(!listRes.success)toolErrorText=toolResult;
           lineText=summarizeCodingStep(toolName,toolArgs,listRes.success);
         }else if(toolName==="list_all_files"){
           con.body.innerHTML=renderMd("I'm mapping out the whole repo"+(toolArgs.path?" under "+toolArgs.path:"")+".");
           var listAllRes2=await executeRepoTool("list_all_files",toolArgs);
           toolResult=listAllRes2.success?JSON.stringify({files:listAllRes2.files,total:listAllRes2.total,truncated:listAllRes2.truncated}):(listAllRes2.error||"Failed to list repository files");
+          if(!listAllRes2.success)toolErrorText=toolResult;
           lineText=summarizeCodingStep(toolName,toolArgs,listAllRes2.success);
         }else if(toolName==="merge_branch"){
           con.body.innerHTML=renderMd("I need approval before I merge "+(toolArgs.branch||"that branch")+".");
@@ -2818,6 +2822,7 @@ async function runCodingAgentRound(sessionId,toolChoice){
             con.body.innerHTML=renderMd("I'm merging "+(toolArgs.branch||"that branch")+".");
             var mergeRes=await executeRepoTool("merge_branch",toolArgs);
             toolResult=mergeRes.success?("Merged branch '"+toolArgs.branch+"' via PR #"+mergeRes.prNumber+" ("+mergeRes.prUrl+")."):(mergeRes.error||"Failed to merge");
+            if(!mergeRes.success)toolErrorText=toolResult;
             lineText=summarizeCodingStep(toolName,toolArgs,mergeRes.success);
           }
         }else if(toolName==="run_tests"){
@@ -2828,6 +2833,7 @@ async function runCodingAgentRound(sessionId,toolChoice){
             lineText="I triggered the tests (run #"+rtRes2.run_id+"). I'll poll for results.";
           }else{
             toolResult=rtRes2.error||"Failed to trigger tests";
+            toolErrorText=toolResult;
             lineText="I couldn't start the test run.";
           }
           displayToolExecution("run_tests",toolArgs,rtRes2);
@@ -2841,11 +2847,20 @@ async function runCodingAgentRound(sessionId,toolChoice){
             if(gsRes2.log_tail)toolResult+="\n\nLog tail:\n"+gsRes2.log_tail;
           }else{
             toolResult=gsRes2.error||"Failed to get test status";
+            toolErrorText=toolResult;
             lineText="I couldn't get the test status.";
           }
           displayToolExecution("get_test_status",toolArgs,gsRes2);
         }
-        if(looksLikeAuthFailureText(toolResult))authFailureThisRound=true;
+        /* Only the actual error text from a failed call, never a successful
+           call's own result content - read_file's content in particular is
+           arbitrary repo file content, which can legitimately contain the
+           words "not authenticated"/"unauthorized" (auth middleware code,
+           error-handling strings, docs) without the read itself having
+           failed at all. Checking toolResult unconditionally here matched
+           on exactly that and showed a false "not authenticated" guard
+           after a read that had actually just succeeded. */
+        if(toolErrorText&&looksLikeAuthFailureText(toolErrorText))authFailureThisRound=true;
         plainLines.push(lineText);
         msgs.push({role:"tool",tool_call_id:tc.id,content:toolResult||"No result"});
       }

@@ -2401,6 +2401,55 @@ function assert(cond, label) {
   assert(authFailContinueBtnCount === 0, `no Retry/Continue button is offered - reconnecting has to happen in Settings, not by tapping something in this dead session (got ${authFailContinueBtnCount} button(s))`);
   await page.click('#newTabBtn'); await page.waitForTimeout(400);
 
+  console.log('\n-- a successful read whose file content happens to say "not authenticated" does not falsely trigger the reconnect guard --');
+  // Real bug: the auth-failure check ran against toolResult unconditionally,
+  // including a SUCCESSFUL read_file's own file content - a repo file that
+  // legitimately contains the words "not authenticated" or "unauthorized"
+  // (auth middleware code, an error string, docs) tripped the same guard as
+  // a genuine expired-credential failure, even though the read itself had
+  // just succeeded moments earlier. Must only fire on the tool call's own
+  // error, never on successful content.
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  let falseAuthRoundCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    const url = req.url();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        falseAuthRoundCount++;
+        if (falseAuthRoundCount === 1) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', content: '', tool_calls: [{ id: 'call_falseauth_1', type: 'function', function: { name: 'read_file', arguments: JSON.stringify({ path: 'middleware/auth.js' }) } }] } }] }),
+          });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest read the auth middleware fine' } }] }),
+        });
+        return;
+      }
+      if (url.indexOf('github-ops-worker') >= 0 && parsed && parsed.op === 'read_file') {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, content: 'if (!req.user) return res.status(401).send("Error: not authenticated");' }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please review the auth middleware');
+  await page.waitForTimeout(1500);
+  await page.unroute('**/*');
+  assert(falseAuthRoundCount === 2, `the session continues past the successful read into a second round instead of stopping as if it had failed (got ${falseAuthRoundCount} model round(s))`);
+  const falseAuthChatText = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(falseAuthChatText.indexOf("repo access isn't authenticated yet") === -1, `a successful read whose content merely mentions "not authenticated" does not show the reconnect guard (chat tail: ${falseAuthChatText.slice(-300)})`);
+  assert(falseAuthChatText.indexOf('regtest read the auth middleware fine') >= 0, "the coding agent's real final answer renders instead of the session being cut short");
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+
   console.log('\n-- transient HTTP errors from the coding agent offer a Retry button instead of a dead end --');
   // 429/500/502/503 already got a Retry button that re-enters the same
   // session without starting a new chatHistory turn. A real user report
