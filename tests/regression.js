@@ -1545,6 +1545,132 @@ function assert(cond, label) {
   // interacting.
   await page.waitForTimeout(500);
 
+  console.log('\n-- run_tests defaults to the task\'s active branch instead of the repo default when the model omits one --');
+  // The write_file step above already picked and approved "ai-changes" as
+  // this task's working branch (codingAgentActiveBranch). A real failure:
+  // run_tests used to forward whatever branch string the model typed (or
+  // fall through to the repo default when omitted) with no link back to
+  // that branch, so an omitted or misremembered branch silently dispatched
+  // against the wrong ref. An omitted branch here must resolve to
+  // "ai-changes", not the repo default.
+  let capturedRunTestsBody = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    const url = req.url();
+    if (url.indexOf('github-ops-worker') >= 0 && req.method() === 'POST') {
+      try { capturedRunTestsBody = JSON.parse(req.postData()); } catch (e) {}
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, run_id: 4242, html_url: 'https://github.com/solmasta/openai-router/actions/runs/4242' }),
+      });
+      return;
+    }
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            choices: [{
+              finish_reason: 'tool_calls',
+              message: {
+                role: 'assistant',
+                tool_calls: [{
+                  id: 'regtest_run_tests_1',
+                  type: 'function',
+                  function: { name: 'run_tests', arguments: JSON.stringify({}) },
+                }],
+              },
+            }],
+          }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  // Deliberately avoids "now"/"current"/"latest" etc. - those trip the
+  // app's own time-sensitive-message gate (see doSendRequest's
+  // seemsTimeSensitive check) and fire a real, awaited web search before
+  // the coding-agent call, which raced unpredictably against this test's
+  // own timing in the sandbox's no-egress network.
+  await page.fill('#prompt', 'please run the tests on this repo branch');
+  await page.click('#sendBtn');
+  await waitForSendDone();
+  // waitForSendDone() flips back as soon as the Send button label resets,
+  // but the round's tool-call/result handling (Terminal log entry, the
+  // Continue button appearing) can still be settling a beat after that -
+  // same reasoning as the merge_branch step above.
+  await page.waitForTimeout(500);
+  // Wait out any stray in-flight request (e.g. a background search fetch
+  // this send may have kicked off) before unrouting - otherwise it can
+  // still be pending when unroute() lifts the mock, escape to the real
+  // network, and land during some LATER test's own route capture window
+  // instead of failing harmlessly here.
+  await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+  await page.unroute('**/*');
+  assert(!!capturedRunTestsBody, 'a run_tests tool call actually reaches the GitHub ops worker');
+  assert(capturedRunTestsBody && capturedRunTestsBody.op === 'trigger_workflow', `the worker request is tagged with the trigger_workflow op (got "${capturedRunTestsBody && capturedRunTestsBody.op}")`);
+  assert(capturedRunTestsBody && capturedRunTestsBody.ref === 'ai-changes', `an omitted branch defaults to the task's active branch instead of the repo default (got ref "${capturedRunTestsBody && capturedRunTestsBody.ref}")`);
+  await page.waitForTimeout(500);
+
+  console.log('\n-- a run_tests failure names the task\'s real active branch as a correction hint when the model guessed a different one --');
+  // The original bug report: the model dispatched run_tests against a
+  // branch that was never actually pushed (a stale/hallucinated guess),
+  // which 404s at GitHub's dispatch endpoint with an opaque error and no
+  // way for the model to know the real branch. The app now appends that
+  // branch to the error text itself so the model can self-correct on the
+  // very next round instead of repeating the same bad dispatch.
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    const url = req.url();
+    if (url.indexOf('github-ops-worker') >= 0 && req.method() === 'POST') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: false, error: 'Failed to dispatch workflow: HTTP 404 Not Found' }),
+      });
+      return;
+    }
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            choices: [{
+              finish_reason: 'tool_calls',
+              message: {
+                role: 'assistant',
+                tool_calls: [{
+                  id: 'regtest_run_tests_2',
+                  type: 'function',
+                  function: { name: 'run_tests', arguments: JSON.stringify({ branch: 'code-quality-improvements' }) },
+                }],
+              },
+            }],
+          }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await page.fill('#prompt', 'run the repo tests on branch code-quality-improvements');
+  await page.click('#sendBtn');
+  await waitForSendDone();
+  await page.waitForTimeout(500);
+  await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+  await page.unroute('**/*');
+  const terminalLogTextAfterBadBranch = await page.evaluate(() => document.getElementById('terminalLog').textContent);
+  assert(terminalLogTextAfterBadBranch.indexOf("actual working branch is 'ai-changes'") >= 0, `a run_tests failure on a mismatched branch names the task's real active branch as a correction hint (got tail: ${terminalLogTextAfterBadBranch.slice(-400)})`);
+  await page.waitForTimeout(500);
+
   console.log('\n-- coding agent runs one step at a time, waiting for Continue before the next tool call --');
   // The coding agent never auto-chains multiple tool rounds in one burst -
   // each round stops after executing whatever tool_calls came back and
