@@ -282,7 +282,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.180</span></span>
+      <span class="wm">ai-router <span>v5.181</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -555,7 +555,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.180</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.181</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -1372,7 +1372,7 @@ var REPO_TOOLS=[
   {type:"function","function":{name:"list_files",description:"List files in a directory of the connected repository. Omit path (or use \".\") to list the repo root.",parameters:{type:"object",properties:{path:{type:"string",description:"Directory path, relative to repo root. Optional - omit or use \".\" for the repo root."}},required:[]}}},
   {type:"function","function":{name:"list_all_files",description:"List every file path in the whole repository (or under a given path prefix) in a single call, instead of walking directories one by one with list_files. Use this FIRST when you need to find where something lives, or before guessing a file's exact name/extension/location (e.g. checking .js vs .jsx) - it avoids failed read_file attempts on paths that don't actually exist. Results may be capped for very large repos (see truncated/total in the response).",parameters:{type:"object",properties:{path:{type:"string",description:"Optional path prefix to filter to (e.g. \"frontend/src\") - omit for the whole repository."},branch:{type:"string",description:"Branch to list from. Defaults to the repo's default branch if omitted."}},required:[]}}},
   {type:"function","function":{name:"merge_branch",description:"Merge a branch into the connected repository's default branch via a pull request (creates one if it doesn't already exist, then merges it). This is a significant, hard-to-reverse action on the default branch - only call this when the user explicitly asked you to merge/ship/land the change, never automatically right after a write_file. Always requires explicit user approval before anything happens.",parameters:{type:"object",properties:{branch:{type:"string",description:"The branch to merge into the default branch"},title:{type:"string",description:"Pull request title / merge commit title"},message:{type:"string",description:"Pull request description / merge commit message"},merge_method:{type:"string",description:"How to merge",enum:["merge","squash","rebase"]}},required:["branch"]}}},
-  {type:"function","function":{name:"run_tests",description:"Trigger the regression test suite (tests/regression.js) via GitHub Actions on a given branch. Returns a run_id you must then poll with get_test_status until status is 'completed'.",parameters:{type:"object",properties:{branch:{type:"string",description:"Branch to run tests on. Defaults to the repo default branch if omitted."}},required:[]}}},
+  {type:"function","function":{name:"run_tests",description:"Trigger the regression test suite (tests/regression.js) via GitHub Actions on a given branch. Returns a run_id you must then poll with get_test_status until status is 'completed'. If this task already has a working branch, always pass that exact branch - never a new, renamed, or guessed one - or omit it to use that same branch automatically.",parameters:{type:"object",properties:{branch:{type:"string",description:"Branch to run tests on. Defaults to this task's current working branch if one exists, otherwise the repo default branch."}},required:[]}}},
   {type:"function","function":{name:"get_test_status",description:"Poll the status of a GitHub Actions test run started by run_tests. Pass the run_id returned by run_tests. Returns status ('queued'/'in_progress'/'completed'), conclusion ('success'/'failure'), and a log_tail with test output once completed. Keep calling until status is 'completed'.",parameters:{type:"object",properties:{run_id:{type:"number",description:"The run_id returned by run_tests"}},required:["run_id"]}}}
 ];
 /* App-control tools - let the model actually operate this app's own
@@ -2252,10 +2252,27 @@ async function executeRepoToolRaw(toolName,toolInput){
       var mdata=await mres.json();
       return mdata.success?{success:true,prNumber:mdata.prNumber,prUrl:mdata.prUrl,sha:mdata.sha}:{error:mdata.error};
     }else if(toolName==="run_tests"){
-      var tref=toolInput.branch||null;
+      /* Default an omitted branch to the task's actual working branch
+         rather than the repo default - codingAgentActiveBranch is the
+         branch write_file/merge_branch have actually been committing to
+         (see confirmGithubWrite), so that's almost always what "run the
+         tests" means mid-task. A real failure: the model passed a branch
+         name that was never actually pushed (a stale/misremembered guess),
+         which 404s at GitHub's dispatch endpoint with an opaque error and
+         no way for the model to know the real branch - see the retry hint
+         appended to the error below. */
+      var tref=toolInput.branch||codingAgentActiveBranch||null;
       var tres=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"trigger_workflow",owner:ghRepoOwner,repo:ghRepoName,workflow_id:"test.yml",ref:tref,inputs:tref?{branch:tref}:{}})});
       var tdata=await tres.json();
-      return tdata.success?{success:true,run_id:tdata.run_id,html_url:tdata.html_url}:{error:tdata.error};
+      if(tdata.success)return{success:true,run_id:tdata.run_id,html_url:tdata.html_url};
+      /* Surface the real active branch in the error itself when the model
+         explicitly passed a different (and apparently bad) one, so it can
+         self-correct on the very next round instead of only seeing this
+         reminder if the conversation happens to reach a fresh round where
+         codingAgentSystemPrompt() gets rebuilt. */
+      var testErr=tdata.error||"Unknown error";
+      if(codingAgentActiveBranch&&toolInput.branch&&toolInput.branch!==codingAgentActiveBranch)testErr+=" (This task's actual working branch is '"+codingAgentActiveBranch+"' - retry run_tests with that branch.)";
+      return{error:testErr};
     }else if(toolName==="get_test_status"){
       var sres=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"get_workflow_run",owner:ghRepoOwner,repo:ghRepoName,run_id:toolInput.run_id})});
       var sdata=await sres.json();
@@ -2393,6 +2410,7 @@ function codingAgentSystemPrompt(){
   sys+="5. NEVER set branch to \"main\"/\"master\" unless the user explicitly asked you to change the default branch directly - use a short descriptive working-branch name instead, it's created automatically from the default branch if it doesn't exist. Pick that name ONCE per task and reuse the exact same branch for every write_file in it - if the user wants it all pushed/merged together, splitting related changes across different branch names defeats that even if every individual write succeeds.\n";
   sys+="6. Use merge_branch(branch, title, message) to land a working branch into the default branch via a pull request - only call this when the user explicitly asked you to merge/ship/land the change. Never chain it automatically right after a write_file just because the write succeeded.\n";
   sys+="7. Before guessing a file's exact name/extension/location (e.g. guessing between .js and .jsx, or which directory something lives in), call list_all_files first instead of trying read_file paths one at a time and hitting 404s - it's one call for the whole repo and tells you exactly what's really there.\n";
+  sys+="7b. For a broad, open-ended ask (\"review the repo\", \"any improvements?\", \"what should we work on?\") - call list_all_files once to see the map, then read only the handful of files most relevant to the question. Don't read every file in the repo one at a time; after roughly 10-15 reads, stop and report concrete findings from what you've seen instead of continuing to read indefinitely.\n";
   sys+="8. When you're about to take a concrete next step (reading, writing, listing, etc.), call the tool in that same turn - don't write a sentence describing what you're about to do and then stop without calling anything. A description with no accompanying tool call does nothing; the user only sees real progress from the tool call itself, never from the sentence describing it.\n\n";
   sys+="ASSUMPTION:\n";
   sys+="- If the user is asking for coding/debugging help and a GitHub repo is connected, treat that repo as the default codebase even if they don't explicitly say \"GitHub\" or \"repo\".\n";
@@ -2456,7 +2474,7 @@ function codingAgentSystemPrompt(){
      getting merged. Restating the ACTUAL branch name here, once it's known,
      turns "remember what you picked" into "here it is" - nothing left to
      forget or reconstruct from possibly-trimmed history. */
-  if(codingAgentActiveBranch)sys+="\nIMPORTANT: this task is already using branch '"+codingAgentActiveBranch+"' - every write_file/merge_branch call from here on must use that exact same branch, not a new or renamed one, unless the user explicitly asks you to start a fresh branch or switch to unrelated work.\n";
+  if(codingAgentActiveBranch)sys+="\nIMPORTANT: this task is already using branch '"+codingAgentActiveBranch+"' - every write_file/merge_branch/run_tests call from here on must use that exact same branch, not a new, renamed, or guessed one, unless the user explicitly asks you to start a fresh branch or switch to unrelated work.\n";
   sys+="Show your reasoning in <think> tags.";
   return sys;
 }
