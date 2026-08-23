@@ -281,7 +281,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.184</span></span>
+      <span class="wm">ai-router <span>v5.186</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -553,7 +553,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.184</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.186</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -873,6 +873,19 @@ var modelCanCodeAndControl=true;
    out of sync about what counts as connected. */
 function hasGithubRepoConfigured(){
   return !!(ghRepoOwner&&ghRepoName);
+}
+/* Single source of truth for "is the connected repo this app's own repo" -
+   shared by codingAgentSystemPrompt's hardcoded self-knowledge block and
+   the run_tests/get_test_status tool gate below, so the two can't drift
+   apart. Repo was renamed from openai-router to AI-Router - still matching
+   the old name too (GitHub keeps renamed repos reachable under it) so this
+   doesn't silently lose the app's self-awareness for anyone who saved the
+   connection before the rename. Case-insensitive since ghRepoName is just
+   whatever the user typed into the Settings input, not necessarily
+   GitHub's own canonical casing. */
+function isThisAppsOwnRepo(){
+  var ghRepoNameLower=(ghRepoName||"").toLowerCase();
+  return ghRepoOwner==="solmasta"&&(ghRepoNameLower==="ai-router"||ghRepoNameLower==="openai-router");
 }
 function hasGithubRepoAuth(){
   return !!(ghWriteSecret||ghOauthToken||ghOauthRefreshToken);
@@ -2363,14 +2376,7 @@ function codingAgentSystemPrompt(){
   sys+="- Watch for security issues you might introduce (XSS, injection, secrets in code) - if you notice one in what you just wrote, fix it before moving on.\n";
   sys+="- No half-finished implementations - a change either works end to end or it isn't done yet.\n";
   sys+="- When asked to improve/fix/upgrade/enhance something that already exists (a component's styling, a page, a feature), edit that EXACT file in place - never create a differently-named parallel file (e.g. EnhancedHeader.css next to Header.css, PhotoItemV2.jsx next to PhotoItem.jsx) as a substitute for editing the real one. A file nothing imports has zero effect no matter how good its content is - the user sees no change, even though a commit happened. If you do intentionally add a genuinely new file, that same round or the very next one must also write the change that imports/wires it into whatever renders it, or the write doesn't count as done. When unsure a file you're about to touch is the one actually in use, read the component that imports it (or grep for the class/file name) rather than assuming.\n\n";
-  /* Repo was renamed from openai-router to AI-Router - still matching the
-     old name too (GitHub keeps renamed repos reachable under it) so this
-     doesn't silently lose the app's self-awareness for anyone who saved
-     the connection before the rename. Case-insensitive since ghRepoName
-     is just whatever the user typed into the Settings input, not
-     necessarily GitHub's own canonical casing. */
-  var ghRepoNameLower=(ghRepoName||"").toLowerCase();
-  if(ghRepoOwner==="solmasta"&&(ghRepoNameLower==="ai-router"||ghRepoNameLower==="openai-router")){
+  if(isThisAppsOwnRepo()){
     sys+="THIS REPO IS THE APP YOU'RE RUNNING IN - its own real structure, not a guess:\n";
     sys+="- index.html is the ENTIRE frontend: markup, CSS, and all JS in two inline <script> blocks, each wrapped in its own IIFE. A plain top-level function is NOT reachable as window.foo unless explicitly assigned (window.foo=function(){...}) - inline onclick=\"...\" handlers run in global scope and need that, or they silently no-op.\n";
     sys+="- Several Cloudflare Workers back it, each with its own wrangler config: openai-router.js (DeepInfra models + free web search), openrouter-worker.js (OpenRouter), github-ops-worker.js (this repo's own read_file/write_file/list_files/list_all_files - the tools you're using right now), drive-auth-worker.js (Google Drive OAuth).\n";
@@ -2627,7 +2633,19 @@ async function runCodingAgentRound(sessionId,toolChoice){
        before escaping overhead - nowhere near enough for a real source
        file. Raised well past what a normal file write needs. */
     var codingModel=getCodingAgentModel();
-    var res=await fetch(BACKENDS[codingModel.backend].url,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:codingModel.id,messages:sanitizeMessagesForProvider(msgs),tools:REPO_TOOLS,tool_choice:toolChoice||"auto",temperature:temperature,stream:false,max_tokens:8000})});
+    /* run_tests/get_test_status are hardcoded to this app's own test.yml
+       workflow (tests/regression.js) - offering them for any OTHER
+       connected repo guarantees a 404 the moment the model tries them,
+       since that workflow simply doesn't exist there. A real report: the
+       model called run_tests on an unrelated connected repo and got
+       "Failed to dispatch workflow: HTTP 404" - not a branch problem this
+       time, the workflow itself was never going to exist. The system
+       prompt's own "you can run tests" instructions were already gated to
+       isThisAppsOwnRepo() (see codingAgentSystemPrompt) - the tool list
+       just never got the same gate, so the model still saw and could call
+       a tool the prompt never actually offered. */
+    var repoTools=isThisAppsOwnRepo()?REPO_TOOLS:REPO_TOOLS.filter(function(t){return t["function"].name!=="run_tests"&&t["function"].name!=="get_test_status";});
+    var res=await fetch(BACKENDS[codingModel.backend].url,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:codingModel.id,messages:sanitizeMessagesForProvider(msgs),tools:repoTools,tool_choice:toolChoice||"auto",temperature:temperature,stream:false,max_tokens:8000})});
     if(!res.ok){
       if(res.status===429){
         /* Rate-limited: keep the session alive so the Retry button below
@@ -3101,8 +3119,29 @@ async function runCodingAgentRound(sessionId,toolChoice){
       con.wrap.scrollIntoView({behavior:"smooth",block:"end"});
     }
   }catch(e){
-    con.body.innerHTML='I hit an error and could not continue: '+esc(e.message);
-    codingAgentActive=null;
+    /* A real report: a transient network blip (fetch() itself throwing
+       "Failed to fetch" - not an HTTP error status, so none of the
+       branches above ever see it) used to kill the whole session outright,
+       the same as a genuinely fatal error. Every read_file/list_files
+       result so far lives only in THIS session's msgs array - chatHistory
+       only ever gets the short "I checked X." summary line, never the
+       actual file content - so losing the session here didn't just lose
+       one round, it made the model amnesiac about everything it had
+       already read. The next message started a brand-new session with
+       none of that, and the model re-read files it had already seen
+       minutes earlier trying to reconstruct what it had lost. Keep the
+       session alive with a Retry, the same as the 5xx branch above -
+       a network hiccup deserves a retry, not a memory wipe. */
+    con.body.innerHTML='<span style="color:var(--er)">I hit an error and could not continue: '+esc(e.message)+' – tap Retry to try again.</span>';
+    var retryBtnErr=document.createElement("button");
+    retryBtnErr.className="ba";retryBtnErr.textContent="Retry";
+    retryBtnErr.style.cssText="margin-top:8px";
+    retryBtnErr.onclick=(function(sid,c){return function(){
+      retryBtnErr.disabled=true;retryBtnErr.textContent="…";
+      c.body.innerHTML='<span class="cur">▇</span> working on the next step…';
+      runCodingAgentRound(sid);
+    };})(mySession.id,con);
+    con.wrap.appendChild(retryBtnErr);
   }
 }
 
