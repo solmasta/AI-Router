@@ -1245,6 +1245,16 @@ function assert(cond, label) {
   const secondTurnSysContent = ((repoChangeRequestBodies[1] && repoChangeRequestBodies[1].messages) || []).filter((m) => m.role === 'system').map((m) => m.content).join('\n');
   assert(secondTurnSysContent.indexOf('REPO CONNECTION CHANGED MID-CONVERSATION') >= 0, 'the model itself is told the repo changed, not just the user');
   assert(secondTurnSysContent.indexOf('solmasta/AI-Router') >= 0 && secondTurnSysContent.indexOf('solmasta/regtest-repo-b') >= 0, `the warning names both the old and new repo so the model knows exactly what changed (got: ${secondTurnSysContent.slice(0, 400)})`);
+  // run_tests/get_test_status are hardcoded to this app's own test.yml
+  // workflow - offering them for an unrelated connected repo (regtest-repo-b
+  // here) guarantees a 404 the moment the model tries them, since that
+  // workflow doesn't exist there. A real report: the model called run_tests
+  // on an unrelated connected repo and got a 404 - not a branch problem,
+  // the workflow itself was never going to exist for that repo.
+  const firstTurnToolNames = ((repoChangeRequestBodies[0] && repoChangeRequestBodies[0].tools) || []).map((t) => t.function.name);
+  const secondTurnToolNames = ((repoChangeRequestBodies[1] && repoChangeRequestBodies[1].tools) || []).map((t) => t.function.name);
+  assert(firstTurnToolNames.indexOf('run_tests') >= 0 && firstTurnToolNames.indexOf('get_test_status') >= 0, `run_tests/get_test_status are offered when connected to this app's own repo (got: ${JSON.stringify(firstTurnToolNames)})`);
+  assert(secondTurnToolNames.indexOf('run_tests') < 0 && secondTurnToolNames.indexOf('get_test_status') < 0, `run_tests/get_test_status are withheld for an unrelated connected repo, since that workflow can't exist there (got: ${JSON.stringify(secondTurnToolNames)})`);
 
   await sendMsg('and now');
   await page.waitForTimeout(300);
