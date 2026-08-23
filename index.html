@@ -281,7 +281,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.186</span></span>
+      <span class="wm">ai-router <span>v5.187</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -553,7 +553,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.186</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.187</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -2351,6 +2351,20 @@ var CODING_AGENT_MAX_AUTO_ROUNDS=60;
    before falling back to a manual, clearly-labeled Retry so a genuinely
    sustained outage doesn't just hammer a dead key forever unattended. */
 var CODING_AGENT_MAX_AUTO_RATE_LIMIT_RETRIES=5;
+/* A real report: on a broad "review the repo" ask, the model kept reading
+   file after file (list_files/list_all_files/read_file) for dozens of
+   rounds with nothing written and no findings reported - the system
+   prompt already asks it to stop and report after ~10-15 reads (see
+   codingAgentSystemPrompt), but that's a request a model can just ignore,
+   and this one did, repeatedly, across multiple separate sends in the same
+   conversation. mySession.explorationReadCount (reset on every successful
+   write_file, since that's real progress, not stalling) tracks reads since
+   the last one - once it crosses this, the NEXT round is forced to
+   tool_choice:"none" so the model structurally cannot call another tool
+   and has to actually answer in plain text instead of reading further,
+   the same enforcement mechanism already used to break the narration-only
+   stall pattern (see codingAgentStallCycles). */
+var CODING_AGENT_MAX_EXPLORATION_READS=15;
 var codingAgentActive=null;
 var codingAgentSeq=0;
 function codingAgentSystemPrompt(){
@@ -2789,6 +2803,7 @@ async function runCodingAgentRound(sessionId,toolChoice){
           toolResult=readRes.success?readRes.content:(readRes.error||"Failed to read file");
           if(!readRes.success)toolErrorText=toolResult;
           lineText=summarizeCodingStep(toolName,toolArgs,readRes.success);
+          mySession.explorationReadCount=(mySession.explorationReadCount||0)+1;
         }else if(toolName==="write_file"){
           con.body.innerHTML=renderMd("I need approval before I update "+(toolArgs.path||"that file")+".");
           var approvedBranch=await confirmGithubWrite(toolArgs);
@@ -2802,6 +2817,13 @@ async function runCodingAgentRound(sessionId,toolChoice){
             toolResult=writeRes.success?("File written to branch '"+approvedBranch+"'. Commit: "+writeRes.commit):(writeRes.error||"Failed to write file");
             if(!writeRes.success)toolErrorText=toolResult;
             lineText=summarizeCodingStep(toolName,toolArgs,writeRes.success);
+            /* A successful write is real progress, not exploration - reset
+               the counter below so a genuinely long multi-file task (read a
+               batch, write, read the next batch, write...) doesn't trip the
+               "stop and report" checkpoint just because it's read a lot of
+               files in total, only when it's read a lot with nothing to
+               show for it yet. */
+            if(writeRes.success)mySession.explorationReadCount=0;
           }
         }else if(toolName==="list_files"){
           con.body.innerHTML=renderMd(toolArgs.path&&toolArgs.path!=="."?"I'm looking through "+toolArgs.path+".":"I'm looking through the repository.");
@@ -2809,12 +2831,14 @@ async function runCodingAgentRound(sessionId,toolChoice){
           toolResult=listRes.success?JSON.stringify(listRes.files):(listRes.error||"Failed to list files");
           if(!listRes.success)toolErrorText=toolResult;
           lineText=summarizeCodingStep(toolName,toolArgs,listRes.success);
+          mySession.explorationReadCount=(mySession.explorationReadCount||0)+1;
         }else if(toolName==="list_all_files"){
           con.body.innerHTML=renderMd("I'm mapping out the whole repo"+(toolArgs.path?" under "+toolArgs.path:"")+".");
           var listAllRes2=await executeRepoTool("list_all_files",toolArgs);
           toolResult=listAllRes2.success?JSON.stringify({files:listAllRes2.files,total:listAllRes2.total,truncated:listAllRes2.truncated}):(listAllRes2.error||"Failed to list repository files");
           if(!listAllRes2.success)toolErrorText=toolResult;
           lineText=summarizeCodingStep(toolName,toolArgs,listAllRes2.success);
+          mySession.explorationReadCount=(mySession.explorationReadCount||0)+1;
         }else if(toolName==="merge_branch"){
           con.body.innerHTML=renderMd("I need approval before I merge "+(toolArgs.branch||"that branch")+".");
           var approvedMerge=await confirmGithubMerge(toolArgs);
@@ -2913,6 +2937,20 @@ async function runCodingAgentRound(sessionId,toolChoice){
       var roundSignature=msg.tool_calls.map(function(tc){return tc["function"].name+":"+(tc["function"].arguments||"");}).join("|")+"::"+roundSummary;
       var isRepeatOfLastRound=!isPollingRound&&mySession.lastRoundSignature===roundSignature;
       if(!isPollingRound)mySession.lastRoundSignature=roundSignature;
+      /* Reading a lot without writing or reporting anything gets one
+         mandatory checkpoint, enforced by the API itself rather than asked
+         for in the system prompt - tool_choice:"none" makes the model
+         structurally unable to call another tool next round, so it has to
+         actually answer in plain text instead of continuing to explore.
+         Takes priority over auto-continue/repeat-round handling below:
+         whichever mode got here, reading this much with nothing to show
+         for it means stop and report, not keep going automatically or wait
+         for a manual tap into the same pattern. */
+      if((mySession.explorationReadCount||0)>=CODING_AGENT_MAX_EXPLORATION_READS){
+        mySession.explorationReadCount=0;
+        msgs.push({role:"user",content:"You've read a lot of files without writing anything or reporting findings yet. Stop reading more files for now - report what you've found and what you'd do next in plain text, right now, instead of continuing to explore."});
+        return runCodingAgentRound(mySession.id,"none");
+      }
       if(mySession.autoContinue&&!isRepeatOfLastRound&&(mySession.autoRoundCount||0)<CODING_AGENT_MAX_AUTO_ROUNDS){
         mySession.autoRoundCount=(mySession.autoRoundCount||0)+1;
         var stopBtn=document.createElement("button");

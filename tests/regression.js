@@ -2766,6 +2766,64 @@ function assert(cond, label) {
   assert(sustainedRateLimitBtnEnabled, 'once the automatic retries are exhausted, the Retry button is left enabled for a manual tap instead of continuing to auto-fire');
   await page.click('#newTabBtn'); await page.waitForTimeout(400);
 
+  console.log('\n-- reading many files with nothing written forces a mandatory stop-and-report checkpoint --');
+  // A real report: on a broad "review the repo" ask in a Coding tab
+  // (which auto-continues every round on its own), the model kept reading
+  // file after file for dozens of rounds with nothing written and no
+  // findings ever reported, ignoring the system prompt's own "stop after
+  // ~10-15 reads" request repeatedly across multiple separate sends. Once
+  // CODING_AGENT_MAX_EXPLORATION_READS (15) list_files calls have happened
+  // with no successful write in between, the NEXT round must be sent with
+  // tool_choice:"none" - an API-enforced constraint the model can't just
+  // ignore the way it ignored the prompt text - forcing a plain-text
+  // round instead of another tool call.
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  let explorationRoundCount = 0;
+  let toolChoiceOnCheckpointRound = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        explorationRoundCount++;
+        if (explorationRoundCount <= 15) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              choices: [{
+                finish_reason: 'tool_calls',
+                message: { role: 'assistant', tool_calls: [{ id: 'regtest_explore_' + explorationRoundCount, type: 'function', function: { name: 'list_files', arguments: JSON.stringify({ path: 'dir' + explorationRoundCount }) } }] },
+              }],
+            }),
+          });
+          return;
+        }
+        // Round 16: this is the forced checkpoint round - record what
+        // tool_choice it was actually sent with, then answer in plain text
+        // (as tool_choice:"none" would require anyway).
+        toolChoiceOnCheckpointRound = parsed.tool_choice;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest checkpoint findings after reading a lot' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please review the whole repo and suggest improvements');
+  for (let i = 0; i < 60 && explorationRoundCount < 16; i++) await page.waitForTimeout(500);
+  await page.waitForTimeout(1000);
+  await page.unroute('**/*');
+  assert(explorationRoundCount === 16, `exactly 15 exploration rounds happen before the forced checkpoint round (got ${explorationRoundCount} rounds)`);
+  assert(toolChoiceOnCheckpointRound === 'none', `the checkpoint round is sent with tool_choice:"none", not "auto" - an API-enforced stop, not just a prompt request (got "${toolChoiceOnCheckpointRound}")`);
+  const explorationCheckpointText = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(explorationCheckpointText.indexOf('regtest checkpoint findings after reading a lot') >= 0, `the forced plain-text checkpoint reply actually renders (chat tail: ${explorationCheckpointText.slice(-300)})`);
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+
   console.log('\n-- a sustained 429 that is actually an exhausted billing/quota balance says so, not "rate limit" --');
   // A real report: every OpenAI model (not just one) hit the exact same
   // sustained-429 wall - a per-model rate limit wouldn't do that uniformly
