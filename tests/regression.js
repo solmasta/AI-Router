@@ -2896,6 +2896,183 @@ function assert(cond, label) {
   assert(explorationCheckpointText.indexOf('regtest checkpoint findings after reading a lot') >= 0, `the forced plain-text checkpoint reply actually renders (chat tail: ${explorationCheckpointText.slice(-300)})`);
   await page.click('#newTabBtn'); await page.waitForTimeout(400);
 
+  console.log('\n-- rewriting the same file over and over, each version contradicting the last, forces a stop-and-report checkpoint too --');
+  // A real transcript: asked to fix one file, the model wrote it, then kept
+  // rewriting the exact same path across several auto-continue rounds -
+  // each version different from (and inconsistent with) the last, one even
+  // swapping the whole module's exported function signatures - without ever
+  // pausing to check its own earlier work. explorationReadCount can't catch
+  // this (a write resets it, by design), so CODING_AGENT_MAX_SAME_FILE_REWRITES
+  // tracks rewrites per path instead: crossing it forces the same
+  // tool_choice:"none" checkpoint as the read-heavy case above.
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  const rewriteGuardRepoConnected = await page.evaluate(() => !!(localStorage.getItem('gh_repo_owner') && localStorage.getItem('gh_repo_name')));
+  if (!rewriteGuardRepoConnected) {
+    await page.click('#settingsBtn'); await page.waitForTimeout(150);
+    await page.click('#githubConnectBtn'); await page.waitForTimeout(150);
+    await page.fill('#ghOwnerInput', 'solmasta');
+    await page.fill('#ghRepoInput', 'Test');
+    await page.fill('#ghWriteSecretInput', 'regtest-write-secret');
+    await page.click('#githubSaveBtn'); await page.waitForTimeout(300);
+  }
+  let rewriteRoundCount = 0;
+  let toolChoiceOnRewriteCheckpointRound = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    const url = req.url();
+    if (url.indexOf('github-ops-worker') >= 0 && req.method() === 'POST') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, commit: 'regtestrewritesha' }) });
+      return;
+    }
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        rewriteRoundCount++;
+        if (rewriteRoundCount <= 3) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              choices: [{
+                finish_reason: 'tool_calls',
+                message: { role: 'assistant', tool_calls: [{ id: 'regtest_rewrite_' + rewriteRoundCount, type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'src/rateLimit.js', content: 'regtest version ' + rewriteRoundCount, message: 'regtest rewrite ' + rewriteRoundCount, branch: 'ai-changes' }) } }] },
+              }],
+            }),
+          });
+          return;
+        }
+        // Round 4: the forced checkpoint round.
+        toolChoiceOnRewriteCheckpointRound = parsed.tool_choice;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest rewrite checkpoint explanation' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  // Not sendMsg() - that helper awaits the send finishing before returning,
+  // but the send can't finish until each round's approval dialog below is
+  // actually clicked, which would deadlock waiting on itself.
+  await page.fill('#prompt', 'please fix the rate limiter in src/rateLimit.js');
+  await page.click('#sendBtn');
+  for (let round = 1; round <= 3; round++) {
+    let approvalShowed = false;
+    for (let i = 0; i < 100; i++) {
+      approvalShowed = await page.evaluate(() => !document.getElementById('githubWriteConfirmModal').classList.contains('hidden'));
+      if (approvalShowed) break;
+      await page.waitForTimeout(200);
+    }
+    assert(approvalShowed, `test setup: the approval dialog appears for rewrite round ${round}`);
+    await page.click('#ghwApproveBtn');
+    await page.waitForTimeout(300);
+  }
+  for (let i = 0; i < 60 && rewriteRoundCount < 4; i++) await page.waitForTimeout(200);
+  await page.waitForTimeout(500);
+  await waitForSendDone();
+  await page.unroute('**/*');
+  assert(rewriteRoundCount === 4, `exactly 3 rewrite rounds happen before the forced checkpoint round (got ${rewriteRoundCount} rounds)`);
+  assert(toolChoiceOnRewriteCheckpointRound === 'none', `the same-file-rewrite checkpoint round is sent with tool_choice:"none" (got "${toolChoiceOnRewriteCheckpointRound}")`);
+  const rewriteCheckpointText = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(rewriteCheckpointText.indexOf('regtest rewrite checkpoint explanation') >= 0, `the forced plain-text checkpoint reply actually renders (chat tail: ${rewriteCheckpointText.slice(-300)})`);
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+
+  console.log('\n-- merging a branch a second time answers from memory instead of hitting the API again --');
+  // A real transcript: right after a successful merge, the model called
+  // merge_branch on the exact same branch again - GitHub correctly rejected
+  // it (HTTP 422, nothing left to open a PR from), but the raw error read
+  // like an unexplained failure instead of "this is already done", so the
+  // model just started re-reading files as if nothing had happened.
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  let mergeApiHitCount = 0;
+  let secondMergeRoundToolContent = null;
+  let alreadyMergedRoundCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    const url = req.url();
+    if (url.indexOf('github-ops-worker') >= 0 && req.method() === 'POST') {
+      mergeApiHitCount++;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, prNumber: 97, prUrl: 'https://github.com/solmasta/Test/pull/97', merged: true, sha: 'regtestmerge2sha' }),
+      });
+      return;
+    }
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        alreadyMergedRoundCount++;
+        if (alreadyMergedRoundCount === 1) {
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              choices: [{
+                finish_reason: 'tool_calls',
+                message: { role: 'assistant', tool_calls: [{ id: 'regtest_merge2_a', type: 'function', function: { name: 'merge_branch', arguments: JSON.stringify({ branch: 'ai-changes', title: 'regtest merge', message: 'regtest merge body' }) } }] },
+              }],
+            }),
+          });
+          return;
+        }
+        if (alreadyMergedRoundCount === 2) {
+          // The model calls merge_branch again on the same branch - this
+          // should be answered from mySession.mergedBranches, not a second
+          // real request to github-ops-worker.
+          await route.fulfill({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              choices: [{
+                finish_reason: 'tool_calls',
+                message: { role: 'assistant', tool_calls: [{ id: 'regtest_merge2_b', type: 'function', function: { name: 'merge_branch', arguments: JSON.stringify({ branch: 'ai-changes', title: 'regtest merge again', message: 'regtest merge body again' }) } }] },
+              }],
+            }),
+          });
+          return;
+        }
+        // Round 3: capture what tool result the model was actually given
+        // for that second merge_branch call, then end the turn.
+        secondMergeRoundToolContent = (parsed.messages || []).filter((m) => m.role === 'tool').pop();
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest already-merged handled' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  // Not sendMsg() - it awaits the send finishing, which can't happen until
+  // the approval dialog below is actually clicked.
+  await page.fill('#prompt', 'please merge the ai-changes branch, then merge it again');
+  await page.click('#sendBtn');
+  let firstMergeApprovalShowed = false;
+  for (let i = 0; i < 100; i++) {
+    firstMergeApprovalShowed = await page.evaluate(() => !document.getElementById('githubMergeConfirmModal').classList.contains('hidden'));
+    if (firstMergeApprovalShowed) break;
+    await page.waitForTimeout(200);
+  }
+  assert(firstMergeApprovalShowed, 'test setup: the approval dialog appears for the first merge');
+  await page.click('#ghmApproveBtn');
+  for (let i = 0; i < 60 && alreadyMergedRoundCount < 3; i++) await page.waitForTimeout(200);
+  await page.waitForTimeout(500);
+  await waitForSendDone();
+  await page.unroute('**/*');
+  const secondMergeApprovalShowed = await page.evaluate(() => !document.getElementById('githubMergeConfirmModal').classList.contains('hidden'));
+  assert(!secondMergeApprovalShowed, 'merging the same branch again does not surface a second approval dialog - there is nothing left to approve');
+  assert(mergeApiHitCount === 1, `the GitHub ops worker is only actually called once, not once per merge_branch call (got ${mergeApiHitCount} calls)`);
+  assert(!!secondMergeRoundToolContent && secondMergeRoundToolContent.content.indexOf('already merged') >= 0, `the model is told the branch was already merged instead of getting a raw API error (got: ${secondMergeRoundToolContent && secondMergeRoundToolContent.content})`);
+  const alreadyMergedChatText = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(alreadyMergedChatText.indexOf('regtest already-merged handled') >= 0, `the model's reply after being told it was already merged actually renders (chat tail: ${alreadyMergedChatText.slice(-300)})`);
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+
   console.log('\n-- a sustained 429 that is actually an exhausted billing/quota balance says so, not "rate limit" --');
   // A real report: every OpenAI model (not just one) hit the exact same
   // sustained-429 wall - a per-model rate limit wouldn't do that uniformly

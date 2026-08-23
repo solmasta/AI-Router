@@ -287,7 +287,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.193</span></span>
+      <span class="wm">ai-router <span>v5.194</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -559,7 +559,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.193</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.194</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -2402,6 +2402,19 @@ var CODING_AGENT_MAX_AUTO_RATE_LIMIT_RETRIES=5;
    the same enforcement mechanism already used to break the narration-only
    stall pattern (see codingAgentStallCycles). */
 var CODING_AGENT_MAX_EXPLORATION_READS=15;
+/* A real report: asked to fix one file, the model wrote it, then kept
+   rewriting the SAME path over and over across separate auto-continue
+   rounds - each version contradicting the last (one rewrite even swapped
+   the whole module's exported function signatures, itty-router style to
+   Express style, which would break every existing caller) - without ever
+   pausing to check its own earlier work first. explorationReadCount can't
+   catch this: every write resets it, by design, since a write is normally
+   real progress. mySession.writeCountsByPath tracks writes per file path
+   instead - crossing this many rewrites of the same path forces the same
+   tool_choice:"none" stop-and-report checkpoint as the exploration cap,
+   so the model has to explain what it's changing and why instead of
+   silently trying yet another version. */
+var CODING_AGENT_MAX_SAME_FILE_REWRITES=3;
 var codingAgentActive=null;
 var codingAgentSeq=0;
 function codingAgentSystemPrompt(){
@@ -2875,7 +2888,13 @@ async function runCodingAgentRound(sessionId,toolChoice){
                "stop and report" checkpoint just because it's read a lot of
                files in total, only when it's read a lot with nothing to
                show for it yet. */
-            if(writeRes.success)mySession.explorationReadCount=0;
+            if(writeRes.success){
+              mySession.explorationReadCount=0;
+              mySession.writeCountsByPath=mySession.writeCountsByPath||{};
+              var writePathKey=toolArgs.path||"";
+              mySession.writeCountsByPath[writePathKey]=(mySession.writeCountsByPath[writePathKey]||0)+1;
+              if(mySession.writeCountsByPath[writePathKey]>=CODING_AGENT_MAX_SAME_FILE_REWRITES)mySession.sameFileRewriteCheckpoint=writePathKey;
+            }
           }
         }else if(toolName==="list_files"){
           con.body.innerHTML=renderMd(toolArgs.path&&toolArgs.path!=="."?"I'm looking through "+toolArgs.path+".":"I'm looking through the repository.");
@@ -2892,17 +2911,33 @@ async function runCodingAgentRound(sessionId,toolChoice){
           lineText=summarizeCodingStep(toolName,toolArgs,listAllRes2.success);
           mySession.explorationReadCount=(mySession.explorationReadCount||0)+1;
         }else if(toolName==="merge_branch"){
-          con.body.innerHTML=renderMd("I need approval before I merge "+(toolArgs.branch||"that branch")+".");
-          var approvedMerge=await confirmGithubMerge(toolArgs);
-          if(!approvedMerge){
-            toolResult="The user declined this merge. Do not retry without asking first.";
-            lineText="I paused because the merge wasn't approved.";
+          /* A real report: right after a successful merge, the model called
+             merge_branch on the exact same branch again - GitHub correctly
+             rejects it (nothing left to open a PR from), but the raw "HTTP
+             422 - Validation Failed" it got back reads like an unexplained
+             failure rather than "this is already done", so it just tried
+             reading the file again as if starting over. mySession.mergedBranches
+             remembers what this session already merged and answers from
+             that instead of spending a real API round-trip on a call that
+             can only fail. */
+          mySession.mergedBranches=mySession.mergedBranches||{};
+          if(mySession.mergedBranches[toolArgs.branch]){
+            toolResult="Branch '"+toolArgs.branch+"' was already merged earlier in this session ("+mySession.mergedBranches[toolArgs.branch]+"). There is nothing left to merge unless you have new, different changes on that branch - if so, write those changes first, then merge again.";
+            lineText="I already merged "+(toolArgs.branch||"that branch")+" earlier - nothing new to merge.";
           }else{
-            con.body.innerHTML=renderMd("I'm merging "+(toolArgs.branch||"that branch")+".");
-            var mergeRes=await executeRepoTool("merge_branch",toolArgs);
-            toolResult=mergeRes.success?("Merged branch '"+toolArgs.branch+"' via PR #"+mergeRes.prNumber+" ("+mergeRes.prUrl+")."):(mergeRes.error||"Failed to merge");
-            if(!mergeRes.success)toolErrorText=toolResult;
-            lineText=summarizeCodingStep(toolName,toolArgs,mergeRes.success);
+            con.body.innerHTML=renderMd("I need approval before I merge "+(toolArgs.branch||"that branch")+".");
+            var approvedMerge=await confirmGithubMerge(toolArgs);
+            if(!approvedMerge){
+              toolResult="The user declined this merge. Do not retry without asking first.";
+              lineText="I paused because the merge wasn't approved.";
+            }else{
+              con.body.innerHTML=renderMd("I'm merging "+(toolArgs.branch||"that branch")+".");
+              var mergeRes=await executeRepoTool("merge_branch",toolArgs);
+              toolResult=mergeRes.success?("Merged branch '"+toolArgs.branch+"' via PR #"+mergeRes.prNumber+" ("+mergeRes.prUrl+")."):(mergeRes.error||"Failed to merge");
+              if(!mergeRes.success)toolErrorText=toolResult;
+              lineText=summarizeCodingStep(toolName,toolArgs,mergeRes.success);
+              if(mergeRes.success)mySession.mergedBranches[toolArgs.branch]="PR #"+mergeRes.prNumber;
+            }
           }
         }else if(toolName==="run_tests"){
           con.body.innerHTML=renderMd("I'm triggering the test suite"+(toolArgs.branch?" on "+toolArgs.branch:"")+".");
@@ -3001,6 +3036,13 @@ async function runCodingAgentRound(sessionId,toolChoice){
       if((mySession.explorationReadCount||0)>=CODING_AGENT_MAX_EXPLORATION_READS){
         mySession.explorationReadCount=0;
         msgs.push({role:"user",content:"You've read a lot of files without writing anything or reporting findings yet. Stop reading more files for now - report what you've found and what you'd do next in plain text, right now, instead of continuing to explore."});
+        return runCodingAgentRound(mySession.id,"none");
+      }
+      if(mySession.sameFileRewriteCheckpoint){
+        var rewrittenPath=mySession.sameFileRewriteCheckpoint;
+        mySession.sameFileRewriteCheckpoint=null;
+        mySession.writeCountsByPath[rewrittenPath]=0;
+        msgs.push({role:"user",content:"You've rewritten "+rewrittenPath+" "+CODING_AGENT_MAX_SAME_FILE_REWRITES+" times now, each one different from the last. Stop and explain in plain text, right now: what does the CURRENT version on the branch actually contain, why is it correct, and are you confident it's final? Do not write this file again yet."});
         return runCodingAgentRound(mySession.id,"none");
       }
       if(mySession.autoContinue&&!isRepeatOfLastRound&&(mySession.autoRoundCount||0)<CODING_AGENT_MAX_AUTO_ROUNDS){
