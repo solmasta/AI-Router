@@ -3969,6 +3969,52 @@ function assert(cond, label) {
   assert(!sawCodingAgentForImageMsg, 'an image message never routes to the coding agent even with repo-flavored text');
   assert(sawVisionModelRequest, 'the image still gets sent to a vision model');
 
+  console.log('\n-- an image attached IN a Coding tab is described by a vision model, then handed to the coding agent (not the plain vision chat) --');
+  // A real request: the coding agent has no vision of its own, so a
+  // screenshot attached in a Coding tab used to fall through to the same
+  // vision-only chat as above, with zero repo access - the coding agent
+  // never even knew an image existed. Scoped to codingModeActive
+  // specifically (the test just above proves a PLAIN chat image is
+  // untouched by this) - describeScreenshotForCoding runs the vision model
+  // once up front, then the coding agent gets that description as plain
+  // text standing in for the image itself.
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  let visionBridgeSawCodingAgentBody = null;
+  let visionBridgeSawVisionCall = false;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-VL-30B-A3B-Instruct' && parsed.stream === false) {
+        visionBridgeSawVisionCall = true;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest screenshot shows a misaligned header button' } }] }) });
+        return;
+      }
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        visionBridgeSawCodingAgentBody = parsed;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest fixed the header button alignment' } }] }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  const fileInputCodingImg = await page.$('#fileInput');
+  await fileInputCodingImg.setInputFiles(imgPath);
+  await waitForAttachCount(1);
+  await sendMsg('fix the header button alignment shown in this screenshot');
+  await page.unroute('**/*');
+  assert(visionBridgeSawVisionCall, 'the screenshot is sent to the vision model for a description first');
+  assert(!!visionBridgeSawCodingAgentBody, 'the coding agent (with real repo tools) still gets this turn, not just the plain vision chat');
+  const codingAgentLastMsg = visionBridgeSawCodingAgentBody && visionBridgeSawCodingAgentBody.messages && visionBridgeSawCodingAgentBody.messages[visionBridgeSawCodingAgentBody.messages.length - 1];
+  const codingAgentSawNoRawImage = !!(codingAgentLastMsg && typeof codingAgentLastMsg.content === 'string');
+  assert(codingAgentSawNoRawImage, `the coding agent's own request carries the vision description as plain text, not raw image_url content it can't read (got: ${JSON.stringify(codingAgentLastMsg)})`);
+  assert(codingAgentLastMsg && codingAgentLastMsg.content.indexOf('regtest screenshot shows a misaligned header button') >= 0, `the vision model's actual description reaches the coding agent's message (got: ${codingAgentLastMsg && codingAgentLastMsg.content})`);
+  assert(codingAgentLastMsg && codingAgentLastMsg.content.indexOf('fix the header button alignment shown in this screenshot') >= 0, `the user's own request text is preserved alongside the description (got: ${codingAgentLastMsg && codingAgentLastMsg.content})`);
+  const chatTextAfterVisionBridge = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(chatTextAfterVisionBridge.indexOf('Looking at the screenshot') < 0, 'the transient "looking at the screenshot" status is removed once the real coding-agent reply lands, not left behind as a stray bubble');
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+
   console.log('\n-- vision grace-period state does not leak across a new tab --');
   // preVisionModel is reset on new-tab creation but msgsSinceLastImage
   // wasn't, so a residual count from a previous tab's image interaction
