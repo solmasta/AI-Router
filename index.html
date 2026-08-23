@@ -287,7 +287,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.194</span></span>
+      <span class="wm">ai-router <span>v5.195</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -559,7 +559,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.194</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.195</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -2440,6 +2440,9 @@ function codingAgentSystemPrompt(){
   sys+="- Read enough of the surrounding file first to match its existing naming, style, and conventions instead of imposing your own.\n";
   sys+="- Watch for security issues you might introduce (XSS, injection, secrets in code) - if you notice one in what you just wrote, fix it before moving on.\n";
   sys+="- No half-finished implementations - a change either works end to end or it isn't done yet.\n";
+  sys+="- Renaming, removing, or moving an exported function/class/symbol is not done until every file that imports or calls it under the old name is found and updated in the same change (list_all_files + targeted read_file for likely callers, or grep the name across the files you already have) - a rename that leaves even one stale caller breaks the build just as surely as never renaming it.\n";
+  sys+="- Before referencing a symbol you didn't just define in this exact file (a class, an import, a shared helper), confirm it actually exists somewhere in the repo by reading the file that should define/export it - never assume it's already there because the surrounding code implies it should be.\n";
+  sys+="- In a repo with more than one package.json (e.g. a root config plus a frontend/ or backend/ subfolder), the actual build/deploy environment only installs dependencies where its own config points (wrangler.toml, Dockerfile, CI workflow) - before adding a build step or relying on a dependency, read that config to see which package.json it actually uses, and never add a build command that invokes tooling declared only in a different folder's package.json than the one being deployed.\n";
   sys+="- When asked to improve/fix/upgrade/enhance something that already exists (a component's styling, a page, a feature), edit that EXACT file in place - never create a differently-named parallel file (e.g. EnhancedHeader.css next to Header.css, PhotoItemV2.jsx next to PhotoItem.jsx) as a substitute for editing the real one. A file nothing imports has zero effect no matter how good its content is - the user sees no change, even though a commit happened. If you do intentionally add a genuinely new file, that same round or the very next one must also write the change that imports/wires it into whatever renders it, or the write doesn't count as done. When unsure a file you're about to touch is the one actually in use, read the component that imports it (or grep for the class/file name) rather than assuming.\n\n";
   if(isThisAppsOwnRepo()){
     sys+="THIS REPO IS THE APP YOU'RE RUNNING IN - its own real structure, not a guess:\n";

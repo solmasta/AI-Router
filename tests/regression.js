@@ -746,6 +746,16 @@ function assert(cond, label) {
   // either way. Confirm the tool's own schema no longer forces one.
   const listFilesTool = (lastCodingAgentBody.tools || []).find((t) => t.function.name === 'list_files');
   assert(listFilesTool && !(listFilesTool.function.parameters.required || []).includes('path'), 'list_files no longer requires a path - omitting it can mean "list the repo root"');
+  // A real report from a different connected repo: a rename (error ->
+  // sendError) never got propagated to its callers, a class (AppError) was
+  // imported but never actually created, and a build step assumed
+  // frontend tooling that the deploy environment's root package.json never
+  // installs - all three broke that repo's build permanently, not just the
+  // one PR that introduced them. Baked into the system prompt now, for any
+  // connected repo, not just this one.
+  assert(!!codingAgentSystemMsg && (codingAgentSystemMsg.content || '').indexOf('every file that imports or calls it under the old name is found') >= 0, 'the coding agent is told to find and update every caller of a renamed/removed symbol, not just the definition');
+  assert(!!codingAgentSystemMsg && (codingAgentSystemMsg.content || '').indexOf('confirm it actually exists somewhere in the repo') >= 0, 'the coding agent is told to verify a referenced symbol actually exists instead of assuming it does');
+  assert(!!codingAgentSystemMsg && (codingAgentSystemMsg.content || '').indexOf('the actual build/deploy environment only installs dependencies where its own config points') >= 0, 'the coding agent is told to check which package.json/config the deploy environment actually uses before adding a build step or dependency');
   const chatTextAfterCodingAgent = await page.evaluate(() => document.getElementById('chat').textContent);
   assert(chatTextAfterCodingAgent.indexOf('Assistant') >= 0, "repo work renders as a normal Assistant reply, labeled consistently with the main chat");
   assert(chatTextAfterCodingAgent.indexOf('README describes this project') >= 0, "the coding agent's final answer actually renders");
