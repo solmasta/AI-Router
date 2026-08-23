@@ -3217,6 +3217,58 @@ function assert(cond, label) {
   const backendAfterGithubMsg = await page.evaluate(() => document.getElementById('openrouterBtn').classList.contains('act') ? 'openrouter' : 'other');
   assert(backendAfterGithubMsg === 'openrouter', `the main chat backend stays on OpenRouter - the coding agent handles repo work independently instead of forcing a model switch (backend after send: "${backendAfterGithubMsg}")`);
   assert(sawCodingAgentCallForBranchMsg, 'the dedicated coding agent still actually engaged for the repo-flavored message');
+
+  console.log('\n-- OpenRouter\'s live catalog adds free models beyond the curated list, without duplicating one --');
+  // A real request: "list them all" - the curated OpenRouter list only
+  // ever hand-picks 4 "Free" entries, but openrouter-worker's own /models
+  // endpoint (already there, unused by the frontend until now) proxies
+  // OpenRouter's live catalog with real pricing. Anything with $0
+  // prompt/completion cost gets added to the picker automatically, without
+  // duplicating a curated entry that happens to reappear in the raw
+  // catalog under the same id (a real risk: "openrouter/free" is both a
+  // curated entry here AND a literal id OpenRouter's own catalog lists).
+  let liveModelsWorkerHit = false;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    const url = req.url();
+    // Not asserting on the X-App-Secret header's value here - APP_SECRET
+    // itself is only ever populated by a real (sandbox-blocked) fetch to
+    // DI_URL's /secret endpoint, so it's legitimately empty throughout
+    // this whole suite; the header still gets sent, just empty.
+    if (req.method() === 'GET' && url.indexOf('/models') >= 0) {
+      liveModelsWorkerHit = true;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          data: [
+            { id: 'openrouter/free', name: 'Should not duplicate the curated entry', pricing: { prompt: '0', completion: '0' } },
+            { id: 'regtest/brand-new-free-model', name: 'Regtest New Free Model', pricing: { prompt: '0', completion: '0' }, context_length: 32000 },
+            { id: 'regtest/paid-model', name: 'Regtest Paid Model', pricing: { prompt: '0.000001', completion: '0.000002' } },
+          ],
+        }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  // loadBackend() only fires the live fetch on an actual backend switch -
+  // already on OpenRouter from the test above, so bounce off DeepInfra and
+  // back to trigger it fresh with this mock in place.
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  await page.click('#deepinfraBtn'); await page.waitForTimeout(200);
+  await page.click('#openrouterBtn'); await page.waitForTimeout(200);
+  for (let i = 0; i < 30 && !liveModelsWorkerHit; i++) await page.waitForTimeout(100);
+  await page.waitForTimeout(300);
+  await page.unroute('**/*');
+  assert(liveModelsWorkerHit, 'switching to OpenRouter fetches the live model catalog from openrouter-worker\'s /models endpoint');
+  const modelListTextWithLive = await page.evaluate(() => document.getElementById('modelList').textContent);
+  assert(modelListTextWithLive.indexOf('Regtest New Free Model') >= 0, `a new free model from the live catalog appears in the picker (got: ${modelListTextWithLive.slice(0, 2000)})`);
+  assert(modelListTextWithLive.indexOf('Regtest Paid Model') < 0, 'a non-free model from the live catalog is not added to the picker');
+  const autoFreeRouterCardCount = await page.evaluate(() => Array.from(document.querySelectorAll('#modelList .mc')).filter((c) => c.textContent.indexOf('Auto Free Router') >= 0).length);
+  assert(autoFreeRouterCardCount === 1, `the curated "Auto Free Router" (openrouter/free) card is not duplicated by the live catalog reusing its id (got ${autoFreeRouterCardCount} matching cards)`);
+  await page.click('#closeModelModal'); await page.waitForTimeout(150);
+
   // Switch back to a DeepInfra model - later tests assume the model
   // picker is already showing the DeepInfra list, same baseline the
   // pre-coding-agent version of this test used to leave behind by
@@ -3225,6 +3277,32 @@ function assert(cond, label) {
   await page.click('#deepinfraBtn'); await page.waitForTimeout(150);
   await page.locator('.mc:has-text("Mistral Small")').first().click();
   await page.waitForTimeout(150);
+
+  console.log('\n-- the Coding tab\'s model picker labels each model\'s relative cost, without changing which models are offered --');
+  // The user wants to see cost at a glance when picking a coding model
+  // (repo work can burn a lot more tokens per turn than a normal chat
+  // reply), but explicitly did NOT want the actual model pool or grouping
+  // changed - just the existing per-model cost tier surfaced as a badge.
+  const mainChatCardHasCostBadge = await page.evaluate(() => {
+    const card = document.querySelector('#modelList .mc');
+    return card ? !!card.querySelector('[class*="tier-"]') : null;
+  });
+  assert(mainChatCardHasCostBadge === false, 'the main chat\'s model cards do not show a cost badge (cost only matters for the heavier-usage Coding tab)');
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  const codingCardCostInfo = await page.evaluate(() => {
+    const cards = Array.from(document.querySelectorAll('#modelList .mc'));
+    return {
+      cardCount: cards.length,
+      allHaveCostBadge: cards.length > 0 && cards.every((c) => !!c.querySelector('[class*="tier-"]')),
+      firstBadgeText: cards[0] ? (cards[0].querySelector('[class*="tier-"]') || {}).textContent : null,
+    };
+  });
+  assert(codingCardCostInfo.cardCount > 0, 'test setup: the Coding tab model picker actually lists cards');
+  assert(codingCardCostInfo.allHaveCostBadge, `every model card in the Coding tab picker shows a cost badge (got: ${JSON.stringify(codingCardCostInfo)})`);
+  assert(/^\${1,4}$/.test(codingCardCostInfo.firstBadgeText || ''), `the cost badge reads as a $ tier, not a raw number or category name (got "${codingCardCostInfo.firstBadgeText}")`);
+  await page.click('#closeModelModal'); await page.waitForTimeout(150);
+  await page.locator('#tabBar .tabpill.act .tpx').click(); await page.waitForTimeout(200);
 
   console.log('\n-- App-control tools (create_project/remember) actually execute, no confirm needed --');
   // Unlike write_file, these run immediately on a model-issued tool_call,
