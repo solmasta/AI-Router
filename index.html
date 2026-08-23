@@ -282,7 +282,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.182</span></span>
+      <span class="wm">ai-router <span>v5.183</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -555,7 +555,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.182</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.183</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -2748,8 +2748,26 @@ async function runCodingAgentRound(sessionId,toolChoice){
              looked like an endless stuck countdown with no indication
              anything had actually changed or that switching models might
              help. Enable the button immediately with a message that says
-             what's actually going on. */
-          con.body.innerHTML='<span style="color:var(--er)">Still rate-limited by the API after '+(mySession.autoRateLimitRetries-1)+' automatic retries \u2013 this looks like a sustained block on '+esc(codingModel.label)+', not a momentary burst. Try again, or switch the Coding tab to a different model.</span>';
+             what's actually going on.
+
+             A 429 isn't always a momentary rate limit either - OpenAI (and
+             other providers) also return 429 for "insufficient_quota" (no
+             billing/credits left), which no amount of retrying ever
+             clears. A real report: every OpenAI model, not just one, hit
+             this exact same sustained-block wall - a per-model rate limit
+             wouldn't do that uniformly across different models sharing one
+             key, but an exhausted account balance would. Only reading the
+             upstream error body here (once the budget is already spent),
+             not on every retry attempt, keeps the normal fast-clearing
+             case from paying for a parse it doesn't need. */
+          var rateLimitErrBody=null;
+          try{rateLimitErrBody=await res.clone().json();}catch(e){}
+          var rateLimitErrInfo=(rateLimitErrBody&&rateLimitErrBody.error)||null;
+          var isQuotaNotRate=!!(rateLimitErrInfo&&/insufficient_quota|billing|quota/i.test(rateLimitErrInfo.code||rateLimitErrInfo.type||""));
+          var sustainedMsg=isQuotaNotRate
+            ?"This looks like an exhausted billing/quota balance on "+esc(codingModel.label)+"'s API key, not a rate limit \u2013 retrying won't help until that account's billing/usage page is checked. ("+esc(rateLimitErrInfo.message||rateLimitErrInfo.code||rateLimitErrInfo.type)+")"
+            :"This looks like a sustained block on "+esc(codingModel.label)+", not a momentary burst. Try again, or switch the Coding tab to a different model.";
+          con.body.innerHTML='<span style="color:var(--er)">Still rate-limited by the API after '+(mySession.autoRateLimitRetries-1)+' automatic retries \u2013 '+sustainedMsg+'</span>';
           retryBtn429.disabled=false;retryBtn429.textContent="Retry";
           retryBtn429.onclick=doRetry429;
         }

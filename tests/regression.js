@@ -2712,6 +2712,42 @@ function assert(cond, label) {
   assert(sustainedRateLimitBtnEnabled, 'once the automatic retries are exhausted, the Retry button is left enabled for a manual tap instead of continuing to auto-fire');
   await page.click('#newTabBtn'); await page.waitForTimeout(400);
 
+  console.log('\n-- a sustained 429 that is actually an exhausted billing/quota balance says so, not "rate limit" --');
+  // A real report: every OpenAI model (not just one) hit the exact same
+  // sustained-429 wall - a per-model rate limit wouldn't do that uniformly
+  // across different models sharing one key, but an exhausted account
+  // balance would. OpenAI (and other providers) return HTTP 429 for
+  // "insufficient_quota" too, which retrying never clears - once the
+  // auto-retry budget is spent, the app should read the actual upstream
+  // error body and say it's a billing/quota issue, not a rate limit.
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  let quotaRoundCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        quotaRoundCount++;
+        await route.fulfill({
+          status: 429,
+          headers: { 'content-type': 'application/json', 'Retry-After': '1', 'Access-Control-Expose-Headers': 'Retry-After' },
+          body: JSON.stringify({ error: { message: 'You exceeded your current quota, please check your plan and billing details.', type: 'insufficient_quota', code: 'insufficient_quota' } }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please check the repo status for quota exhaustion');
+  for (let i = 0; i < 60 && quotaRoundCount < 6; i++) await page.waitForTimeout(500);
+  await page.waitForTimeout(1500);
+  await page.unroute('**/*');
+  const quotaText = await page.evaluate(() => document.getElementById('chat').textContent);
+  assert(quotaText.indexOf('exhausted billing/quota balance') >= 0, `an insufficient_quota 429 is named as a billing/quota issue, not a generic rate limit (chat tail: ${quotaText.slice(-400)})`);
+  assert(quotaText.indexOf('You exceeded your current quota') >= 0, `the actual upstream error message is surfaced, not just a canned string (chat tail: ${quotaText.slice(-400)})`);
+  await page.click('#newTabBtn'); await page.waitForTimeout(400);
+
   console.log('\n-- a GitHub OAuth redirect fallback (#gh_oauth=... in the URL hash) finishes the connection on load --');
   // On mobile/PWA, window.open() for the OAuth popup often doesn't produce
   // a real window.opener, so the worker's postMessage path silently fails
