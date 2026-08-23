@@ -41,7 +41,7 @@ body{background:var(--bg);color:var(--tx);font-family:-apple-system,system-ui,sa
 #splashScreen.hide{opacity:0;visibility:hidden;pointer-events:none}
 #splashScreen img{width:128px;height:128px;border-radius:22%;box-shadow:0 8px 40px rgba(80,150,255,.22)}
 #splashScreen .splash-word{font-family:var(--mn);font-weight:700;font-size:17px;letter-spacing:1.5px;color:var(--tx)}
-header{display:flex;align-items:center;justify-content:space-between;padding:calc(13px + env(safe-area-inset-top,0px)) 0 12px;flex-shrink:0;gap:8px;border-bottom:1px solid var(--br);margin-bottom:2px}
+header{display:flex;flex-direction:column;padding:calc(13px + env(safe-area-inset-top,0px)) 0 12px;flex-shrink:0;gap:8px;border-bottom:1px solid var(--br);margin-bottom:2px}
 .hl{display:flex;align-items:center;gap:7px;min-width:0}
 .wm-prompt{font-family:var(--mn);font-size:14px;font-weight:700;color:var(--ac);flex-shrink:0}
 .wm{font-family:var(--mn);font-size:14px;color:var(--tx);flex-shrink:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;letter-spacing:-.01em}
@@ -52,7 +52,8 @@ header{display:flex;align-items:center;justify-content:space-between;padding:cal
 .btab:last-child{border-radius:0 12px 12px 0}
 .btab.act{background:rgba(88,166,255,.18);color:var(--ac)}
 .btab.act.or{background:rgba(245,158,11,.15);color:#f59e0b}
-.hr{display:flex;align-items:center;gap:5px;flex-shrink:0}
+.hr{display:flex;align-items:center;gap:5px}
+.hr>.mb{margin-right:auto}
 .mb{display:flex;align-items:center;gap:5px;background:var(--up);border:none;border-radius:20px;padding:6px 12px;color:var(--tx);font-size:12px;font-family:var(--mn);cursor:pointer;max-width:150px;overflow:hidden;transition:background .15s}
 .mb:hover:not(:disabled){background:var(--brs)}
 .mb:disabled{opacity:.4}
@@ -60,10 +61,11 @@ header{display:flex;align-items:center;justify-content:space-between;padding:cal
 .ma{color:var(--mu);font-size:9px;flex-shrink:0}
 .ib{background:none;border:none;border-radius:20px;padding:9px 10px;font-size:15px;cursor:pointer;line-height:1;color:var(--mu);transition:background .15s,color .15s;min-width:40px;min-height:40px;display:inline-flex;align-items:center;justify-content:center}
 .ib:hover{background:var(--up);color:var(--tx)}
-/* Header content (title + model button + icon row) doesn't fit at once
-   on phone-width screens - tighten spacing and hide the version number
-   (redundant with the one shown in Settings) rather than let the model
-   button overlap the title, which is what happens at the default sizing. */
+/* The title (.hl) and the model button + icon row (.hr) are stacked as
+   two separate header rows (not sharing one horizontal line) specifically
+   so a long title and a long model label can never compete for the same
+   space - the tightening below is just extra breathing room on narrow
+   phones, not load-bearing for avoiding overlap. */
 @media (max-width:430px){
   .wm span{font-size:9px}
   header{gap:4px}
@@ -285,7 +287,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.192</span></span>
+      <span class="wm">ai-router <span>v5.193</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -557,7 +559,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.192</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.193</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
