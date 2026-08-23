@@ -281,7 +281,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.188</span></span>
+      <span class="wm">ai-router <span>v5.189</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -553,7 +553,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.188</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.189</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -2501,7 +2501,21 @@ async function runCodingAgentTurn(assembledMessages,autoContinue){
   codingTabRepo=currentRepoKey;
   msgs.unshift({role:"system",content:codingAgentSystemPrompt()});
   codingAgentActive={messages:msgs,id:++codingAgentSeq,autoContinue:!!autoContinue};
-  await runCodingAgentRound();
+  /* codingAgentStallCycles is per-tab, not per-session - it's meant to
+     survive exactly this: a persistently-stalling tab where the user,
+     understandably, starts typing a new follow-up message ("Ok", "Fix",
+     "Continue") instead of always tapping the in-place Continue button.
+     That in-place button already forces tool_choice:"required" once this
+     count hits 2 (see its onclick below) - but every brand-new turn used
+     to call runCodingAgentRound() with no arguments at all, silently
+     resetting back to "auto" and letting the exact same narration-only
+     stall recur, burning through another full set of one-shot corrective
+     retries before the user saw a Continue button to (maybe) tap again. A
+     real report showed this cycle repeating some 8-10 times across mixed
+     typed messages and button taps before the user gave up and switched
+     models by hand. Apply the same escalation here so it holds regardless
+     of which path resumes the tab. */
+  await runCodingAgentRound(undefined,codingAgentStallCycles>=2?"required":undefined);
 }
 /* sessionId ties a Continue click to the exact session it was rendered
    for - without it, a stale Continue button left over from an earlier

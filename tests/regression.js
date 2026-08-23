@@ -2471,6 +2471,44 @@ function assert(cond, label) {
   await page.unroute('**/*');
   const chatTextAfterSecondGarbledCycle = await page.evaluate(() => document.getElementById('chat').textContent);
   assert(chatTextAfterSecondGarbledCycle.indexOf('happened 2 times now in this conversation') >= 0, `the escalation note still appears on the second cycle even though neither retry's own response matched the stalling regex (chat tail: ${chatTextAfterSecondGarbledCycle.slice(-400)})`);
+
+  console.log('\n-- the forced tool_choice:"required" escalation also applies when the user types a fresh message instead of tapping Continue --');
+  // A real report: with the same tab already at codingAgentStallCycles>=2
+  // (as it is right here, from the cycle just above), the user typed a new
+  // follow-up message ("Ok", "Fix") instead of tapping the in-place
+  // Continue button sitting right there. The Continue button's own onclick
+  // already forces tool_choice:"required" once this count hits 2 - but
+  // runCodingAgentTurn (every brand-new send) used to call
+  // runCodingAgentRound() with no arguments at all, silently resetting back
+  // to "auto" and letting the exact same narration-only stall recur. The
+  // escalation needs to hold regardless of which path resumes the tab.
+  // A successful tool_calls round in a Coding tab auto-continues into a
+  // second round with normal "auto" (correct - round 1 proved the model
+  // isn't stalling anymore) - only round 1 itself is the thing under test,
+  // so a plain-text "stop" response ends the turn right there with nothing
+  // to race against.
+  let freshMessageAfterStallBody = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo' && freshMessageAfterStallBody === null) {
+        freshMessageAfterStallBody = parsed;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest forced-required round answered directly' } }] }),
+        });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('Ok');
+  for (let i = 0; i < 40 && freshMessageAfterStallBody === null; i++) await page.waitForTimeout(200);
+  await page.unroute('**/*');
+  assert(freshMessageAfterStallBody && freshMessageAfterStallBody.tool_choice === 'required', `a brand-new typed message in an already-stalling tab (codingAgentStallCycles>=2) is sent with tool_choice:"required", the same escalation the Continue button already applies (got "${freshMessageAfterStallBody && freshMessageAfterStallBody.tool_choice}")`);
   await page.click('#newTabBtn'); await page.waitForTimeout(400);
 
   console.log('\n-- long coding-agent sessions trim old tool-result content instead of letting context grow forever --');
