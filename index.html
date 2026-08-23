@@ -282,7 +282,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.181</span></span>
+      <span class="wm">ai-router <span>v5.182</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -555,7 +555,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.181</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.182</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -2719,30 +2719,40 @@ async function runCodingAgentRound(sessionId,toolChoice){
            instead of hammering a dead key forever in the background. */
         mySession.autoRateLimitRetries=(mySession.autoRateLimitRetries||0)+1;
         var autoRetryAllowed=mySession.autoRateLimitRetries<=CODING_AGENT_MAX_AUTO_RATE_LIMIT_RETRIES;
-        con.body.innerHTML=autoRetryAllowed
-          ?'<span style="color:var(--er)">Rate-limited by the API \u2013 retrying automatically once the limit clears.</span>'
-          :'<span style="color:var(--er)">Still rate-limited by the API after '+(mySession.autoRateLimitRetries-1)+' automatic retries \u2013 this looks like a sustained limit, not a momentary burst.</span>';
         var retryBtn429=document.createElement("button");
-        retryBtn429.className="ba";retryBtn429.disabled=true;retryBtn429.textContent="Retry in "+retryWaitSec+"s";
-        retryBtn429.style.cssText="margin-top:8px";
+        retryBtn429.className="ba";retryBtn429.style.cssText="margin-top:8px";
         con.wrap.appendChild(retryBtn429);
         var doRetry429=(function(sid,c){return function(){
           retryBtn429.disabled=true;retryBtn429.textContent="\u2026";
           c.body.innerHTML='<span class="cur">\u2587</span> working on the next step\u2026';
           runCodingAgentRound(sid);
         };})(mySession.id,con);
-        var retryCountdown=retryWaitSec;
-        var retryTimer=setInterval(function(){
-          retryCountdown--;
-          if(retryCountdown<=0){
-            clearInterval(retryTimer);
-            if(autoRetryAllowed){doRetry429();}
-            else{retryBtn429.disabled=false;retryBtn429.textContent="Retry";}
-          }else{
-            retryBtn429.textContent="Retry in "+retryCountdown+"s";
-          }
-        },1000);
-        retryBtn429.onclick=function(){clearInterval(retryTimer);doRetry429();};
+        if(autoRetryAllowed){
+          con.body.innerHTML='<span style="color:var(--er)">Rate-limited by the API \u2013 retrying automatically once the limit clears.</span>';
+          retryBtn429.disabled=true;retryBtn429.textContent="Retry in "+retryWaitSec+"s";
+          var retryCountdown=retryWaitSec;
+          var retryTimer=setInterval(function(){
+            retryCountdown--;
+            if(retryCountdown<=0){clearInterval(retryTimer);doRetry429();}
+            else{retryBtn429.textContent="Retry in "+retryCountdown+"s";}
+          },1000);
+          retryBtn429.onclick=function(){clearInterval(retryTimer);doRetry429();};
+        }else{
+          /* The budget is spent - this is a sustained block (a real quota/
+             access issue with this model), not a momentary burst a few more
+             seconds would clear. Forcing the SAME disabled "Retry in Xs"
+             countdown here as the auto-retrying case above (a real bug this
+             replaced) made every subsequent manual retry look identical to
+             still-auto-retrying, so a persistently-blocked model (a real
+             report: GPT-5 picked as the Coding-tab's model override) just
+             looked like an endless stuck countdown with no indication
+             anything had actually changed or that switching models might
+             help. Enable the button immediately with a message that says
+             what's actually going on. */
+          con.body.innerHTML='<span style="color:var(--er)">Still rate-limited by the API after '+(mySession.autoRateLimitRetries-1)+' automatic retries \u2013 this looks like a sustained block on '+esc(codingModel.label)+', not a momentary burst. Try again, or switch the Coding tab to a different model.</span>';
+          retryBtn429.disabled=false;retryBtn429.textContent="Retry";
+          retryBtn429.onclick=doRetry429;
+        }
       }else if(res.status===500||res.status===503||res.status===502||res.status===504||res.status===522||res.status===523||res.status===524){
         /* Transient server/gateway error - keep session alive and offer
            Retry. 522/523/524 are Cloudflare's own connection-timeout/
