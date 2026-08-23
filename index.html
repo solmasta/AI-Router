@@ -281,7 +281,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.187</span></span>
+      <span class="wm">ai-router <span>v5.188</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -553,7 +553,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.187</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.188</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -1312,11 +1312,11 @@ function confirmGithubMerge(toolArgs){
   });
 }
 var REPO_TOOLS=[
-  {type:"function","function":{name:"read_file",description:"Read a file from the connected GitHub repository. Returns file content.",parameters:{type:"object",properties:{path:{type:"string",description:"File path relative to repo root"}},required:["path"]}}},
+  {type:"function","function":{name:"read_file",description:"Read a file from the connected GitHub repository. Returns file content. To resolve a merge conflict, call this twice with the same path - once with the working branch, once with the repo's default branch - to see both versions before reconciling them yourself.",parameters:{type:"object",properties:{path:{type:"string",description:"File path relative to repo root"},branch:{type:"string",description:"Branch to read from. Optional - omit for the repo's default branch."}},required:["path"]}}},
   {type:"function","function":{name:"write_file",description:"Write or update a file in the connected GitHub repository. Creates a commit on a branch (never commits straight to the repo's default branch unless the user explicitly asked for that).",parameters:{type:"object",properties:{path:{type:"string",description:"File path"},content:{type:"string",description:"Full file content"},message:{type:"string",description:"Commit message"},branch:{type:"string",description:"Branch to commit to. NEVER use \"main\"/\"master\" unless the user explicitly asked you to change the default branch directly - otherwise use a short descriptive working-branch name. The branch is created automatically from the repo's default branch if it doesn't already exist."}},required:["path","content","message"]}}},
-  {type:"function","function":{name:"list_files",description:"List files in a directory of the connected repository. Omit path (or use \".\") to list the repo root.",parameters:{type:"object",properties:{path:{type:"string",description:"Directory path, relative to repo root. Optional - omit or use \".\" for the repo root."}},required:[]}}},
+  {type:"function","function":{name:"list_files",description:"List files in a directory of the connected repository. Omit path (or use \".\") to list the repo root.",parameters:{type:"object",properties:{path:{type:"string",description:"Directory path, relative to repo root. Optional - omit or use \".\" for the repo root."},branch:{type:"string",description:"Branch to list from. Optional - omit for the repo's default branch."}},required:[]}}},
   {type:"function","function":{name:"list_all_files",description:"List every file path in the whole repository (or under a given path prefix) in a single call, instead of walking directories one by one with list_files. Use this FIRST when you need to find where something lives, or before guessing a file's exact name/extension/location (e.g. checking .js vs .jsx) - it avoids failed read_file attempts on paths that don't actually exist. Results may be capped for very large repos (see truncated/total in the response).",parameters:{type:"object",properties:{path:{type:"string",description:"Optional path prefix to filter to (e.g. \"frontend/src\") - omit for the whole repository."},branch:{type:"string",description:"Branch to list from. Defaults to the repo's default branch if omitted."}},required:[]}}},
-  {type:"function","function":{name:"merge_branch",description:"Merge a branch into the connected repository's default branch via a pull request (creates one if it doesn't already exist, then merges it). This is a significant, hard-to-reverse action on the default branch - only call this when the user explicitly asked you to merge/ship/land the change, never automatically right after a write_file. Always requires explicit user approval before anything happens.",parameters:{type:"object",properties:{branch:{type:"string",description:"The branch to merge into the default branch"},title:{type:"string",description:"Pull request title / merge commit title"},message:{type:"string",description:"Pull request description / merge commit message"},merge_method:{type:"string",description:"How to merge",enum:["merge","squash","rebase"]}},required:["branch"]}}},
+  {type:"function","function":{name:"merge_branch",description:"Merge a branch into the connected repository's default branch via a pull request (creates one if it doesn't already exist, then merges it). This is a significant, hard-to-reverse action on the default branch - only call this when the user explicitly asked you to merge/ship/land the change, never automatically right after a write_file. Always requires explicit user approval before anything happens. On a merge conflict, the error names the conflicting files - read_file(path, branch) each one from both branches, reconcile them yourself, write_file the fix to the same branch, then call this again.",parameters:{type:"object",properties:{branch:{type:"string",description:"The branch to merge into the default branch"},title:{type:"string",description:"Pull request title / merge commit title"},message:{type:"string",description:"Pull request description / merge commit message"},merge_method:{type:"string",description:"How to merge",enum:["merge","squash","rebase"]}},required:["branch"]}}},
   {type:"function","function":{name:"run_tests",description:"Trigger the regression test suite (tests/regression.js) via GitHub Actions on a given branch. Returns a run_id you must then poll with get_test_status until status is 'completed'. If this task already has a working branch, always pass that exact branch - never a new, renamed, or guessed one - or omit it to use that same branch automatically.",parameters:{type:"object",properties:{branch:{type:"string",description:"Branch to run tests on. Defaults to this task's current working branch if one exists, otherwise the repo default branch."}},required:[]}}},
   {type:"function","function":{name:"get_test_status",description:"Poll the status of a GitHub Actions test run started by run_tests. Pass the run_id returned by run_tests. Returns status ('queued'/'in_progress'/'completed'), conclusion ('success'/'failure'), and a log_tail with test output once completed. Keep calling until status is 'completed'.",parameters:{type:"object",properties:{run_id:{type:"number",description:"The run_id returned by run_tests"}},required:["run_id"]}}}
 ];
@@ -2176,7 +2176,7 @@ async function executeRepoToolRaw(toolName,toolInput){
   if(oauthToken)headers["Authorization"]="Bearer "+oauthToken;
   try{
     if(toolName==="read_file"){
-      var res=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"read_file",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path})});
+      var res=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"read_file",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path,branch:toolInput.branch})});
       var data=await res.json();
       return data.success?{success:true,content:data.content}:{error:data.error};
     }else if(toolName==="write_file"){
@@ -2184,7 +2184,7 @@ async function executeRepoToolRaw(toolName,toolInput){
       var wdata=await wres.json();
       return wdata.success?{success:true,commit:wdata.commit,branch:wdata.branch}:{error:wdata.error};
     }else if(toolName==="list_files"){
-      var lres=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"list_files",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path})});
+      var lres=await fetch(GH_OPS_URL,{method:"POST",headers:headers,body:JSON.stringify({op:"list_files",owner:ghRepoOwner,repo:ghRepoName,path:toolInput.path,branch:toolInput.branch})});
       var ldata=await lres.json();
       return ldata.success?{success:true,files:ldata.files}:{error:ldata.error};
     }else if(toolName==="list_all_files"){
@@ -2374,7 +2374,7 @@ function codingAgentSystemPrompt(){
   sys+="3. Use write_file(path, content, message, branch) to make changes - includes automatic git commit\n";
   sys+="4. Always provide COMPLETE working code in write_file calls - not snippets\n";
   sys+="5. NEVER set branch to \"main\"/\"master\" unless the user explicitly asked you to change the default branch directly - use a short descriptive working-branch name instead, it's created automatically from the default branch if it doesn't exist. Pick that name ONCE per task and reuse the exact same branch for every write_file in it - if the user wants it all pushed/merged together, splitting related changes across different branch names defeats that even if every individual write succeeds.\n";
-  sys+="6. Use merge_branch(branch, title, message) to land a working branch into the default branch via a pull request - only call this when the user explicitly asked you to merge/ship/land the change. Never chain it automatically right after a write_file just because the write succeeded.\n";
+  sys+="6. Use merge_branch(branch, title, message) to land a working branch into the default branch via a pull request - only call this when the user explicitly asked you to merge/ship/land the change. Never chain it automatically right after a write_file just because the write succeeded. If it comes back with a merge conflict, you have everything you need to actually fix it yourself: the error names the conflicting files, and read_file(path, branch) now accepts an optional branch, so read the SAME path from both your working branch and the default branch, reconcile the two versions by hand, write_file the resolved content back to your working branch, then call merge_branch again. Don't just report the conflict back to the user as a dead end - resolve it.\n";
   sys+="7. Before guessing a file's exact name/extension/location (e.g. guessing between .js and .jsx, or which directory something lives in), call list_all_files first instead of trying read_file paths one at a time and hitting 404s - it's one call for the whole repo and tells you exactly what's really there.\n";
   sys+="7b. For a broad, open-ended ask (\"review the repo\", \"any improvements?\", \"what should we work on?\") - call list_all_files once to see the map, then read only the handful of files most relevant to the question. Don't read every file in the repo one at a time; after roughly 10-15 reads, stop and report concrete findings from what you've seen instead of continuing to read indefinitely.\n";
   sys+="8. When you're about to take a concrete next step (reading, writing, listing, etc.), call the tool in that same turn - don't write a sentence describing what you're about to do and then stop without calling anything. A description with no accompanying tool call does nothing; the user only sees real progress from the tool call itself, never from the sentence describing it.\n\n";
