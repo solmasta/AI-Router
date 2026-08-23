@@ -2630,6 +2630,50 @@ function assert(cond, label) {
     assert(chatTextAfterTransientRetry.indexOf('regtest recovered after HTTP ' + statusToTest) >= 0, `tapping Retry after HTTP ${statusToTest} re-enters the same session and the real answer renders once it succeeds`);
   }
 
+  console.log('\n-- a raw network failure ("Failed to fetch") from the coding agent offers a Retry instead of wiping the session --');
+  // A real report: fetch() itself throwing (a network blip, not an HTTP
+  // error status - none of the branches above ever see this, it lands in
+  // the outer catch) used to kill codingAgentActive outright, the same as
+  // a genuinely fatal error. Every read_file/list_files result so far
+  // lives only in that session's msgs array - chatHistory only ever gets
+  // the short "I checked X." summary line, never the actual file content -
+  // so losing the session there didn't just lose one round, it made the
+  // model amnesiac about everything it had already read, and the next
+  // message started a brand-new session that re-read files from scratch
+  // trying to reconstruct what was lost.
+  let networkFailureRoundCount = 0;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        networkFailureRoundCount++;
+        if (networkFailureRoundCount === 1) {
+          await route.abort('failed');
+          return;
+        }
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'regtest recovered after network failure' } }] }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please check the repo status for a network blip');
+  const networkFailureRetryBtn = page.locator('#chat .msg.ma3 button:has-text("Retry")').last();
+  await networkFailureRetryBtn.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+  const networkFailureRetryVisible = await networkFailureRetryBtn.isVisible().catch(() => false);
+  assert(networkFailureRetryVisible, `a raw network failure offers a Retry button instead of a dead end (got: ${await page.evaluate(() => document.getElementById('chat').textContent).catch(() => '')})`.slice(0, 400));
+  if (networkFailureRetryVisible) await networkFailureRetryBtn.click();
+  let chatTextAfterNetworkFailureRetry = '';
+  for (let i = 0; i < 40; i++) {
+    chatTextAfterNetworkFailureRetry = await page.evaluate(() => document.getElementById('chat').textContent);
+    if (chatTextAfterNetworkFailureRetry.indexOf('regtest recovered after network failure') >= 0) break;
+    await page.waitForTimeout(200);
+  }
+  await page.unroute('**/*');
+  assert(chatTextAfterNetworkFailureRetry.indexOf('regtest recovered after network failure') >= 0, `tapping Retry after a raw network failure re-enters the SAME session (not a fresh one) and the real answer renders once it succeeds (got tail: ${chatTextAfterNetworkFailureRetry.slice(-400)})`);
+
   console.log('\n-- a 429 from the coding agent counts down, then retries itself automatically once the limit clears --');
   // Retry used to be tappable the instant a 429 rendered, so mashing it
   // right away almost always just landed on the same rate limit again -

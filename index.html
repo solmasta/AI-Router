@@ -281,7 +281,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.185</span></span>
+      <span class="wm">ai-router <span>v5.186</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -553,7 +553,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.185</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.186</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -3119,8 +3119,29 @@ async function runCodingAgentRound(sessionId,toolChoice){
       con.wrap.scrollIntoView({behavior:"smooth",block:"end"});
     }
   }catch(e){
-    con.body.innerHTML='I hit an error and could not continue: '+esc(e.message);
-    codingAgentActive=null;
+    /* A real report: a transient network blip (fetch() itself throwing
+       "Failed to fetch" - not an HTTP error status, so none of the
+       branches above ever see it) used to kill the whole session outright,
+       the same as a genuinely fatal error. Every read_file/list_files
+       result so far lives only in THIS session's msgs array - chatHistory
+       only ever gets the short "I checked X." summary line, never the
+       actual file content - so losing the session here didn't just lose
+       one round, it made the model amnesiac about everything it had
+       already read. The next message started a brand-new session with
+       none of that, and the model re-read files it had already seen
+       minutes earlier trying to reconstruct what it had lost. Keep the
+       session alive with a Retry, the same as the 5xx branch above -
+       a network hiccup deserves a retry, not a memory wipe. */
+    con.body.innerHTML='<span style="color:var(--er)">I hit an error and could not continue: '+esc(e.message)+' – tap Retry to try again.</span>';
+    var retryBtnErr=document.createElement("button");
+    retryBtnErr.className="ba";retryBtnErr.textContent="Retry";
+    retryBtnErr.style.cssText="margin-top:8px";
+    retryBtnErr.onclick=(function(sid,c){return function(){
+      retryBtnErr.disabled=true;retryBtnErr.textContent="…";
+      c.body.innerHTML='<span class="cur">▇</span> working on the next step…';
+      runCodingAgentRound(sid);
+    };})(mySession.id,con);
+    con.wrap.appendChild(retryBtnErr);
   }
 }
 
