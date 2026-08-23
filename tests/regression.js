@@ -842,6 +842,40 @@ function assert(cond, label) {
   assert(chatTextAfterListAllFiles.indexOf('regtest found it via list_all_files') >= 0, `the final answer renders after the list_all_files round completes (rounds seen: ${listAllFilesRoundCount}, tail: ${chatTextAfterListAllFiles.slice(-400)})`);
   assert(chatTextAfterListAllFiles.indexOf('mapped out the whole repo') >= 0, `the round summary reflects the list_all_files step, not a generic fallback (got tail: ${chatTextAfterListAllFiles.slice(-300)})`);
 
+  console.log('\n-- read_file forwards an explicit branch, so a merge conflict can actually be resolved instead of just reported --');
+  // A real report: merge_branch's conflict error had nowhere to send the
+  // model - read_file always read the repo's default branch no matter
+  // what, so there was no way to see the WORKING branch's version of a
+  // conflicting file to reconcile it by hand. read_file now takes an
+  // optional branch and forwards it straight through to the worker.
+  let readFileBranchWorkerBody = null;
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    if (req.method() === 'POST' && req.postData()) {
+      let parsed = null;
+      try { parsed = JSON.parse(req.postData()); } catch (e) {}
+      if (parsed && parsed.model === 'Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ choices: [{ finish_reason: 'tool_calls', message: { role: 'assistant', tool_calls: [{ id: 'regtest_read_branch', type: 'function', function: { name: 'read_file', arguments: JSON.stringify({ path: 'src/App.js', branch: 'ai-changes' }) } }] } }] }),
+        });
+        return;
+      }
+      if (parsed && parsed.op === 'read_file') {
+        readFileBranchWorkerBody = parsed;
+        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, content: 'regtest branch-specific content', sha: 'regtestsha' }) });
+        return;
+      }
+    }
+    await route.continue();
+  });
+  await sendMsg('please read src/App.js on the ai-changes branch to resolve a conflict');
+  for (let i = 0; i < 40 && readFileBranchWorkerBody === null; i++) await page.waitForTimeout(200);
+  await page.unroute('**/*');
+  assert(!!readFileBranchWorkerBody, 'a read_file call with an explicit branch actually reaches the GitHub ops worker');
+  assert(readFileBranchWorkerBody.branch === 'ai-changes', `the requested branch is forwarded to the worker, not silently dropped (got: ${JSON.stringify(readFileBranchWorkerBody)})`);
+
   await page.evaluate(() => {
     document.getElementById('ghwPath').textContent = 'test';
     document.getElementById('githubWriteConfirmModal').classList.remove('hidden');

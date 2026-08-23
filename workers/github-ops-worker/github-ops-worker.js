@@ -140,9 +140,16 @@ async function handleGitHubOp(body, env, oauthToken) {
     switch (op) {
       case "read_file":
         if (!path) return { error: "Missing path" };
-        const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+        // Omitting ref falls through to the repo's default branch (GitHub's
+        // own Contents API behavior) - passed through so a caller resolving
+        // a merge conflict can read the SAME path on both sides (the
+        // feature branch and the default branch) to reconcile them by hand,
+        // which was structurally impossible before this ever only read the
+        // default branch's copy no matter which branch a write was headed
+        // for.
+        const url = `https://api.github.com/repos/${owner}/${repo}/contents/${path}${branch ? `?ref=${encodeURIComponent(branch)}` : ""}`;
         const res = await fetch(url, { headers });
-        if (!res.ok) return { error: `Failed to read ${path}: ${await describeError(res)}`, status: res.status };
+        if (!res.ok) return { error: `Failed to read ${path}${branch ? ` on ${branch}` : ""}: ${await describeError(res)}`, status: res.status };
         const data = await res.json();
         const fileContent = base64ToUtf8(data.content);
         return { success: true, content: fileContent, sha: data.sha };
@@ -206,7 +213,7 @@ async function handleGitHubOp(body, env, oauthToken) {
         // path segment, so build the URL without one instead of requiring
         // a path the caller may have no reason to know.
         const listSubpath = (path && path !== ".") ? path : "";
-        const listUrl = `https://api.github.com/repos/${owner}/${repo}/contents${listSubpath ? "/" + listSubpath : ""}`;
+        const listUrl = `https://api.github.com/repos/${owner}/${repo}/contents${listSubpath ? "/" + listSubpath : ""}${branch ? `?ref=${encodeURIComponent(branch)}` : ""}`;
         const listRes = await fetch(listUrl, { headers });
         if (!listRes.ok) return { error: `Failed to list ${listSubpath || "(root)"}: ${await describeError(listRes)}`, status: listRes.status };
         const listData = await listRes.json();
@@ -293,7 +300,37 @@ async function handleGitHubOp(body, env, oauthToken) {
             commit_message: message || undefined,
           }),
         });
-        if (!mergeRes.ok) return { error: `Failed to merge PR #${pr.number}: ${await describeError(mergeRes)}` };
+        if (!mergeRes.ok) {
+          // GitHub's own conflict signal for this endpoint is specifically
+          // 405 "Pull Request is not mergeable" (as opposed to any other
+          // failure - permissions, branch protection, etc). A real report:
+          // the model had no way to tell a real conflict apart from any
+          // other merge failure, and no path to actually resolve one even
+          // when it could - describeError's generic message gave it
+          // nothing to act on. List the PR's changed files (the closest
+          // proxy available without a real git checkout - GitHub's REST API
+          // has no "which files conflict" endpoint) and spell out the
+          // fix directly: read_file now takes an optional branch, so the
+          // model can read the SAME path on both branch and defaultBranch,
+          // reconcile them itself, write_file the result back to branch,
+          // then retry merge_branch.
+          if (mergeRes.status === 405) {
+            let changedFiles = [];
+            try {
+              const filesRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/pulls/${pr.number}/files`, { headers });
+              if (filesRes.ok) changedFiles = (await filesRes.json()).map(f => f.filename);
+            } catch {}
+            return {
+              error: `PR #${pr.number} has a merge conflict with '${defaultBranch}' and can't be merged as-is. This is fixable: for each of these changed files, call read_file(path, "${branch}") and read_file(path, "${defaultBranch}"), reconcile the two versions yourself, then write_file(path, <resolved content>, <message>, "${branch}") to commit the fix to ${branch} - then call merge_branch again.`
+                + (changedFiles.length ? ` Changed files in this PR: ${changedFiles.join(", ")}.` : " Could not list this PR's changed files - use list_all_files to find what changed."),
+              prNumber: pr.number,
+              prUrl: pr.html_url,
+              conflict: true,
+              changedFiles,
+            };
+          }
+          return { error: `Failed to merge PR #${pr.number}: ${await describeError(mergeRes)}` };
+        }
         const mergeData = await mergeRes.json();
         return { success: true, prNumber: pr.number, prUrl: pr.html_url, merged: true, sha: mergeData.sha };
       }
