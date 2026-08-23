@@ -281,7 +281,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.189</span></span>
+      <span class="wm">ai-router <span>v5.190</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -553,7 +553,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.189</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.190</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -2312,6 +2312,13 @@ async function executeToolCall(toolName,toolArgs,renderStatus,logTarget){
    continuity with whatever the user was actually talking to. */
 var CODING_AGENT_MODEL_ID="Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo";
 var CODING_AGENT_MODEL_LABEL="Qwen3 Coder 480B";
+/* The coding agent's own model has no vision - it reads/writes files, it
+   can't see an attached screenshot. Fixed, like CODING_AGENT_MODEL_ID
+   above, rather than picked dynamically: describeScreenshotForCoding just
+   needs any one reliable vision model to turn an image into text the
+   coding agent CAN use, not a choice the user needs control over. */
+var CODING_VISION_MODEL_ID="Qwen/Qwen3-VL-30B-A3B-Instruct";
+var CODING_VISION_MODEL_LABEL="Qwen3 VL 30B";
 /* A real user report: they wanted to manually pick which tool-capable
    model actually drives a given Coding tab (DeepInfra vs OpenRouter,
    whichever model they trust for that project) instead of always the one
@@ -2334,6 +2341,29 @@ function getCodingAgentModel(){
      data, never a live user choice. */
   if(codingAgentModelOverride&&!BACKENDS[codingAgentModelOverride.backend])codingAgentModelOverride=null;
   return codingAgentModelOverride||{id:CODING_AGENT_MODEL_ID,label:CODING_AGENT_MODEL_LABEL,backend:"deepinfra"};
+}
+/* Bridges the vision gap for the coding agent: it has no way to see a
+   screenshot the user attaches, and its own model has no vision at all -
+   without this, an image in a Coding tab either got silently routed away
+   to a separate vision-only chat with zero repo access, or (worse) sent
+   straight to the coding model as image_url content it can't actually
+   read. Runs a real vision model once, up front, to turn the screenshot
+   into a plain-text description detailed enough for a model that will
+   never see the image itself to act on - the coding agent then gets that
+   description as ordinary text alongside whatever the user actually typed. */
+async function describeScreenshotForCoding(userContent){
+  var imageParts=userContent.filter(function(p){return p.type==="image_url";});
+  var userText=((userContent.find(function(p){return p.type==="text";}))||{}).text||"";
+  var visionMsgs=[
+    {role:"system",content:"You are the eyes for a coding agent that has no vision at all and will never see this image directly - only your description of it. Describe the screenshot thoroughly enough for that agent to fix or rebuild the UI from your words alone: overall layout and structure, colors, spacing/alignment, exact visible text, and anything that looks broken, misaligned, or inconsistent. Describe what you actually see - don't guess at the underlying code."},
+    {role:"user",content:[{type:"text",text:userText?"The user's request about this screenshot: "+userText:"Describe this screenshot."}].concat(imageParts)}
+  ];
+  var res=await fetch(DI_URL,{method:"POST",headers:{"Content-Type":"application/json","X-App-Secret":APP_SECRET},body:JSON.stringify({model:CODING_VISION_MODEL_ID,messages:visionMsgs,stream:false,max_tokens:1500})});
+  if(!res.ok)throw new Error("Vision analysis failed (HTTP "+res.status+")");
+  var data=await res.json();
+  var content=(((data.choices||[])[0]||{}).message||{}).content;
+  if(!content)throw new Error("Vision analysis returned no description");
+  return content;
 }
 /* Caps an auto-continuing session (see looksLikeAutoContinueRequest) so a
    model that never stops calling tools on a huge repo can't run away
@@ -2377,7 +2407,8 @@ function codingAgentSystemPrompt(){
   sys+="6. Use merge_branch(branch, title, message) to land a working branch into the default branch via a pull request - only call this when the user explicitly asked you to merge/ship/land the change. Never chain it automatically right after a write_file just because the write succeeded. If it comes back with a merge conflict, you have everything you need to actually fix it yourself: the error names the conflicting files, and read_file(path, branch) now accepts an optional branch, so read the SAME path from both your working branch and the default branch, reconcile the two versions by hand, write_file the resolved content back to your working branch, then call merge_branch again. Don't just report the conflict back to the user as a dead end - resolve it.\n";
   sys+="7. Before guessing a file's exact name/extension/location (e.g. guessing between .js and .jsx, or which directory something lives in), call list_all_files first instead of trying read_file paths one at a time and hitting 404s - it's one call for the whole repo and tells you exactly what's really there.\n";
   sys+="7b. For a broad, open-ended ask (\"review the repo\", \"any improvements?\", \"what should we work on?\") - call list_all_files once to see the map, then read only the handful of files most relevant to the question. Don't read every file in the repo one at a time; after roughly 10-15 reads, stop and report concrete findings from what you've seen instead of continuing to read indefinitely.\n";
-  sys+="8. When you're about to take a concrete next step (reading, writing, listing, etc.), call the tool in that same turn - don't write a sentence describing what you're about to do and then stop without calling anything. A description with no accompanying tool call does nothing; the user only sees real progress from the tool call itself, never from the sentence describing it.\n\n";
+  sys+="8. When you're about to take a concrete next step (reading, writing, listing, etc.), call the tool in that same turn - don't write a sentence describing what you're about to do and then stop without calling anything. A description with no accompanying tool call does nothing; the user only sees real progress from the tool call itself, never from the sentence describing it.\n";
+  sys+="9. You have no vision - you can never see an image directly. If the user attaches a screenshot, a real vision model has already described it for you as a \"SCREENSHOT (described by a vision model...)\" block in their message. Treat that description as your only source of truth for what the UI actually looks like right now - use it to identify the specific file/component at fault (read_file to confirm) before changing anything, rather than guessing at the visual from the code alone.\n\n";
   sys+="ASSUMPTION:\n";
   sys+="- If the user is asking for coding/debugging help and a GitHub repo is connected, treat that repo as the default codebase even if they don't explicitly say \"GitHub\" or \"repo\".\n";
   sys+="- If they're clearly asking about pasted code, a generic programming concept, or some other project, answer directly without touching repo tools.\n";
@@ -5530,7 +5561,7 @@ async function doSendRequest(userContent,isRegen,ap){
      tab's repo access isn't actually set up, say so plainly instead of
      silently falling through to the plain chat model, which would make
      the dedicated tab feel like it does nothing. */
-  if(!hasImgInContent&&codingModeActive&&!hasCodingAgentAccess()){
+  if(codingModeActive&&!hasCodingAgentAccess()){
     var codingGuardText=getCodingGuardText();
     /* This is a canned client-side string, not a model reply - tagging it
        with whatever the main chat's currentModel happens to be (e.g.
@@ -5540,6 +5571,38 @@ async function doSendRequest(userContent,isRegen,ap){
     chatHistory.push({role:"assistant",content:codingGuardText,modelLabel:null});
     autoSave();
     sending=false;document.getElementById("sendBtn").disabled=false;document.getElementById("sendBtn").textContent="Send";document.getElementById("sendBtn").style.background="";
+    return;
+  }
+  /* An attached screenshot in a Coding tab used to always fall through to
+     the plain vision-chat path below, no repo tools attached - the coding
+     agent never even knew an image existed. Run it through a real vision
+     model once, up front, to turn it into a text description the
+     (vision-less) coding agent can actually act on, then hand off to the
+     normal coding-agent path with that description standing in for the
+     image in this turn's own message. Scoped to codingModeActive
+     specifically, not the broader repo-flavored-message routing below -
+     a plain chat image stays exactly as capable as it always was. */
+  if(hasImgInContent&&codingModeActive&&hasCodingAgentAccess()){
+    /* A dedicated bubble, not renderCodingConsole() - that one tags itself
+       with getCodingAgentModel()'s label, which would misname this step as
+       the (vision-less) coding model when it's actually the vision model
+       doing the looking. Removed outright once done either way, so the
+       real coding-agent bubbles that follow are the only lasting record. */
+    var visionBridgeMsg=appendMsg("assistant","👁️ Looking at the screenshot…",false,CODING_VISION_MODEL_LABEL);
+    var lastMsgIdx=messages.length-1;
+    var originalUserText=((userContent.find&&userContent.find(function(p){return p.type==="text";}))||{}).text||"";
+    try{
+      var screenshotDescription=await describeScreenshotForCoding(userContent);
+      messages[lastMsgIdx]={role:"user",content:(originalUserText?originalUserText+"\n\n":"")+"SCREENSHOT (described by a vision model - the coding agent has no vision and never saw the actual image, only this description):\n"+screenshotDescription};
+    }catch(e){
+      messages[lastMsgIdx]={role:"user",content:(originalUserText?originalUserText+"\n\n":"")+"(A screenshot was attached but couldn't be analyzed: "+e.message+". Proceeding without it - ask the user to describe what it showed if that's needed.)"};
+    }
+    visionBridgeMsg.wrap.remove();
+    try{
+      await runCodingAgentTurn(messages,shouldAutoContinueCodingTurn(qtext));
+    }finally{
+      sending=false;document.getElementById("sendBtn").disabled=false;document.getElementById("sendBtn").textContent="Send";document.getElementById("sendBtn").style.background="";
+    }
     return;
   }
   if(!hasImgInContent&&hasCodingAgentAccess()&&(codingModeActive||searchGateTasks.github>0||searchGateTasks.code>0||(looksLikeContinuationRequest(qtext)&&recentTurnsWereRepoRelevant(chatHistory)))){
