@@ -1,6 +1,6 @@
 name: Deploy Cloudflare Workers
 
-# Deploys all 6 Workers and syncs their secrets from GitHub Actions secrets
+# Deploys all 5 Workers and syncs their secrets from GitHub Actions secrets
 # on every push that touches workers/**, or on demand via workflow_dispatch.
 # Deploying all 5 every run (instead of only the one that changed) is
 # deliberate - it's what keeps every Worker's APP_SECRET in lockstep. The
@@ -16,7 +16,6 @@ name: Deploy Cloudflare Workers
 #   WRITE_SECRET            - github-ops-worker only (write_file/merge_branch gate)
 #   DEEPINFRA_KEY           - openai-router-chat
 #   OPENROUTER_KEY          - openrouter-worker
-#   OPENAI_KEY              - openai-worker
 #   GH_OPS_TOKEN            - github-ops-worker (a GitHub PAT; can't be named
 #                             GITHUB_TOKEN, GitHub reserves that name for the
 #                             token Actions injects automatically)
@@ -104,31 +103,6 @@ jobs:
         env:
           APP_SECRET: ${{ secrets.APP_SECRET }}
           OPENROUTER_KEY: ${{ secrets.OPENROUTER_KEY }}
-
-  openai-worker:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Deploy Worker code
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          wranglerVersion: '4'
-          workingDirectory: workers/openai-worker
-      - name: Sync secrets
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          wranglerVersion: '4'
-          workingDirectory: workers/openai-worker
-          secrets: |
-            APP_SECRET
-            OPENAI_KEY
-        env:
-          APP_SECRET: ${{ secrets.APP_SECRET }}
-          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
 
   github-ops-worker:
     runs-on: ubuntu-latest
