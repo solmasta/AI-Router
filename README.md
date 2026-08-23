@@ -1,10 +1,9 @@
 # AI Router
 
-A single-file PWA chat client (`index.html`) that talks to three Cloudflare Workers:
+A single-file PWA chat client (`index.html`) that talks to two Cloudflare Workers:
 
-- **DeepInfra** — open-source models (Llama, Qwen, DeepSeek, Mistral, Gemma).
+- **DeepInfra** — open-source models (Llama, Qwen, DeepSeek, Mistral, Gemma), including OpenAI's open-weight GPT-OSS models.
 - **OpenRouter** — uncensored/roleplay models plus a few free ones.
-- **OpenAI** — GPT models (GPT-5, GPT-4.1, o3-mini) with your API credits.
 
 Everything the browser needs — markup, CSS, and JS — lives inline in `index.html`. There's no build step and no separate `config.json`/`script.js`/`style.css` to keep in sync; model lists, worker URLs, and system-prompt defaults are all defined directly inside `index.html`'s `<script>` block (`BACKENDS`, `DEFAULT_PROMPTS`).
 
@@ -18,7 +17,6 @@ Everything the browser needs — markup, CSS, and JS — lives inline in `index.
 | `icon-32.png` / `icon-192.png` / `icon-512.png` | App icons |
 | `workers/openai-router-chat/openai-router.js` + `wrangler.jsonc` | Cloudflare Worker — proxies DeepInfra + a free web-search endpoint |
 | `workers/openrouter-worker/openrouter-worker.js` + `wrangler.toml` | Cloudflare Worker — proxies OpenRouter |
-| `workers/openai-worker/openai-worker.js` + `wrangler.jsonc` | Cloudflare Worker — proxies OpenAI's Chat Completions API |
 | `workers/drive-auth/drive-auth-worker.js` + `wrangler.jsonc` | Cloudflare Worker — holds the Google OAuth client secret; exchanges/refreshes Drive access tokens so the app never needs to re-prompt sign-in |
 | `workers/github-ops-worker/github-ops-worker.js` + `wrangler.jsonc` | Cloudflare Worker — proxies GitHub API operations (read/write/list files, merge branches) used by the app's repo tools |
 | `workers/github-oauth-worker/github-oauth-worker.js` + `wrangler.jsonc` | Cloudflare Worker — handles the GitHub OAuth handshake (authorize/callback/refresh) so a user can connect a repo via GitHub login instead of a personal access token |
@@ -48,15 +46,7 @@ Generate a random string (e.g. `openssl rand -hex 32`) — this is `APP_SECRET`.
 4. Add a secret named `APP_SECRET` with the **same** string from step 1.
 5. Deploy and copy the Worker URL.
 
-### 4. Deploy the OpenAI Worker
-
-1. Create a third Worker.
-2. Paste the contents of `workers/openai-worker/openai-worker.js`.
-3. Add a secret named `OPENAI_KEY` with your [OpenAI API key](https://platform.openai.com/api-keys).
-4. Add a secret named `APP_SECRET` with the **same** string from step 1.
-5. Deploy and copy the Worker URL.
-
-### 5. Deploy the Drive Auth Worker (optional — only needed for Google Drive backup)
+### 4. Deploy the Drive Auth Worker (optional — only needed for Google Drive backup)
 
 Google Drive backup uses an OAuth flow that needs a client secret, which can't live in frontend JS - this Worker holds it and mints/renews Drive access tokens on the app's behalf so you don't have to reconnect Drive every time a token expires (~1hr).
 
@@ -66,7 +56,7 @@ Google Drive backup uses an OAuth flow that needs a client secret, which can't l
 4. Add a secret named `APP_SECRET` with the **same** string from step 1 of Setup (check it's actually present - it's easy to add `GOOGLE_CLIENT_SECRET` first and forget this one).
 5. Confirm its URL under Settings → Domains (the default is `https://drive-auth-worker.<your-subdomain>.workers.dev`) and use that for `DRIVE_AUTH_URL` in the next step.
 
-### 6. Deploy the GitHub Ops Worker (optional — needed for repo-aware coding/file edits)
+### 5. Deploy the GitHub Ops Worker (optional — needed for repo-aware coding/file edits)
 
 This Worker is what lets the app read files, write commits, list directories, and merge branches in a connected repository. The browser only stores which repo to point at; the real GitHub token stays server-side as a Cloudflare secret.
 
@@ -77,7 +67,7 @@ This Worker is what lets the app read files, write commits, list directories, an
 5. In `workers/github-ops-worker/wrangler.jsonc`, set `ALLOWED_REPOS` to a comma-separated allowlist. Supported entries: exact `owner/repo`, `owner/*` for all repos under one owner, or `*` for all repos the token can reach. The default is `solmasta/*`.
 6. Deploy and copy the Worker URL.
 
-### 7. Deploy the GitHub OAuth Worker (optional — lets users connect a repo via GitHub login instead of a personal access token)
+### 6. Deploy the GitHub OAuth Worker (optional — lets users connect a repo via GitHub login instead of a personal access token)
 
 This Worker handles the OAuth handshake with GitHub: it redirects the user to GitHub's consent page, exchanges the resulting code for an access token, and hands that token back to the app. It's a separate, simpler alternative to typing a personal access token into the GitHub Ops Worker's write secret.
 
@@ -89,23 +79,22 @@ This Worker handles the OAuth handshake with GitHub: it redirects the user to Gi
 6. No `WRITE_SECRET` is needed on this Worker - `/refresh` is gated by `APP_SECRET` plus the user's own GitHub `refresh_token`, so OAuth-only repo connections keep working when an expiring token renews.
 7. Confirm its URL under Settings → Domains and set `GH_OAUTH_URL` in `index.html` to match.
 
-### 8. Point the frontend at your Workers
+### 7. Point the frontend at your Workers
 
 In `index.html`, find these lines near the top of the `<script>` block:
 
 ```js
 var DI_URL="https://openai-router-chat.lukedorsett.workers.dev";
 var OR_URL="https://openrouter-worker.lukedorsett.workers.dev";
-var OAI_URL="https://openai-worker.lukedorsett.workers.dev";
 var DRIVE_AUTH_URL="https://drive-auth-worker.lukedorsett.workers.dev";
 var GH_OPS_URL="https://github-ops-worker.lukedorsett.workers.dev";
 var GH_OAUTH_URL="https://github-oauth-worker.lukedorsett.workers.dev";
 var APP_SECRET="CHANGE_ME_APP_SECRET";
 ```
 
-Replace `DI_URL`, `OR_URL`, `OAI_URL`, `DRIVE_AUTH_URL`, `GH_OPS_URL`, and `GH_OAUTH_URL` with your own Worker URLs from steps 2–7, and `APP_SECRET` with the exact string you set as the `APP_SECRET` secret on all Workers.
+Replace `DI_URL`, `OR_URL`, `DRIVE_AUTH_URL`, `GH_OPS_URL`, and `GH_OAUTH_URL` with your own Worker URLs from steps 2–6, and `APP_SECRET` with the exact string you set as the `APP_SECRET` secret on all Workers.
 
-### 9. Deploy to GitHub Pages
+### 8. Deploy to GitHub Pages
 
 1. Push `index.html`, `manifest.json`, `sw.js`, and the icon files to the root of a repo.
 2. Enable GitHub Pages: **Settings → Pages → Deploy from branch → main → / (root)**.
@@ -113,16 +102,14 @@ Replace `DI_URL`, `OR_URL`, `OAI_URL`, `DRIVE_AUTH_URL`, `GH_OPS_URL`, and `GH_O
 
 ## Adding models
 
-Edit the `BACKENDS` object inside `index.html`'s `<script>` block — each backend (`deepinfra`, `openrouter`, `openai`) has a `models` array. Any model your provider serves works — use its exact model ID:
+Edit the `BACKENDS` object inside `index.html`'s `<script>` block — each backend (`deepinfra`, `openrouter`) has a `models` array. Any model your provider serves works — use its exact model ID:
 
 ```js
 { id:"meta-llama/Meta-Llama-3-8B-Instruct", label:"Llama 3 8B", cat:"Everyday", desc:"..." }
 ```
 
-OpenAI model IDs: `gpt-5`, `gpt-5-mini`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4o`, `o3-mini`.
-
 ## Security note
 
 All Workers check the `X-App-Secret` header against an `APP_SECRET` secret (set up above) before doing anything else, so a bare Worker URL discovered by a scanner or bot can't spend your API credits without also knowing that string. That said, this repo is public and `APP_SECRET` is embedded in `index.html`'s client-side JS — anyone who actually reads the source (here or via view-source on the live page) can read it too. This raises the bar against casual/automated abuse of the raw URL; it isn't a substitute for real per-user auth. If that's not enough for your usage, consider adding Cloudflare rate limiting on top.
 
-**Store every provider key as a Cloudflare secret** — `OPENAI_KEY`, `DEEPINFRA_KEY`, `OPENROUTER_KEY`. Never commit them to the repo or hard-code them in the frontend.
+**Store every provider key as a Cloudflare secret** — `DEEPINFRA_KEY`, `OPENROUTER_KEY`. Never commit them to the repo or hard-code them in the frontend.
