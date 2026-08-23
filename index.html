@@ -281,7 +281,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.190</span></span>
+      <span class="wm">ai-router <span>v5.191</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -553,7 +553,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.190</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.191</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -3288,6 +3288,37 @@ function updateBackendTabsUI(){
   document.getElementById("deepinfraBtn").className="btab"+(activeBackend==="deepinfra"?" act":"");
   document.getElementById("openrouterBtn").className="btab"+(activeBackend==="openrouter"?" act or":"");
 }
+var liveOpenRouterFreeModelsCache=null,liveOpenRouterFreeModelsFetchedAt=0;
+var LIVE_FREE_MODELS_CACHE_MS=10*60*1000;
+/* The curated OpenRouter list only ever hand-picks 4 "Free" entries, but
+   OpenRouter itself offers dozens more - a real user request to actually
+   see all of them, not a small fixed sample that goes stale the moment
+   OpenRouter adds or retires a model. openrouter-worker's own /models
+   endpoint (already there, unused by the frontend until now) proxies
+   OpenRouter's live catalog with real pricing - anything with $0
+   prompt/completion cost is free. Only ADDS to the curated list, never
+   prunes it - the removed pruning attempt above hid perfectly-working
+   curated entries (routing aliases like "openrouter/free" that never
+   appear as a literal id in the raw catalog) for exactly that reason. */
+async function fetchLiveFreeOpenRouterModels(){
+  if(liveOpenRouterFreeModelsCache&&(Date.now()-liveOpenRouterFreeModelsFetchedAt)<LIVE_FREE_MODELS_CACHE_MS)return liveOpenRouterFreeModelsCache;
+  await ensureAppSecret();
+  var res=await fetch(OR_URL+"/models",{headers:{"X-App-Secret":APP_SECRET||""}});
+  if(!res.ok)throw new Error("HTTP "+res.status);
+  var data=await res.json();
+  var curatedIds={};
+  BACKENDS.openrouter.models.forEach(function(m){curatedIds[m.id]=true;});
+  var free=(data.data||[]).filter(function(m){
+    if(!m||!m.id||curatedIds[m.id])return false;
+    var p=m.pricing||{};
+    return parseFloat(p.prompt||"1")===0&&parseFloat(p.completion||"1")===0;
+  }).map(function(m){
+    return{id:m.id,label:m.name||m.id,cat:"Free",desc:"Live from OpenRouter's catalog"+(m.context_length?" · "+Math.round(m.context_length/1000)+"K context":"")+". Free."};
+  });
+  liveOpenRouterFreeModelsCache=free;
+  liveOpenRouterFreeModelsFetchedAt=Date.now();
+  return free;
+}
 async function loadBackend(){
   var B=BACKENDS[activeBackend];
   workerUrl=B.url;allModels=B.models;
@@ -3303,6 +3334,19 @@ async function loadBackend(){
      shrink a few seconds after load for models that were actually fine.
      If a model really is gone, the send itself surfaces a clear error
      instead of it silently vanishing from the picker. */
+  if(activeBackend==="openrouter"){
+    /* Fire-and-forget, deliberately not awaited - the curated list already
+       rendered above, instantly. The live catalog call is a few hundred ms
+       to a few seconds; blocking the whole backend switch on it would make
+       picking OpenRouter feel slow for a list that's only ever additive
+       anyway. Re-checks activeBackend before repainting in case the user
+       already switched away by the time this resolves. */
+    fetchLiveFreeOpenRouterModels().then(function(liveFree){
+      if(activeBackend!=="openrouter"||!liveFree.length)return;
+      allModels=B.models.concat(liveFree);
+      renderModelList();
+    }).catch(function(e){console.log("Live OpenRouter model list unavailable: "+e.message);});
+  }
 }
 /* Guarded by codingModeActive on purpose - switching the main chat's model
    must keep currentModel in sync for whenever the user goes back to a
