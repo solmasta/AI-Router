@@ -3278,6 +3278,32 @@ function assert(cond, label) {
   await page.locator('.mc:has-text("Mistral Small")').first().click();
   await page.waitForTimeout(150);
 
+  console.log('\n-- the Coding tab\'s model picker labels each model\'s relative cost, without changing which models are offered --');
+  // The user wants to see cost at a glance when picking a coding model
+  // (repo work can burn a lot more tokens per turn than a normal chat
+  // reply), but explicitly did NOT want the actual model pool or grouping
+  // changed - just the existing per-model cost tier surfaced as a badge.
+  const mainChatCardHasCostBadge = await page.evaluate(() => {
+    const card = document.querySelector('#modelList .mc');
+    return card ? !!card.querySelector('[class*="tier-"]') : null;
+  });
+  assert(mainChatCardHasCostBadge === false, 'the main chat\'s model cards do not show a cost badge (cost only matters for the heavier-usage Coding tab)');
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  const codingCardCostInfo = await page.evaluate(() => {
+    const cards = Array.from(document.querySelectorAll('#modelList .mc'));
+    return {
+      cardCount: cards.length,
+      allHaveCostBadge: cards.length > 0 && cards.every((c) => !!c.querySelector('[class*="tier-"]')),
+      firstBadgeText: cards[0] ? (cards[0].querySelector('[class*="tier-"]') || {}).textContent : null,
+    };
+  });
+  assert(codingCardCostInfo.cardCount > 0, 'test setup: the Coding tab model picker actually lists cards');
+  assert(codingCardCostInfo.allHaveCostBadge, `every model card in the Coding tab picker shows a cost badge (got: ${JSON.stringify(codingCardCostInfo)})`);
+  assert(/^\${1,4}$/.test(codingCardCostInfo.firstBadgeText || ''), `the cost badge reads as a $ tier, not a raw number or category name (got "${codingCardCostInfo.firstBadgeText}")`);
+  await page.click('#closeModelModal'); await page.waitForTimeout(150);
+  await page.locator('#tabBar .tabpill.act .tpx').click(); await page.waitForTimeout(200);
+
   console.log('\n-- App-control tools (create_project/remember) actually execute, no confirm needed --');
   // Unlike write_file, these run immediately on a model-issued tool_call,
   // no approval dialog. Mock both in one tool_calls response and verify

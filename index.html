@@ -210,6 +210,10 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 .cat-uncensored{background:rgba(248,113,113,.13);color:#f87171}
 .cat-free{background:rgba(110,231,183,.13);color:#6ee7b7}
 .cat-favorites{background:rgba(245,158,11,.13);color:#f59e0b}
+.tier-0{background:rgba(110,231,183,.13);color:#6ee7b7}
+.tier-1{background:rgba(139,141,152,.13);color:#9ca3af}
+.tier-2{background:rgba(245,158,11,.13);color:#f59e0b}
+.tier-3{background:rgba(248,113,113,.13);color:#f87171}
 .si{width:100%;background:var(--up);border:none;border-radius:14px;padding:10px 14px;color:var(--tx);font-size:14.5px;font-family:-apple-system,system-ui,sans-serif;margin-bottom:8px;flex-shrink:0}
 .si:focus{outline:none;box-shadow:0 0 0 2px var(--ac)}
 .si::placeholder{color:var(--mu)}
@@ -281,7 +285,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.191</span></span>
+      <span class="wm">ai-router <span>v5.192</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -553,7 +557,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.191</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.192</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -1352,6 +1356,7 @@ var MODEL_COST_TIER={
   "nousresearch/hermes-3-llama-3.1-405b":3
 };
 function getModelCostTier(model){return MODEL_COST_TIER.hasOwnProperty(model.id)?MODEL_COST_TIER[model.id]:1;}
+var COST_TIER_LABEL=["$","$$","$$$","$$$$"];
 var CTX_MAP={"meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo":131072,"mistralai/Mistral-Small-3.2-24B-Instruct-2506":128000,"Qwen/Qwen3.5-9B":262144,"Qwen/Qwen3.5-27B":262144,"meta-llama/Llama-3.3-70B-Instruct-Turbo":131072,"meta-llama/Llama-4-Scout-17B-16E-Instruct":327680,"Qwen/Qwen2.5-72B-Instruct":32768,"deepseek-ai/DeepSeek-V3.2":163840,"Qwen/Qwen3-Coder-480B-A35B-Instruct-Turbo":262144,"Qwen/Qwen3-32B":40960,"deepseek-ai/DeepSeek-R1-0528":163840,"moonshotai/Kimi-K2-Instruct":128000,"zai-org/GLM-4.6":128000,"MiniMaxAI/MiniMax-M2":128000,"openai/gpt-oss-120b":128000,"openai/gpt-oss-20b":128000,"Qwen/Qwen3-235B-A22B-Instruct-2507":262144};
 
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
@@ -3405,6 +3410,18 @@ function mkCard(m,backendForModel){
   var star=document.createElement("button");star.className="str"+(isFav?" on":"");star.innerHTML=isFav?"&#9733;":"&#9734;";
   var badge=document.createElement("span");badge.className="mbg cat-"+m.cat.toLowerCase();badge.textContent=m.cat;
   top.appendChild(lbl);top.appendChild(star);top.appendChild(badge);
+  /* Cost only shown in the Coding tab (where backendForModel is set) - the
+     main chat's picker already groups by category, and per-token cost isn't
+     something a casual chat needs to weigh the way repo work does, where a
+     coding session can burn far more tokens per turn. This never changes
+     which models are offered or how they're grouped, only labels the ones
+     already there. */
+  if(backendForModel){
+    var tier=getModelCostTier(m);
+    var costBadge=document.createElement("span");costBadge.className="mbg tier-"+tier;
+    costBadge.textContent=COST_TIER_LABEL[tier];
+    top.appendChild(costBadge);
+  }
   var desc=document.createElement("div");desc.className="mcd";desc.textContent=m.desc;
   card.appendChild(top);card.appendChild(desc);
   star.addEventListener("click",function(e){e.stopPropagation();if(favorites[m.id]){delete favorites[m.id];}else{favorites[m.id]=true;}saveFavs();renderModelList();});
