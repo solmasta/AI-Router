@@ -287,7 +287,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.195</span></span>
+      <span class="wm">ai-router <span>v5.196</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -559,7 +559,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.195</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.196</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -3422,6 +3422,15 @@ function renderModelList(){
      first just to see the other one's options. Grouped by service instead
      of category so it's obvious which one each card actually calls. */
   if(codingModeActive){
+    /* A real report: "how do I know which model can actually do coding
+       work so I don't waste my time" - every card in this list already IS
+       from TOOL_MODELS (the pre-vetted, reliable-for-tool-calling pool),
+       so there's no wrong pick possible here, but that guarantee was never
+       stated anywhere the user could actually see it. */
+    var toolNote=document.createElement("div");
+    toolNote.style.cssText="font-size:11.5px;color:var(--mu);padding:2px 4px 10px;line-height:1.4";
+    toolNote.textContent="Every model below is verified to reliably use real repo tools (read/write/merge) - any one you pick here will work for coding.";
+    list.appendChild(toolNote);
     var toolItems=getAllAvailableModels().filter(function(item){return TOOL_MODELS.indexOf(item.model.id)>=0;});
     var byBackend={};
     toolItems.forEach(function(item){(byBackend[item.backend]=byBackend[item.backend]||[]).push(item);});
@@ -3436,18 +3445,32 @@ function renderModelList(){
   var favMs=favIds.map(function(id){return allModels.find(function(m){return m.id===id;});}).filter(Boolean);
   var sections=[];
   if(favMs.length)sections.push({cat:"Favorites",models:favMs});
+  /* A real report: "I don't see any free models" - true on the DeepInfra
+     tab, since none of its models are actually $0 (see DI_COST), but the
+     user had no way to know free options exist at all without already
+     knowing to flip to the OpenRouter tab first. Pin OpenRouter's free
+     models (curated + any live-fetched extras) here regardless of which
+     backend is currently active - only when NOT already on OpenRouter,
+     where the normal per-category loop below already shows them once,
+     from allModels itself. */
+  if(activeBackend!=="openrouter"){
+    var pinnedFreeModels=BACKENDS.openrouter.models.filter(function(m){return m.cat==="Free";}).concat(liveOpenRouterFreeModelsCache||[]);
+    if(pinnedFreeModels.length)sections.push({cat:"Free (OpenRouter)",models:pinnedFreeModels,backendForModels:"openrouter"});
+  }
   var cats=[];
   allModels.forEach(function(m){if(cats.indexOf(m.cat)<0)cats.push(m.cat);});
   cats.forEach(function(cat){sections.push({cat:cat,models:allModels.filter(function(m){return m.cat===cat;})});});
   sections.forEach(function(sec){
     var h=document.createElement("div");h.className="mch";h.textContent=sec.cat;list.appendChild(h);
-    sec.models.forEach(function(m){list.appendChild(mkCard(m));});
+    sec.models.forEach(function(m){list.appendChild(mkCard(m,sec.backendForModels));});
   });
 }
-/* backendForModel is only meaningful (and only passed) in the Coding-tab
-   list above - the main chat's list already only ever shows the single
-   active backend's models, so setModel() doesn't need to be told which
-   backend a card belongs to. */
+/* backendForModel is passed in two cases: every card in the Coding-tab
+   list above (which spans all backends at once), and the main chat's
+   pinned "Free (OpenRouter)" section (see renderModelList) when the
+   active backend is something else - in both cases the click handler
+   below needs to know which backend this specific card actually belongs
+   to, since it isn't necessarily the currently active one. */
 function mkCard(m,backendForModel){
   var activeId=codingModeActive?getCodingAgentModel().id:currentModel.id;
   var card=document.createElement("div");card.className="mc"+(m.id===activeId?" act":"");
@@ -3457,13 +3480,13 @@ function mkCard(m,backendForModel){
   var star=document.createElement("button");star.className="str"+(isFav?" on":"");star.innerHTML=isFav?"&#9733;":"&#9734;";
   var badge=document.createElement("span");badge.className="mbg cat-"+m.cat.toLowerCase();badge.textContent=m.cat;
   top.appendChild(lbl);top.appendChild(star);top.appendChild(badge);
-  /* Cost only shown in the Coding tab (where backendForModel is set) - the
-     main chat's picker already groups by category, and per-token cost isn't
-     something a casual chat needs to weigh the way repo work does, where a
-     coding session can burn far more tokens per turn. This never changes
-     which models are offered or how they're grouped, only labels the ones
-     already there. */
-  if(backendForModel){
+  /* Cost only shown in the Coding tab, not the main chat's pinned Free
+     section too even though both pass backendForModel now - per-token cost
+     isn't something a casual chat needs to weigh the way repo work does,
+     where a coding session can burn far more tokens per turn. This never
+     changes which models are offered or how they're grouped, only labels
+     the ones already there. */
+  if(codingModeActive){
     var tier=getModelCostTier(m);
     var costBadge=document.createElement("span");costBadge.className="mbg tier-"+tier;
     costBadge.textContent=COST_TIER_LABEL[tier];
@@ -3479,6 +3502,15 @@ function mkCard(m,backendForModel){
        separate from (and never touched by) the main chat's model, so
        picking a model for repo work actually sticks. */
     if(codingModeActive){codingAgentModelOverride={id:m.id,label:m.label,backend:backendForModel};updateCodingModeUI();}
+    else if(backendForModel&&backendForModel!==activeBackend){
+      /* Picking a pinned Free card from a backend other than the one
+         currently active (see renderModelList) - switch the main chat over
+         to that backend first (endpoint, allModels, tab UI all need to
+         follow), then land on this exact model instead of whichever
+         default loadBackend() would have picked for that backend. */
+      activeBackend=backendForModel;
+      loadBackend().then(function(){setModel(m);renderModelList();});
+    }
     else{setModel(m);}
     closeModal("modelModal");renderModelList();
   });
@@ -6084,6 +6116,15 @@ loadFavs();
   syncThemeColor();
 })();
 loadBackend();
+/* Populates the main chat's pinned "Free (OpenRouter)" section (see
+   renderModelList) even for a user who never actually switches to the
+   OpenRouter tab - loadBackend() only fires this fetch when OpenRouter is
+   the ACTIVE backend, which covers everyone else. Safe to call regardless
+   of activeBackend: fetchLiveFreeOpenRouterModels() caches for 10 minutes,
+   so this and loadBackend()'s own fetch (should the user switch to
+   OpenRouter, or a restored tab land there, shortly after) never double
+   up on the network call. */
+fetchLiveFreeOpenRouterModels().then(function(){renderModelList();}).catch(function(e){console.log("Live OpenRouter model list unavailable: "+e.message);});
 loadPrompts();
 loadProjects();
 loadWProjects();

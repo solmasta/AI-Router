@@ -3491,6 +3491,39 @@ function assert(cond, label) {
   await page.click('#closeModelModal'); await page.waitForTimeout(150);
   await page.locator('#tabBar .tabpill.act .tpx').click(); await page.waitForTimeout(200);
 
+  console.log('\n-- the Coding tab\'s model picker states plainly that every listed model actually works for coding --');
+  // A real report: "is there a way to know what model can actually do
+  // coding and what actually can't so I don't waste my time" - every card
+  // in this list is already filtered down to TOOL_MODELS, so there's no
+  // wrong pick possible here, but nothing on screen ever said so.
+  await page.click('#newCodeTabBtn'); await page.waitForTimeout(400);
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  const codingPickerNoteText = await page.evaluate(() => document.getElementById('modelList').textContent);
+  assert(codingPickerNoteText.indexOf('verified to reliably use real repo tools') >= 0, `the Coding tab's model picker states that every listed model works for coding (got: ${codingPickerNoteText.slice(0, 300)})`);
+  await page.click('#closeModelModal'); await page.waitForTimeout(150);
+  await page.locator('#tabBar .tabpill.act .tpx').click(); await page.waitForTimeout(200);
+
+  console.log('\n-- free OpenRouter models are pinned in the main chat\'s picker even while on DeepInfra, and picking one switches backend --');
+  // A real report: "I don't see any free models" - true while browsing
+  // DeepInfra, since none of its models are actually $0 (see DI_COST), but
+  // the user had no way to know free options exist without already
+  // knowing to flip to the OpenRouter tab first.
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  await page.click('#deepinfraBtn'); await page.waitForTimeout(150);
+  const deepInfraPickerText = await page.evaluate(() => document.getElementById('modelList').textContent);
+  assert(deepInfraPickerText.indexOf('Free (OpenRouter)') >= 0, `a pinned Free section appears while browsing DeepInfra (got: ${deepInfraPickerText.slice(0, 300)})`);
+  assert(deepInfraPickerText.indexOf('Auto Free Router') >= 0, `the pinned section actually lists a real free OpenRouter model (got: ${deepInfraPickerText.slice(0, 300)})`);
+  await page.locator('.mc:has-text("Auto Free Router")').first().click();
+  await page.waitForTimeout(300);
+  const backendAfterPinnedFreePick = await page.evaluate(() => document.getElementById('openrouterBtn').classList.contains('act') ? 'openrouter' : 'other');
+  assert(backendAfterPinnedFreePick === 'openrouter', `picking a pinned free model switches the main chat over to OpenRouter (got "${backendAfterPinnedFreePick}")`);
+  const modelLabelAfterPinnedFreePick = await page.textContent('#modelBtnLabel');
+  assert(modelLabelAfterPinnedFreePick === 'Auto Free Router', `the picked free model actually becomes the active model, not OpenRouter's own different default (got "${modelLabelAfterPinnedFreePick}")`);
+  await page.click('#modelBtn'); await page.waitForTimeout(150);
+  await page.click('#deepinfraBtn'); await page.waitForTimeout(150);
+  await page.locator('.mc:has-text("Mistral Small")').first().click();
+  await page.waitForTimeout(150);
+
   console.log('\n-- App-control tools (create_project/remember) actually execute, no confirm needed --');
   // Unlike write_file, these run immediately on a model-issued tool_call,
   // no approval dialog. Mock both in one tool_calls response and verify
