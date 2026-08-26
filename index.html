@@ -287,7 +287,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
   <header>
     <div class="hl">
       <span class="wm-prompt">&gt;_</span>
-      <span class="wm">ai-router <span>v5.196</span></span>
+      <span class="wm">ai-router <span>v5.197</span></span>
     </div>
     <div class="hr">
       <button class="mb" id="modelBtn" disabled><span class="mbl" id="modelBtnLabel">Loading&#8230;</span><span class="ma">&#9660;</span></button>
@@ -559,7 +559,7 @@ code.ic{font-family:var(--mn);font-size:13px;background:var(--up);border-radius:
 </div></div>
 
 <div class="modal hidden" id="settingsModal"><div class="sheet">
-  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.196</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
+  <div class="sh"><span>Settings</span><span style="font-family:var(--mn);font-size:11px;color:var(--mu)">v5.197</span><button class="sc" id="closeSettingsModal">&#10005;</button></div>
   <div class="sbody">
     <div class="sec-h">&#128268; Repository &amp; backends</div>
     <div class="sec">
@@ -3445,21 +3445,28 @@ function renderModelList(){
   var favMs=favIds.map(function(id){return allModels.find(function(m){return m.id===id;});}).filter(Boolean);
   var sections=[];
   if(favMs.length)sections.push({cat:"Favorites",models:favMs});
+  var cats=[];
+  allModels.forEach(function(m){if(cats.indexOf(m.cat)<0)cats.push(m.cat);});
+  cats.forEach(function(cat){sections.push({cat:cat,models:allModels.filter(function(m){return m.cat===cat;})});});
   /* A real report: "I don't see any free models" - true on the DeepInfra
      tab, since none of its models are actually $0 (see DI_COST), but the
      user had no way to know free options exist at all without already
      knowing to flip to the OpenRouter tab first. Pin OpenRouter's free
      models (curated + any live-fetched extras) here regardless of which
      backend is currently active - only when NOT already on OpenRouter,
-     where the normal per-category loop below already shows them once,
-     from allModels itself. */
+     where the normal per-category loop above already shows them once,
+     from allModels itself.
+     A follow-up report: putting this FIRST (ahead of the active backend's
+     own categories) made the two backend tabs look like they weren't
+     actually separating anything - selecting DeepInfra still opened on a
+     wall of OpenRouter cards. It goes LAST now: the active tab's own list
+     stays fully intact and first, with free options as a clearly-labeled
+     bonus section underneath instead of competing with it for the top
+     spot. */
   if(activeBackend!=="openrouter"){
     var pinnedFreeModels=BACKENDS.openrouter.models.filter(function(m){return m.cat==="Free";}).concat(liveOpenRouterFreeModelsCache||[]);
     if(pinnedFreeModels.length)sections.push({cat:"Free (OpenRouter)",models:pinnedFreeModels,backendForModels:"openrouter"});
   }
-  var cats=[];
-  allModels.forEach(function(m){if(cats.indexOf(m.cat)<0)cats.push(m.cat);});
-  cats.forEach(function(cat){sections.push({cat:cat,models:allModels.filter(function(m){return m.cat===cat;})});});
   sections.forEach(function(sec){
     var h=document.createElement("div");h.className="mch";h.textContent=sec.cat;list.appendChild(h);
     sec.models.forEach(function(m){list.appendChild(mkCard(m,sec.backendForModels));});
